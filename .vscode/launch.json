@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Mobile App — Expo Web",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run web -- --port 8082",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Buka Preview Mobile",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:8082",
+      "webRoot": "${workspaceFolder}"
+    }
+  ]
+}
