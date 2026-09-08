@@ -22,6 +22,7 @@ import { getApiErrorMessage } from '../services/api';
 import { mobileApiService, unwrapApiData, unwrapCollection } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { isSuperAdminRole } from '../utils/roles';
+import { offlineCache } from '../utils/offlineCache';
 
 type TeacherTab = 'overview' | 'schedules' | 'students' | 'materials' | 'notes';
 type FormType = 'note' | 'material';
@@ -53,8 +54,29 @@ export default function TeacherPortalScreen() {
   const canMaterial = isSuperAdmin || permissions.includes('teacher.material.create') || permissions.includes('pembelajaran.materi') || permissions.includes('lms.manage');
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError('');
+    const cacheKey = offlineCache.buildKey('teacher_portal', user?.id);
+
+    // 1. Baca cache dulu
+    const cached = await offlineCache.get<{
+      dashboard: any;
+      schedules: any[];
+      students: any[];
+      materials: any[];
+      notes: any[];
+    }>(cacheKey);
+
+    if (cached) {
+      if (cached.dashboard) setDashboard(cached.dashboard);
+      if (cached.schedules) setSchedules(cached.schedules);
+      if (cached.students) setStudents(cached.students);
+      if (cached.materials) setMaterials(cached.materials);
+      if (cached.notes) setNotes(cached.notes);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     const [dashboardResult, schedulesResult, studentsResult, materialsResult, notesResult] = await Promise.allSettled([
       mobileApiService.getTeacherDashboard(),
       mobileApiService.getTeacherSchedules(),
@@ -63,17 +85,50 @@ export default function TeacherPortalScreen() {
       mobileApiService.getTeacherStudentNotes({ per_page: 30 }),
     ]);
 
-    if (dashboardResult.status === 'fulfilled') setDashboard(unwrapApiData<any>(dashboardResult.value) || {});
-    if (schedulesResult.status === 'fulfilled') setSchedules(unwrapCollection(schedulesResult.value));
-    if (studentsResult.status === 'fulfilled') setStudents(unwrapCollection(studentsResult.value));
-    if (materialsResult.status === 'fulfilled') setMaterials(unwrapCollection(materialsResult.value));
-    if (notesResult.status === 'fulfilled') setNotes(unwrapCollection(notesResult.value));
+    let freshDash = dashboard;
+    let freshSched = schedules;
+    let freshStud = students;
+    let freshMat = materials;
+    let freshNot = notes;
+
+    if (dashboardResult.status === 'fulfilled') {
+      freshDash = unwrapApiData<any>(dashboardResult.value) || {};
+      setDashboard(freshDash);
+    }
+    if (schedulesResult.status === 'fulfilled') {
+      freshSched = unwrapCollection(schedulesResult.value);
+      setSchedules(freshSched);
+    }
+    if (studentsResult.status === 'fulfilled') {
+      freshStud = unwrapCollection(studentsResult.value);
+      setStudents(freshStud);
+    }
+    if (materialsResult.status === 'fulfilled') {
+      freshMat = unwrapCollection(materialsResult.value);
+      setMaterials(freshMat);
+    }
+    if (notesResult.status === 'fulfilled') {
+      freshNot = unwrapCollection(notesResult.value);
+      setNotes(freshNot);
+    }
 
     const failures = [dashboardResult, schedulesResult, studentsResult, materialsResult, notesResult].filter((result) => result.status === 'rejected');
-    if (failures.length === 5) setError('Portal guru tidak dapat terhubung. Pastikan role dan permission guru sudah tersinkron.');
+    if (failures.length === 5 && !cached) {
+      setError('Portal guru tidak dapat terhubung. Pastikan role dan permission guru sudah tersinkron.');
+    } else if (failures.length < 5) {
+      // Simpan data ke cache
+      void offlineCache.set(cacheKey, {
+        dashboard: freshDash,
+        schedules: freshSched,
+        students: freshStud,
+        materials: freshMat,
+        notes: freshNot,
+      });
+    }
+
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     void load();

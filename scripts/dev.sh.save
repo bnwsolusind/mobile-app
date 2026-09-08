@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -e
+
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+NODE_VERSION="22.23.2"
+METRO_PORT="8081"
+
+cd "$PROJECT_DIR"
+
+echo ""
+echo "=========================================="
+echo " SIMSIT MOBILE DEVELOPMENT"
+echo "=========================================="
+echo 

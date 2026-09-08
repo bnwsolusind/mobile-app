@@ -21,12 +21,130 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { isParentRole } from '../utils/roles';
-import { getProfileImageUrl } from '../utils/profile';
+import {
+  getProfileImageUrl,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+} from '../utils/profile';
+import { offlineCache } from '../utils/offlineCache';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type Child = Record<string, any>;
 type MaterialItem = Record<string, any>;
+
+const formatDate = (dateStr?: string): string => {
+  if (!dateStr) return 'Terbaru';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return 'Terbaru';
+    return d.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return 'Terbaru';
+  }
+};
+
+const formatMetaText = (item: any): string => {
+  const media = Array.isArray(item.media) ? item.media : [];
+  if (media.length > 0) {
+    const first = media[0];
+    const type = String(first.tipe_file || '').toLowerCase();
+    const sizeBytes = Number(first.file_size || first.size || 0);
+    const sizeStr = sizeBytes > 0
+      ? sizeBytes >= 1048576
+        ? `${(sizeBytes / 1048576).toFixed(1)} MB`
+        : `${Math.round(sizeBytes / 1024)} KB`
+      : '';
+    const duration = first.durasi || first.duration;
+
+    if (type === 'pdf') {
+      return sizeStr ? `File PDF - ${sizeStr}` : 'File PDF';
+    }
+    if (type === 'video') {
+      return duration ? `Video Pembelajaran - ${duration}` : 'Video Pembelajaran';
+    }
+    if (type === 'audio') {
+      return duration ? `Audio Pembelajaran - ${duration}` : 'Audio Pembelajaran';
+    }
+    const ext = (first.nama_file || first.file_name || '').split('.').pop()?.toUpperCase();
+    return ext ? `File ${ext}${sizeStr ? ' - ' + sizeStr : ''}` : 'Lampiran Berkas';
+  }
+  if (item.tipe) {
+    return `Materi ${item.tipe}`;
+  }
+  if (item.konten || item.isi || item.deskripsi) {
+    return 'Ringkasan Materi';
+  }
+  return 'Materi Pembelajaran';
+};
+
+const getSubjectStyle = (name?: string, media?: any[]) => {
+  const norm = (name || '').toLowerCase();
+  if (norm.includes('matematik') || norm.includes('math') || norm.includes('hitung')) {
+    return {
+      bg: '#E0F2FE',
+      color: '#2563EB',
+      icon: 'file-document-edit-outline',
+    };
+  }
+  if (norm.includes('indonesia') || norm.includes('bahasa') || norm.includes('inggris') || norm.includes('arab') || norm.includes('literasi')) {
+    return {
+      bg: '#DCFCE7',
+      color: '#16A34A',
+      icon: 'book-open-page-variant-outline',
+    };
+  }
+  if (norm.includes('pai') || norm.includes('agama') || norm.includes('islam') || norm.includes('fiqih') || norm.includes('aqidah') || norm.includes('quran') || norm.includes('hadits') || norm.includes('tahfizh')) {
+    return {
+      bg: '#F3E8FF',
+      color: '#9333EA',
+      icon: 'video-outline',
+    };
+  }
+  if (norm.includes('ipa') || norm.includes('alam') || norm.includes('fisika') || norm.includes('biologi') || norm.includes('kimia') || norm.includes('sains')) {
+    return {
+      bg: '#FEF3C7',
+      color: '#EA580C',
+      icon: 'weather-sunny',
+    };
+  }
+  if (norm.includes('ips') || norm.includes('sosial') || norm.includes('sejarah') || norm.includes('geografi') || norm.includes('ekonomi')) {
+    return {
+      bg: '#E0E7FF',
+      color: '#4F46E5',
+      icon: 'earth',
+    };
+  }
+  if (norm.includes('seni') || norm.includes('sbk') || norm.includes('budaya') || norm.includes('musik')) {
+    return {
+      bg: '#FFE4E6',
+      color: '#E11D48',
+      icon: 'palette-outline',
+    };
+  }
+  if (norm.includes('penjas') || norm.includes('olahraga') || norm.includes('pjok')) {
+    return {
+      bg: '#CCFBF1',
+      color: '#0D9488',
+      icon: 'soccer',
+    };
+  }
+  if (Array.isArray(media) && media.length > 0) {
+    const t = String(media[0]?.tipe_file || '').toLowerCase();
+    if (t === 'video') return { bg: '#F3E8FF', color: '#9333EA', icon: 'video-outline' };
+    if (t === 'pdf') return { bg: '#E0F2FE', color: '#2563EB', icon: 'file-document-outline' };
+    if (t === 'audio') return { bg: '#F3E8FF', color: '#7C3AED', icon: 'headphones' };
+  }
+  return {
+    bg: '#E6F4EA',
+    color: '#059669',
+    icon: 'book-open-variant',
+  };
+};
 
 export default function MaterialScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -49,27 +167,54 @@ export default function MaterialScreen({ route, navigation }: any) {
   const [activeAttachment, setActiveAttachment] = useState<any>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState<boolean>(false);
 
-  // 1. Fetch children
+  // 1. Fetch children with offline cache (Isolasi data 1 anak terpilih jika ada child_id)
   const loadChildren = useCallback(async () => {
     if (!isParent) return;
+    const targetChildId = route?.params?.child_id;
+    const childCacheKey = offlineCache.buildKey('materials_children', user?.id);
+    const cached = await offlineCache.get<Child[]>(childCacheKey);
+    if (cached && cached.length > 0) {
+      const filteredCached = targetChildId
+        ? cached.filter((c) => String(c.id) === String(targetChildId))
+        : cached;
+      setChildren(filteredCached.length > 0 ? filteredCached : cached);
+      setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(cached[0].id)));
+    }
+
     try {
       const res = await mobileApiService.getPortalChildren();
       const list = unwrapApiData<Child[]>(res) || [];
-      setChildren(list);
-      if (list.length > 0 && !selectedChildId) {
-        setSelectedChildId(String(list[0].id));
+      if (list.length > 0) {
+        const filteredList = targetChildId
+          ? list.filter((c) => String(c.id) === String(targetChildId))
+          : list;
+        setChildren(filteredList.length > 0 ? filteredList : list);
+        setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(list[0].id)));
+        void offlineCache.set(childCacheKey, list);
       }
     } catch {
       // safe fallback
     }
-  }, [isParent, selectedChildId]);
+  }, [isParent, user?.id, route?.params?.child_id]);
 
   useEffect(() => {
     void loadChildren();
   }, [loadChildren]);
 
-  // 2. Fetch materials
+  // 2. Fetch materials with offline cache
   const loadMaterials = useCallback(async () => {
+    const isDefaultQuery = !searchQuery.trim() && selectedSubjectId === 'all';
+    const cacheKey = offlineCache.buildKey('materials', user?.id, selectedChildId || 'self');
+
+    let cached: { list: MaterialItem[]; student: any } | null = null;
+    if (isDefaultQuery) {
+      cached = await offlineCache.get<{ list: MaterialItem[]; student: any }>(cacheKey);
+      if (cached) {
+        setMaterials(cached.list || []);
+        if (cached.student) setStudentInfo(cached.student);
+      }
+    }
+
     try {
       const params: Record<string, any> = {
         child_id: selectedChildId,
@@ -81,13 +226,20 @@ export default function MaterialScreen({ route, navigation }: any) {
       const data = unwrapApiData<any>(res) || {};
       const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
       setMaterials(list);
-      if (res?.student || data?.student) {
-        setStudentInfo(res?.student || data?.student);
+      const freshStudent = res?.student || data?.student || null;
+      if (freshStudent) {
+        setStudentInfo(freshStudent);
+      }
+
+      if (isDefaultQuery) {
+        void offlineCache.set(cacheKey, { list, student: freshStudent });
       }
     } catch {
-      setMaterials([]);
+      if (!cached) {
+        setMaterials([]);
+      }
     }
-  }, [selectedChildId, searchQuery, selectedSubjectId]);
+  }, [selectedChildId, searchQuery, selectedSubjectId, user?.id]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -108,7 +260,7 @@ export default function MaterialScreen({ route, navigation }: any) {
   // Scroll handlers for auto-color swipe
   const handleStudentScrollEnd = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 32 + 12;
+    const cardWidth = SCREEN_WIDTH - 50 + 12;
     const index = Math.round(offsetX / cardWidth);
     if (index >= 0 && index < children.length) {
       const targetChild = children[index];
@@ -121,23 +273,31 @@ export default function MaterialScreen({ route, navigation }: any) {
   const selectChildWithScroll = (childId: string, index: number) => {
     setSelectedChildId(childId);
     studentScrollRef.current?.scrollTo({
-      x: index * (SCREEN_WIDTH - 32 + 12),
+      x: index * (SCREEN_WIDTH - 50 + 12),
       animated: true,
     });
   };
 
-  // Extract unique subjects for filtering
-  const subjectsList = useMemo(() => {
-    const map = new Map<string, string>();
-    materials.forEach((m) => {
-      if (m.subject?.id && m.subject?.name) {
-        map.set(String(m.subject.id), m.subject.name);
-      } else if (m.subject?.nama_mapel) {
-        map.set(String(m.mata_pelajaran_id || m.subject?.id), m.subject.nama_mapel);
-      }
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  // Extract unique subjects for filtering (preserves list when filtered)
+  const [allSubjectsMap, setAllSubjectsMap] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (materials.length > 0) {
+      setAllSubjectsMap((prev) => {
+        const next = new Map(prev);
+        materials.forEach((m) => {
+          const id = String(m.subject?.id || m.mata_pelajaran_id || '');
+          const name = m.subject?.name || m.subject?.nama_mapel || '';
+          if (id && name) next.set(id, name);
+        });
+        return next;
+      });
+    }
   }, [materials]);
+
+  const subjectsList = useMemo(() => {
+    return Array.from(allSubjectsMap.entries()).map(([id, name]) => ({ id, name }));
+  }, [allSubjectsMap]);
 
   // Tampilkan berkas lampiran langsung di dalam aplikasi (In-App Modal Viewer)
   const handleOpenMedia = (mediaItem: any) => {
@@ -176,109 +336,158 @@ export default function MaterialScreen({ route, navigation }: any) {
           style={StyleSheet.absoluteFill}
         />
 
-        {loading && !refreshing ? (
-          <View style={styles.centerBox}>
-            <ActivityIndicator size="large" color="#18A165" />
-            <Text style={styles.loadingText}>Memuat materi pembelajaran...</Text>
-          </View>
-        ) : (
-          <ScrollView
-            style={styles.screen}
-            contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 30 }]}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
-            }
-          >
+        <ScrollView
+          style={styles.screen}
+          contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 30 }]}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
+          }
+        >
           {/* 1. CONTAINER DATA SISWA & UNIT PENDIDIKAN */}
           {children.length > 0 ? (
-            <View style={styles.containerBlock}>
+            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Siswa & Unit Pendidikan</Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>Data Ananda</Text>
+                </View>
+                {children.length > 1 && (
+                  <View style={styles.studentCardCountBadge}>
+                    <Text style={styles.studentCardCountBadgeText}>
+                      {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
+                    </Text>
+                  </View>
+                )}
               </View>
 
               <ScrollView
                 ref={studentScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 32 + 12}
+                snapToInterval={SCREEN_WIDTH - 50 + 12}
                 decelerationRate="fast"
                 onMomentumScrollEnd={handleStudentScrollEnd}
-                onScrollEndDrag={handleStudentScrollEnd}
+                style={styles.heroCardScrollContainer}
                 contentContainerStyle={styles.heroCardScroll}
               >
                 {children.map((child, idx) => {
                   const isSelected = String(child.id) === selectedChildId;
                   const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
                   const unitTitle = child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || '';
-                  const avatarUri =
-                    getProfileImageUrl(child) ||
-                    `https://ui-avatars.com/api/?name=${encodeURIComponent(childFullName)}&background=${isSelected ? 'FFFFFF' : '18A165'}&color=${isSelected ? '18A165' : 'FFFFFF'}&bold=true&size=128`;
+                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
+                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
+                  const avatarUri = getProfileImageUrl(child);
 
                   return (
                     <TouchableOpacity
                       key={String(child.id)}
                       activeOpacity={0.88}
                       onPress={() => selectChildWithScroll(String(child.id), idx)}
-                      style={[styles.childCardHeroSize, isSelected && styles.childCardHeroSizeActive]}
                     >
-                      <View style={styles.childHeroTopRow}>
-                        <View style={[styles.avatarBorderWrapHero, isSelected && styles.avatarBorderWrapHeroActive]}>
-                          <Image
-                            source={{ uri: avatarUri }}
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        </View>
-                        <View style={{ flex: 1, marginLeft: 14 }}>
-                          <View style={styles.childHeroTitleRow}>
-                            <Text numberOfLines={1} style={[styles.childNameHero, isSelected && styles.childTextActive]}>
-                              {childFullName}
-                            </Text>
-                            <View style={[styles.childStatusBadgeHero, isSelected && styles.childStatusBadgeHeroActive]}>
-                              <MaterialCommunityIcons
-                                name={isSelected ? 'check-circle' : 'gesture-tap'}
-                                size={12}
-                                color={isSelected ? '#FFFFFF' : '#059669'}
+                      <LinearGradient
+                        colors={['#0D6B42', '#18A165', '#2BD988']}
+                        locations={[0, 0.55, 1]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
+                      >
+                        <View style={styles.cardDecorCircle} />
+
+                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Selection Button */}
+                        <View style={styles.childHeroTopRow}>
+                          <View style={styles.avatarBorderWrapHero}>
+                            {avatarUri ? (
+                              <Image
+                                source={{ uri: avatarUri }}
+                                style={styles.childAvatarImgHero}
+                                resizeMode="cover"
                               />
-                              <Text style={[styles.childStatusBadgeTextHero, isSelected && styles.childStatusBadgeTextHeroActive]}>
-                                {isSelected ? 'Terpilih' : 'Pilih'}
+                            ) : (
+                              <Image
+                                source={
+                                  child?.gender === 'female' ||
+                                  child?.jenis_kelamin === 'P' ||
+                                  child?.jenis_kelamin === 'female' ||
+                                  child?.gender === 'P'
+                                    ? DEFAULT_STUDENT_GIRL_AVATAR
+                                    : DEFAULT_STUDENT_BOY_AVATAR
+                                }
+                                style={styles.childAvatarImgHero}
+                                resizeMode="cover"
+                              />
+                            )}
+                          </View>
+                          <View style={styles.childInfoCol}>
+                            <View style={styles.studentNameBadgeRow}>
+                              <Text numberOfLines={1} style={styles.studentFullName}>
+                                {childFullName}
+                              </Text>
+                            </View>
+                            <Text style={styles.studentNisText}>
+                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
+                            </Text>
+                            <View style={styles.studentUnitBadge}>
+                              <MaterialCommunityIcons
+                                name="school"
+                                size={11}
+                                color="#FFFFFF"
+                                style={{ marginRight: 4 }}
+                              />
+                              <Text numberOfLines={1} style={styles.studentUnitText}>
+                                {unitTitle}
                               </Text>
                             </View>
                           </View>
-                          <Text numberOfLines={1} style={[styles.childClassHero, isSelected && styles.childTextActive]}>
-                            {className ? `${className} · ${unitTitle}` : unitTitle}
-                          </Text>
-                          <Text style={[styles.childSubInfoHero, isSelected && styles.childSubInfoHeroActive]}>
-                            {child.nis ? `NIS: ${child.nis} · ` : ''}Materi Pembelajaran Aktif
-                          </Text>
-                        </View>
-                      </View>
 
-                      <View style={[styles.childCardBottomBar, isSelected && styles.childCardBottomBarActive]}>
-                        <View style={[styles.childInfoPill, isSelected && styles.childInfoPillActive]}>
-                          <MaterialCommunityIcons
-                            name="school-outline"
-                            size={12}
-                            color={isSelected ? '#FFFFFF' : '#18A165'}
-                          />
-                          <Text numberOfLines={1} style={[styles.childInfoPillText, isSelected && styles.childTextActive]}>
-                            {unitTitle}
-                          </Text>
+                          {/* Right Action Button (Preserves Selection Functionality) */}
+                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
+                            <MaterialCommunityIcons
+                              name={isSelected ? 'check-circle' : 'gesture-tap'}
+                              size={16}
+                              color={isSelected ? '#18A165' : '#FFFFFF'}
+                            />
+                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
+                              {isSelected ? 'Terpilih' : 'Pilih'}
+                            </Text>
+                          </View>
                         </View>
 
-                        <View style={[styles.childInfoPill, isSelected && styles.childInfoPillActive]}>
-                          <MaterialCommunityIcons
-                            name="badge-account-outline"
-                            size={12}
-                            color={isSelected ? '#FFFFFF' : '#18A165'}
-                          />
-                          <Text numberOfLines={1} style={[styles.childInfoPillText, isSelected && styles.childTextActive]}>
-                            {child.nis ? `NIS: ${child.nis}` : 'Terdaftar Aktif'}
-                          </Text>
+                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
+                        <View style={styles.studentAttributesGrid}>
+                          <View style={styles.studentAttrBox}>
+                            <View style={styles.studentAttrLabelRow}>
+                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                              <Text style={styles.studentAttrLabel}>Kelas</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.studentAttrValue}>
+                              {className}
+                            </Text>
+                          </View>
+                          <View style={styles.studentAttrDivider} />
+                          <View style={styles.studentAttrBox}>
+                            <View style={styles.studentAttrLabelRow}>
+                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.studentAttrValue}>
+                              {jenjang}
+                            </Text>
+                          </View>
+                          <View style={styles.studentAttrDivider} />
+                          <View style={styles.studentAttrBox}>
+                            <View style={styles.studentAttrLabelRow}>
+                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                              <Text style={styles.studentAttrLabel}>Presensi</Text>
+                            </View>
+                            <View style={styles.studentPresensiValueRow}>
+                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
+                                Hadir
+                              </Text>
+                              <View style={styles.presensiGreenDot} />
+                            </View>
+                          </View>
                         </View>
-                      </View>
+                      </LinearGradient>
                     </TouchableOpacity>
                   );
                 })}
@@ -304,141 +513,196 @@ export default function MaterialScreen({ route, navigation }: any) {
               )}
             </View>
           ) : studentInfo ? (
-            <View style={styles.containerBlock}>
+            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Siswa & Unit Pendidikan</Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>Data Ananda</Text>
+                </View>
               </View>
 
               {(() => {
                 const s = studentInfo;
-                const studentName = s.name || 'Siswa Aktif';
-                const studentClass = s.class || '';
-                const studentUnit = s.unit || '';
-                const avatarUri =
-                  getProfileImageUrl(s) ||
-                  `https://ui-avatars.com/api/?name=${encodeURIComponent(studentName)}&background=FFFFFF&color=18A165&bold=true&size=128`;
+                const studentName = s.name || s.full_name || s.nama_lengkap || 'Siswa Aktif';
+                const studentClass = s.class || s.class_name || s.kelas?.nama_kelas || 'Kelas Belum Ditentukan';
+                const studentUnit = s.unit || s.unit_name || s.education_unit?.name || 'Unit Pendidikan';
+                const jenjang = s.kelas?.jenjang || s.education_unit?.level || 'Terpadu';
+                const avatarUri = getProfileImageUrl(s);
 
                 return (
-                  <View style={[styles.childCardHeroSize, styles.childCardHeroSizeActive]}>
+                  <LinearGradient
+                    colors={['#0D6B42', '#18A165', '#2BD988']}
+                    locations={[0, 0.55, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.childCardHeroSizeSingle}
+                  >
+                    <View style={styles.cardDecorCircle} />
+
                     <View style={styles.childHeroTopRow}>
-                      <View style={[styles.avatarBorderWrapHero, styles.avatarBorderWrapHeroActive]}>
-                        <Image
-                          source={{ uri: avatarUri }}
-                          style={styles.childAvatarImgHero}
-                          resizeMode="cover"
-                        />
+                      <View style={styles.avatarBorderWrapHero}>
+                        {avatarUri ? (
+                          <Image
+                            source={{ uri: avatarUri }}
+                            style={styles.childAvatarImgHero}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <Image
+                            source={
+                              s?.gender === 'female' ||
+                              s?.jenis_kelamin === 'P' ||
+                              s?.jenis_kelamin === 'female' ||
+                              s?.gender === 'P'
+                                ? DEFAULT_STUDENT_GIRL_AVATAR
+                                : DEFAULT_STUDENT_BOY_AVATAR
+                            }
+                            style={styles.childAvatarImgHero}
+                            resizeMode="cover"
+                          />
+                        )}
                       </View>
-                      <View style={{ flex: 1, marginLeft: 14 }}>
-                        <View style={styles.childHeroTitleRow}>
-                          <Text numberOfLines={1} style={[styles.childNameHero, styles.childTextActive]}>
+                      <View style={styles.childInfoCol}>
+                        <View style={styles.studentNameBadgeRow}>
+                          <Text numberOfLines={1} style={styles.studentFullName}>
                             {studentName}
                           </Text>
-                          <View style={[styles.childStatusBadgeHero, styles.childStatusBadgeHeroActive]}>
-                            <MaterialCommunityIcons name="check-circle" size={12} color="#FFFFFF" />
-                            <Text style={[styles.childStatusBadgeTextHero, styles.childStatusBadgeTextHeroActive]}>
-                              Siswa
-                            </Text>
-                          </View>
                         </View>
-                        <Text numberOfLines={1} style={[styles.childClassHero, styles.childTextActive]}>
-                          {studentClass ? `${studentClass} · ${studentUnit}` : (studentUnit || 'Siswa Terdaftar')}
+                        <Text style={styles.studentNisText}>
+                          NIS: {s.nis || '-'} {s.nisn ? `· NISN: ${s.nisn}` : ''}
                         </Text>
-                        <Text style={[styles.childSubInfoHero, styles.childSubInfoHeroActive]}>
-                          {s.nis ? `NIS: ${s.nis} · ` : ''}Katalog Materi Pembelajaran
-                        </Text>
+                        <View style={styles.studentUnitBadge}>
+                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text numberOfLines={1} style={styles.studentUnitText}>
+                            {studentUnit}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.selectedActionBtnRight}>
+                        <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
+                        <Text style={styles.selectedActionBtnText}>Siswa</Text>
                       </View>
                     </View>
 
-                    <View style={[styles.childCardBottomBar, styles.childCardBottomBarActive]}>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="school-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          {studentUnit || 'Unit Sekolah'}
-                        </Text>
+                    <View style={styles.studentAttributesGrid}>
+                      <View style={styles.studentAttrBox}>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Kelas</Text>
+                        </View>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>{studentClass}</Text>
                       </View>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="badge-account-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          {s.nis ? `NIS: ${s.nis}` : 'Terdaftar Aktif'}
-                        </Text>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
+                        </View>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>{jenjang}</Text>
+                      </View>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Presensi</Text>
+                        </View>
+                        <View style={styles.studentPresensiValueRow}>
+                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
+                          <View style={styles.presensiGreenDot} />
+                        </View>
                       </View>
                     </View>
-                  </View>
+                  </LinearGradient>
                 );
               })()}
             </View>
           ) : user ? (
-            <View style={styles.containerBlock}>
+            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Pengguna & Unit Pendidikan</Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>Data Pengguna & Unit</Text>
+                </View>
               </View>
 
               {(() => {
                 const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
-                const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Siswa');
-                const avatarUri =
-                  getProfileImageUrl(user) ||
-                  `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=FFFFFF&color=18A165&bold=true&size=128`;
+                const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
+                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || 'Mahad Abu Ja\'far');
+                const avatarUri = getProfileImageUrl(user);
 
                 return (
-                  <View style={[styles.childCardHeroSize, styles.childCardHeroSizeActive]}>
+                  <LinearGradient
+                    colors={['#0D6B42', '#18A165', '#2BD988']}
+                    locations={[0, 0.55, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.childCardHeroSizeSingle}
+                  >
+                    <View style={styles.cardDecorCircle} />
+
                     <View style={styles.childHeroTopRow}>
-                      <View style={[styles.avatarBorderWrapHero, styles.avatarBorderWrapHeroActive]}>
-                        <Image
-                          source={{ uri: avatarUri }}
-                          style={styles.childAvatarImgHero}
-                          resizeMode="cover"
-                        />
+                      <View style={styles.avatarBorderWrapHero}>
+                        {avatarUri ? (
+                          <Image
+                            source={{ uri: avatarUri }}
+                            style={styles.childAvatarImgHero}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
+                        )}
                       </View>
-                      <View style={{ flex: 1, marginLeft: 14 }}>
-                        <View style={styles.childHeroTitleRow}>
-                          <Text numberOfLines={1} style={[styles.childNameHero, styles.childTextActive]}>
-                            {userName}
+                      <View style={styles.childInfoCol}>
+                        <Text numberOfLines={1} style={styles.childNameHero}>
+                          {userName}
+                        </Text>
+                        <Text style={styles.childSubInfoHero}>
+                          Status: {userRole}
+                        </Text>
+                        <View style={styles.studentUnitBadge}>
+                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text numberOfLines={1} style={styles.studentUnitText}>
+                            {userUnit}
                           </Text>
-                          <View style={[styles.childStatusBadgeHero, styles.childStatusBadgeHeroActive]}>
-                            <MaterialCommunityIcons name="check-circle" size={12} color="#FFFFFF" />
-                            <Text style={[styles.childStatusBadgeTextHero, styles.childStatusBadgeTextHeroActive]}>
-                              {userRole}
-                            </Text>
-                          </View>
                         </View>
-                        <Text numberOfLines={1} style={[styles.childClassHero, styles.childTextActive]}>
-                          Portal Terpadu Mahad Abu Ja'far
-                        </Text>
-                        <Text style={[styles.childSubInfoHero, styles.childSubInfoHeroActive]}>
-                          Katalog Materi Terpadu
-                        </Text>
+                      </View>
+
+                      <View style={styles.selectedActionBtnRight}>
+                        <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
+                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
                       </View>
                     </View>
 
-                    <View style={[styles.childCardBottomBar, styles.childCardBottomBarActive]}>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="school-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          Mahad Abu Ja'far
-                        </Text>
+                    <View style={styles.studentAttributesGrid}>
+                      <View style={styles.studentAttrBox}>
+                        <Text style={styles.studentAttrLabel}>Peran</Text>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>{userRole}</Text>
                       </View>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="badge-account-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          Akun Terverifikasi
-                        </Text>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <Text style={styles.studentAttrLabel}>Akses</Text>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>Resmi</Text>
+                      </View>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <Text style={styles.studentAttrLabel}>Presensi</Text>
+                        <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
                       </View>
                     </View>
-                  </View>
+                  </LinearGradient>
                 );
               })()}
             </View>
           ) : null}
 
-          {/* 2. SEARCH BAR & FILTER SUBJECT */}
+          {/* 2. SEARCH BAR & FILTER SUBJECT CHIPS */}
           <View style={styles.searchFilterBlock}>
             <View style={styles.searchBar}>
-              <MaterialCommunityIcons name="magnify" size={20} color="#64748B" />
+              <MaterialCommunityIcons name="magnify" size={19} color="#94A3B8" />
               <TextInput
-                placeholder="Cari materi atau mata pelajaran..."
+                placeholder="Cari materi pembelajaran..."
                 placeholderTextColor="#94A3B8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -446,118 +710,119 @@ export default function MaterialScreen({ route, navigation }: any) {
               />
               {searchQuery.length > 0 && (
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                  <MaterialCommunityIcons name="close-circle" size={17} color="#94A3B8" />
                 </TouchableOpacity>
               )}
             </View>
 
-            {subjectsList.length > 0 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subjectChipsRow}>
-                <TouchableOpacity
-                  onPress={() => setSelectedSubjectId('all')}
-                  style={[styles.subjectChip, selectedSubjectId === 'all' && styles.subjectChipActive]}
+            {/* HORIZONTAL FILTER CHIPS (MATCHING USER MOCKUP) */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.subjectChipsRow}
+            >
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setSelectedSubjectId('all')}
+                style={[
+                  styles.subjectChip,
+                  selectedSubjectId === 'all' && styles.subjectChipActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.subjectChipText,
+                    selectedSubjectId === 'all' && styles.subjectChipTextActive,
+                  ]}
                 >
-                  <Text style={[styles.subjectChipText, selectedSubjectId === 'all' && styles.subjectChipTextActive]}>
-                    Semua Mapel ({materials.length})
-                  </Text>
-                </TouchableOpacity>
-                {subjectsList.map((sub) => (
+                  Semua
+                </Text>
+              </TouchableOpacity>
+              {subjectsList.map((sub) => {
+                const isActive = selectedSubjectId === sub.id;
+                return (
                   <TouchableOpacity
                     key={sub.id}
+                    activeOpacity={0.8}
                     onPress={() => setSelectedSubjectId(sub.id)}
-                    style={[styles.subjectChip, selectedSubjectId === sub.id && styles.subjectChipActive]}
+                    style={[
+                      styles.subjectChip,
+                      isActive && styles.subjectChipActive,
+                    ]}
                   >
-                    <Text style={[styles.subjectChipText, selectedSubjectId === sub.id && styles.subjectChipTextActive]}>
+                    <Text
+                      style={[
+                        styles.subjectChipText,
+                        isActive && styles.subjectChipTextActive,
+                      ]}
+                    >
                       {sub.name}
                     </Text>
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+                );
+              })}
+            </ScrollView>
           </View>
 
-          {/* 3. CONTAINER DAFTAR MATERI */}
+          {/* 3. DAFTAR MATERI PEMBELAJARAN (NEW CARD STYLE FROM USER MOCKUP) */}
           <View style={styles.containerBlock}>
-            <View style={styles.sectionHeaderRow}>
-              <MaterialCommunityIcons name="book-open-page-variant-outline" size={18} color="#18A165" />
-              <Text style={styles.sectionTitle}>
-                Daftar Materi Pembelajaran ({materials.length})
-              </Text>
-            </View>
-
-            {materials.length === 0 ? (
+            {loading && !refreshing ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="large" color="#18A165" />
+                <Text style={styles.loadingText}>Memuat materi pembelajaran...</Text>
+              </View>
+            ) : materials.length === 0 ? (
               <View style={styles.emptyCard}>
-                <MaterialCommunityIcons name="book-outline" size={48} color="#94A3B8" />
+                <MaterialCommunityIcons name="book-open-outline" size={48} color="#94A3B8" />
                 <Text style={styles.emptyTitle}>Belum Ada Materi</Text>
                 <Text style={styles.emptyDesc}>
                   Materi pembelajaran untuk kelas dan kurikulum ini belum dipublikasikan oleh dewan guru.
                 </Text>
               </View>
             ) : (
-              <View style={{ gap: 12 }}>
+              <View style={styles.materialsListContainer}>
                 {materials.map((item, idx) => {
                   const subjectName = item.subject?.name || item.subject?.nama_mapel || 'Pelajaran';
-                  const teacherName = item.guru?.nama_lengkap || item.teacher?.name || 'Dewan Guru';
-                  const mediaCount = Array.isArray(item.media) ? item.media.length : 0;
-                  const hasPdf = item.media?.some((m: any) => m.tipe_file === 'pdf');
-                  const hasVideo = item.media?.some((m: any) => m.tipe_file === 'video');
-                  const hasAudio = item.media?.some((m: any) => m.tipe_file === 'audio');
+                  const subjectStyle = getSubjectStyle(subjectName, item.media);
+                  const dateStr = formatDate(item.created_at || item.tanggal);
+                  const metaStr = formatMetaText(item);
 
                   return (
                     <TouchableOpacity
                       key={item.id || idx}
-                      activeOpacity={0.88}
+                      activeOpacity={0.85}
                       onPress={() => setSelectedMaterial(item)}
                       style={styles.materialCard}
                     >
-                      <View style={styles.materialCardHeader}>
-                        <View style={styles.subjectBadge}>
-                          <Text style={styles.subjectBadgeText}>{subjectName}</Text>
-                        </View>
-                        <Text style={styles.materialDateText}>
-                          {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : 'Terbaru'}
-                        </Text>
+                      {/* Left Icon Squircle Box */}
+                      <View style={[styles.cardIconBox, { backgroundColor: subjectStyle.bg }]}>
+                        <MaterialCommunityIcons
+                          name={subjectStyle.icon as any}
+                          size={26}
+                          color={subjectStyle.color}
+                        />
                       </View>
 
-                      <Text numberOfLines={2} style={styles.materialTitle}>
-                        {item.judul || item.title || 'Materi Pembelajaran'}
-                      </Text>
-
-                      <Text numberOfLines={2} style={styles.materialSnippet}>
-                        {item.konten || item.isi || item.deskripsi || 'Pembahasan materi pembelajaran terpadu.'}
-                      </Text>
-
-                      <View style={styles.materialFooter}>
-                        <View style={styles.teacherInfoRow}>
-                          <MaterialCommunityIcons name="account-tie" size={14} color="#64748B" />
-                          <Text numberOfLines={1} style={styles.teacherNameText}>{teacherName}</Text>
+                      {/* Middle & Right Content */}
+                      <View style={styles.cardContentCol}>
+                        <View style={styles.cardTopRow}>
+                          <Text numberOfLines={1} style={[styles.cardSubjectText, { color: subjectStyle.color }]}>
+                            {subjectName}
+                          </Text>
+                          <Text style={styles.cardDateText}>
+                            {dateStr}
+                          </Text>
                         </View>
 
-                        <View style={styles.mediaPillsRow}>
-                          {hasPdf && (
-                            <View style={[styles.mediaPill, { backgroundColor: '#FEE2E2' }]}>
-                              <MaterialCommunityIcons name="file-pdf-box" size={13} color="#EF4444" />
-                              <Text style={[styles.mediaPillText, { color: '#B91C1C' }]}>PDF</Text>
-                            </View>
-                          )}
-                          {hasVideo && (
-                            <View style={[styles.mediaPill, { backgroundColor: '#FFEDD5' }]}>
-                              <MaterialCommunityIcons name="youtube" size={13} color="#EA580C" />
-                              <Text style={[styles.mediaPillText, { color: '#C2410C' }]}>Video</Text>
-                            </View>
-                          )}
-                          {hasAudio && (
-                            <View style={[styles.mediaPill, { backgroundColor: '#F3E8FF' }]}>
-                              <MaterialCommunityIcons name="headphones" size={13} color="#9333EA" />
-                              <Text style={[styles.mediaPillText, { color: '#7E22CE' }]}>Audio</Text>
-                            </View>
-                          )}
-                          {mediaCount === 0 && (
-                            <View style={[styles.mediaPill, { backgroundColor: '#F1F5F9' }]}>
-                              <MaterialCommunityIcons name="text-box-outline" size={13} color="#64748B" />
-                              <Text style={[styles.mediaPillText, { color: '#475569' }]}>Ringkasan</Text>
-                            </View>
-                          )}
+                        <Text numberOfLines={1} style={styles.cardTitleText}>
+                          {item.judul || item.title || 'Materi Pembelajaran'}
+                        </Text>
+
+                        <View style={styles.cardBottomRow}>
+                          <Text numberOfLines={1} style={styles.cardMetaText}>
+                            {metaStr}
+                          </Text>
+                          <MaterialCommunityIcons name="chevron-right" size={20} color="#3B82F6" />
                         </View>
                       </View>
                     </TouchableOpacity>
@@ -567,7 +832,6 @@ export default function MaterialScreen({ route, navigation }: any) {
             )}
           </View>
         </ScrollView>
-      )}
 
       {/* DETAIL MATERI MODAL */}
       <Modal
@@ -852,166 +1116,293 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: 'transparent' },
   content: { padding: 16, paddingTop: Platform.OS === 'android' ? 20 : 16 },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  loadingBox: {
+    paddingVertical: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   loadingText: { marginTop: 12, fontSize: 13, color: '#64748B', fontWeight: '600' },
 
+  studentContainerBlock: {
+    marginBottom: 8,
+  },
   containerBlock: { marginBottom: 16 },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'space-between',
     marginBottom: 10,
+  },
+  sectionHeaderTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   sectionTitle: {
     fontSize: 13.5,
     fontWeight: '900',
     color: '#0F172A',
   },
+  studentCardCountBadge: {
+    backgroundColor: '#EBF8F2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  studentCardCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#084835',
+  },
+  heroCardScrollContainer: {
+    marginHorizontal: -16,
+  },
   heroCardScroll: {
+    paddingHorizontal: 16,
     gap: 12,
-    paddingRight: 10,
+    paddingBottom: 4,
   },
   childCardHeroSize: {
-    width: SCREEN_WIDTH - 32,
+    width: SCREEN_WIDTH - 50,
     minHeight: 148,
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#18A165',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    shadowColor: '#0D6B42',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+    overflow: 'hidden',
+    position: 'relative',
   },
-  childCardHeroSizeActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
+  childCardHeroSizeSingle: {
+    width: '100%',
+    minHeight: 148,
+    justifyContent: 'space-between',
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    shadowColor: '#0D6B42',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  childCardHeroSizeInactive: {
+    opacity: 0.9,
+  },
+  cardDecorCircle: {
+    position: 'absolute',
+    top: -24,
+    right: -24,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    zIndex: 0,
   },
   childHeroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    zIndex: 1,
   },
   avatarBorderWrapHero: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
     overflow: 'hidden',
-    backgroundColor: '#EBF8F2',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  avatarBorderWrapHeroActive: {
-    borderColor: '#FFFFFF',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  avatarBorderWrapHeroInactive: {
+    borderColor: 'rgba(255, 255, 255, 0.8)',
   },
   childAvatarImgHero: {
     width: '100%',
     height: '100%',
   },
-  childHeroTitleRow: {
+  avatarInitialText: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#084835',
+  },
+  childInfoCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  studentNameBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+  },
+  studentFullName: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  studentNisText: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '600',
+    marginTop: 1,
   },
   childNameHero: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#0F172A',
-    flex: 1,
+    color: '#FFFFFF',
   },
-  childClassHero: {
-    fontSize: 11.5,
+  childSubInfoHero: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 1,
+    fontWeight: '600',
+  },
+  studentUnitBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 3,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  studentUnitBadgeInactive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  studentUnitText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    maxWidth: SCREEN_WIDTH - 220,
+  },
+  selectedActionBtnRight: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    marginLeft: 8,
+    minWidth: 46,
+  },
+  selectedActionBtnRightInactive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    elevation: 0,
+  },
+  selectedActionBtnText: {
+    fontSize: 8.5,
     fontWeight: '800',
     color: '#18A165',
     marginTop: 2,
   },
-  childSubInfoHero: {
-    fontSize: 10.5,
-    color: '#64748B',
-    marginTop: 2,
-    fontWeight: '600',
+  selectedActionBtnTextInactive: {
+    color: '#FFFFFF',
   },
-  childSubInfoHeroActive: {
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
-  childStatusBadgeHero: {
+  studentAttributesGrid: {
     flexDirection: 'row',
+    backgroundColor: 'rgba(4, 47, 30, 0.35)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    marginTop: 10,
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: '#ECFDF5',
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    zIndex: 1,
   },
-  childStatusBadgeHeroActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+  studentAttributesGridInactive: {
+    backgroundColor: 'rgba(4, 47, 30, 0.35)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
-  childStatusBadgeTextHero: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#059669',
+  studentAttrBox: {
+    flex: 1,
+    alignItems: 'center',
   },
-  childStatusBadgeTextHeroActive: {
-    color: '#FFFFFF',
-  },
-  childCardBottomBar: {
+  studentAttrLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
-  childCardBottomBarActive: {
-    borderTopColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  childInfoPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#F8FAFC',
-  },
-  childInfoPillActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  childInfoPillText: {
-    fontSize: 10,
+  studentAttrLabel: {
+    fontSize: 9.5,
+    color: '#A7F3D0',
     fontWeight: '700',
-    color: '#475569',
   },
-  childTextActive: {
+  studentAttrValue: {
+    fontSize: 11,
+    fontWeight: '900',
     color: '#FFFFFF',
+  },
+  studentPresensiValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  presensiGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#34D399',
+  },
+  studentAttrDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  inactiveText: {
+    color: '#0F172A',
+  },
+  inactiveSubText: {
+    color: '#64748B',
   },
   paginationDotsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 10,
+    marginTop: 8,
   },
   paginationDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#CBD5E1',
   },
   paginationDotActive: {
-    width: 22,
+    width: 16,
     backgroundColor: '#18A165',
   },
 
   searchFilterBlock: {
-    marginBottom: 16,
+    marginBottom: 14,
     gap: 10,
   },
   searchBar: {
@@ -1020,9 +1411,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     paddingHorizontal: 12,
-    height: 44,
-    borderWidth: 1.5,
+    height: 42,
+    borderWidth: 1,
     borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -1033,39 +1428,92 @@ const styles = StyleSheet.create({
   subjectChipsRow: {
     gap: 8,
     paddingRight: 10,
+    alignItems: 'center',
   },
   subjectChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#E8EFF5',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   subjectChipActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
+    backgroundColor: '#0D6B42',
   },
   subjectChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
   },
   subjectChipTextActive: {
     color: '#FFFFFF',
+    fontWeight: '700',
   },
 
+  materialsListContainer: {
+    gap: 10,
+  },
   materialCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
     padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
+    borderWidth: 1,
+    borderColor: '#EDF2F7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000000',
     shadowOpacity: 0.04,
-    shadowRadius: 6,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+  },
+  cardIconBox: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardContentCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  cardSubjectText: {
+    fontSize: 13,
+    fontWeight: '700',
+    flex: 1,
+    marginRight: 8,
+  },
+  cardDateText: {
+    fontSize: 11.5,
+    fontWeight: '500',
+    color: '#64748B',
+  },
+  cardTitleText: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  cardBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardMetaText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    flex: 1,
+    marginRight: 8,
   },
   materialCardHeader: {
     flexDirection: 'row',

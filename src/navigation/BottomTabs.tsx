@@ -1,10 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import InAppNotificationBanner from '../components/InAppNotificationBanner';
+import { useChatNotificationWatcher } from '../hooks/useChatNotificationWatcher';
+import { notificationService } from '../services/notificationService';
+import { useChatBadgeStore } from '../stores/chatBadgeStore';
 import HomeScreen from '../screens/HomeScreen';
 import AbsensiScreen from '../screens/AbsensiScreen';
 import ProfilScreen from '../screens/ProfilScreen';
@@ -21,6 +25,14 @@ import SchoolInformationScreen from '../screens/SchoolInformationScreen';
 import ScheduleScreen from '../screens/ScheduleScreen';
 import MaterialScreen from '../screens/MaterialScreen';
 import AssignmentScreen from '../screens/AssignmentScreen';
+import TahfizhScreen from '../screens/TahfizhScreen';
+import GradeScreen from '../screens/GradeScreen';
+import StudentNotesScreen from '../screens/StudentNotesScreen';
+import MutabaahScreen from '../screens/MutabaahScreen';
+import ExamGridsScreen from '../screens/ExamGridsScreen';
+import CbtExamsScreen from '../screens/CbtExamsScreen';
+import QuranScreen from '../screens/QuranScreen';
+import DoaDzikirScreen from '../screens/DoaDzikirScreen';
 import AccessDeniedScreen from '../components/AccessDeniedScreen';
 import { useAuthStore } from '../stores/authStore';
 import { mobileApiService } from '../services/mobileApiService';
@@ -30,67 +42,91 @@ import { canAccessScreen, ScreenKey } from '../utils/accessControl';
 
 const Tab = createBottomTabNavigator();
 
+function ModuleHeader({ title, subtitle, navigation }: { title: string; subtitle?: string; navigation: any }) {
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
+
+  const resolvedSubtitle = subtitle || (
+    title === 'Nilai Hasil Belajar' ? 'Mutabaah Ibadah Harian' :
+    title === 'Mutaba’ah Yaumiyyah' ? 'Pantau dan tingkatkan ibadah setiap hari' :
+    title === 'Tahfizh Al-Qur\'an' ? 'Pantau dan tingkatkan capaian hafalan' :
+    title === 'Kalender Akademik' ? 'Agenda & kalender pendidikan terpadu' :
+    undefined
+  );
+
+  return (
+    <View style={{ backgroundColor: '#FFFFFF', width: '100%' }}>
+      <LinearGradient
+        colors={['#047857', '#059669', '#10B981']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          moduleHeaderStyles.gradientBar,
+          {
+            paddingTop: topInset + 8,
+            paddingBottom: resolvedSubtitle ? 16 : 14,
+          },
+        ]}
+      >
+        <View style={moduleHeaderStyles.decorWave} />
+        <View style={moduleHeaderStyles.decorCircle} />
+        <View style={moduleHeaderStyles.decorMosqueArch} />
+
+        {/* Title layer: Absolutely centered relative to full screen width */}
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <View
+            style={[
+              moduleHeaderStyles.titleAbsoluteCenter,
+              {
+                paddingTop: topInset + 8,
+                paddingBottom: resolvedSubtitle ? 16 : 14,
+              },
+            ]}
+          >
+            <Text numberOfLines={1} style={moduleHeaderStyles.title}>
+              {title}
+            </Text>
+            {resolvedSubtitle ? (
+              <Text numberOfLines={1} style={moduleHeaderStyles.subtitle}>
+                {resolvedSubtitle}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {/* Buttons layer: left back button and right bell button */}
+        <View style={moduleHeaderStyles.buttonsRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Kembali ke Beranda"
+            onPress={() => navigation.navigate('Beranda')}
+            style={moduleHeaderStyles.backButton}
+          >
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Notifikasi"
+            onPress={() => navigation.navigate('Notifikasi')}
+            style={moduleHeaderStyles.bellButton}
+          >
+            <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+            <View style={moduleHeaderStyles.bellBadgeDot} />
+          </Pressable>
+        </View>
+      </LinearGradient>
+    </View>
+  );
+}
+
 const moduleOptions = (title: string, theme: any) => ({ navigation }: any) => ({
   title,
   headerShown: true,
   tabBarButton: () => null,
   tabBarItemStyle: { display: 'none' as const },
   headerShadowVisible: false,
-  headerBackground: () => (
-    <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
-      <LinearGradient
-        colors={['#0D6B42', '#18A165', '#2BD988']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            borderBottomLeftRadius: 28,
-            borderBottomRightRadius: 28,
-            overflow: 'hidden',
-          },
-        ]}
-      >
-        <View style={moduleHeaderStyles.decorWave} />
-        <View style={moduleHeaderStyles.decorCircle} />
-      </LinearGradient>
-    </View>
-  ),
-  headerStyle: {
-    backgroundColor: 'transparent',
-    height: Platform.OS === 'android' ? 96 : 106,
-  },
-  headerTitle: () => (
-    <View style={{ marginLeft: 4, paddingBottom: 4 }}>
-      <Text numberOfLines={1} style={moduleHeaderStyles.title}>
-        {title}
-      </Text>
-    </View>
-  ),
-  headerLeft: () => (
-    <View style={{ paddingBottom: 6 }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Kembali ke Beranda"
-        onPress={() => navigation.navigate('Beranda')}
-        style={moduleHeaderStyles.backButton}
-      >
-        <MaterialCommunityIcons name="arrow-left" size={20} color="#18A165" />
-      </Pressable>
-    </View>
-  ),
-  headerRight: () => (
-    <View style={{ paddingBottom: 6, marginRight: 14 }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Notifikasi"
-        onPress={() => navigation.navigate('Notifikasi')}
-        style={moduleHeaderStyles.bellButton}
-      >
-        <MaterialCommunityIcons name="bell-outline" size={20} color="#18A165" />
-      </Pressable>
-    </View>
-  ),
+  header: () => <ModuleHeader title={title} navigation={navigation} />,
 });
 
 /**
@@ -129,8 +165,41 @@ const GuardedParentScreen = withScreenGuard(ParentPortalScreen, 'parent');
 const GuardedStudentScreen = withScreenGuard(StudentPortalScreen, 'student');
 const GuardedAbsensiScreen = withScreenGuard(AbsensiScreen, 'attendance');
 
+const getSafeInsets = (insetsHook?: () => any) => {
+  try {
+    if (typeof insetsHook === 'function') {
+      const res = insetsHook();
+      if (res && typeof res === 'object') return res;
+    }
+  } catch {}
+  return { top: 0, bottom: 0, left: 0, right: 0 };
+};
+
+function QrTabBarButton(props: any) {
+  const isSelected = props.accessibilityState?.selected;
+  return (
+    <TouchableOpacity
+      {...props}
+      activeOpacity={0.88}
+      style={tabStyles.qrFabWrapper}
+    >
+      <LinearGradient
+        colors={['#24BD7C', '#18A165', '#108251']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          tabStyles.qrFabCircle,
+          isSelected && tabStyles.qrFabCircleActive,
+        ]}
+      >
+        <MaterialCommunityIcons name="qrcode-scan" size={26} color="#FFFFFF" />
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
 export default function BottomTabs() {
-  const insets = useSafeAreaInsets();
+  const insets = getSafeInsets(typeof useSafeAreaInsets === 'function' ? useSafeAreaInsets : undefined);
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 18 : 10);
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
@@ -187,6 +256,38 @@ export default function BottomTabs() {
     .filter((item) => item.enabled && access[item.key as ScreenKey] !== false)
     .sort((a, b) => a.order - b.order);
 
+  const navigationRef = useNavigationContainerRef();
+  const unreadChatCount = useChatBadgeStore((state) => state.unreadChatCount);
+
+  const handleNavigateChat = useCallback((teacherId?: string) => {
+    try {
+      (navigationRef as any).navigate('Chat Guru', { teacherId });
+    } catch {}
+  }, [navigationRef]);
+
+  // Watch for incoming messages from teachers and show notifications
+  useChatNotificationWatcher(handleNavigateChat);
+
+  // Listen for user tapping native Android status-bar notification
+  useEffect(() => {
+    const unsubscribe = notificationService.onNotificationResponse((data) => {
+      try {
+        if (data?.screen === 'Chat' || data?.teacherId) {
+          (navigationRef as any).navigate('Chat Guru', {
+            teacherId: data.teacherId,
+            studentId: data.studentId,
+          });
+        } else if (data?.screen === 'Notifikasi') {
+          (navigationRef as any).navigate('Notifikasi');
+        }
+      } catch (err) {
+        console.log('Error navigating from notification tap:', err);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
   const isFoundation = isFoundationRole(user?.roles || []);
 
   if (isProfileSyncing) {
@@ -216,16 +317,17 @@ export default function BottomTabs() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Tab.Navigator
         initialRouteName="Beranda"
         backBehavior="initialRoute"
         screenOptions={({ route }) => ({
           headerShown: false,
+          tabBarHideOnKeyboard: true,
           sceneStyle: { backgroundColor: theme.background_color },
           headerStyle: { backgroundColor: theme.surface_color },
-          headerTitleStyle: { color: '#18A165', fontWeight: '800' },
-          tabBarActiveTintColor: '#18A165',
+          headerTitleStyle: { color: '#059669', fontWeight: '800' },
+          tabBarActiveTintColor: '#059669',
           tabBarInactiveTintColor: '#64748B',
           tabBarStyle: {
             position: 'absolute',
@@ -242,16 +344,17 @@ export default function BottomTabs() {
             height: 58 + Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 8),
             shadowColor: '#000000',
             shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.1,
+            shadowOpacity: 0.08,
             shadowRadius: 10,
             elevation: 8,
           },
           tabBarItemStyle: { minWidth: 0, paddingHorizontal: 0, justifyContent: 'center' },
           tabBarShowLabel: mobileConfig.navigation.show_labels,
           tabBarLabelStyle: {
-            fontSize: mobileConfig.theme.font_scale === 'large' ? 10 : 9,
+            fontSize: mobileConfig.theme.font_scale === 'large' ? 10.5 : 9.5,
             lineHeight: 12,
             fontWeight: '700',
+            fontFamily: 'Nunito_700Bold',
             marginTop: 1,
           },
           tabBarIcon: ({ focused }) => {
@@ -268,6 +371,9 @@ export default function BottomTabs() {
             else if (route.name === 'Absensi') iconName = 'clipboard-check-outline';
             else if (route.name === 'Kalender') iconName = 'calendar-month-outline';
 
+            const isChat = route.name === 'Chat Guru';
+            const showBadge = isChat && unreadChatCount > 0;
+
             if (focused) {
               return (
                 <View style={tabStyles.activeTabSquircle}>
@@ -276,6 +382,7 @@ export default function BottomTabs() {
                     color="#FFFFFF"
                     size={18}
                   />
+                  {showBadge && <View style={tabStyles.chatBadgeDotActive} />}
                 </View>
               );
             }
@@ -287,6 +394,7 @@ export default function BottomTabs() {
                   color="#64748B"
                   size={22}
                 />
+                {showBadge && <View style={tabStyles.chatBadgeDot} />}
               </View>
             );
           },
@@ -307,30 +415,10 @@ export default function BottomTabs() {
                 name={entry.name}
                 component={entry.component}
                 options={{
+                  headerShown: false,
                   tabBarLabel: () => null,
                   title: 'QR Code',
-                  tabBarButton: (props: any) => {
-                    const isSelected = props.accessibilityState?.selected;
-                    return (
-                      <TouchableOpacity
-                        {...props}
-                        activeOpacity={0.88}
-                        style={tabStyles.qrFabWrapper}
-                      >
-                        <LinearGradient
-                          colors={['#24BD7C', '#18A165', '#108251']}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={[
-                            tabStyles.qrFabCircle,
-                            isSelected && tabStyles.qrFabCircleActive,
-                          ]}
-                        >
-                          <MaterialCommunityIcons name="qrcode-scan" size={26} color="#FFFFFF" />
-                        </LinearGradient>
-                      </TouchableOpacity>
-                    );
-                  },
+                  tabBarButton: QrTabBarButton,
                 }}
               />
             );
@@ -406,26 +494,98 @@ export default function BottomTabs() {
           options={moduleOptions('Tugas Siswa', theme)}
         />
         <Tab.Screen
+          name="Tahfizh"
+          component={TahfizhScreen}
+          options={moduleOptions('Tahfizh Al-Qur\'an', theme)}
+        />
+        <Tab.Screen
+          name="Mutabaah"
+          component={MutabaahScreen}
+          options={moduleOptions('Mutaba’ah Yaumiyyah', theme)}
+        />
+        <Tab.Screen
+          name="Nilai"
+          component={GradeScreen}
+          options={moduleOptions('Nilai Hasil Belajar', theme)}
+        />
+        {access.parent && (
+          <Tab.Screen
+            name="Komentar"
+            component={StudentNotesScreen}
+            options={moduleOptions('Komentar & Catatan Guru', theme)}
+          />
+        )}
+        <Tab.Screen
+          name="KisiKisi"
+          component={ExamGridsScreen}
+          options={moduleOptions('Kisi-Kisi Ujian', theme)}
+        />
+        <Tab.Screen
+          name="CbtExams"
+          component={CbtExamsScreen}
+          options={moduleOptions('Ujian CBT', theme)}
+        />
+        <Tab.Screen
+          name="Quran"
+          component={QuranScreen}
+          options={moduleOptions("Al-Qur'an Al-Karim", theme)}
+        />
+        <Tab.Screen
+          name="DoaDzikir"
+          component={DoaDzikirScreen}
+          options={moduleOptions('Doa & Dzikir Harian', theme)}
+        />
+        <Tab.Screen
           name="Notifikasi"
           component={GuardedNotificationsScreen}
           options={moduleOptions('Notifikasi & Pengumuman', theme)}
         />
       </Tab.Navigator>
+      <InAppNotificationBanner
+        onPressNotification={(data) => {
+          try {
+            (navigationRef as any).navigate('Chat Guru', {
+              teacherId: data.teacherId,
+              studentId: data.studentId,
+            });
+          } catch {}
+        }}
+      />
     </NavigationContainer>
   );
 }
 
 const moduleHeaderStyles = StyleSheet.create({
+  gradientBar: {
+    width: '100%',
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+    overflow: 'hidden',
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  titleAbsoluteCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 68,
+  },
+  buttonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    width: '100%',
+  },
   backButton: {
     width: 38,
     height: 38,
-    marginLeft: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     shadowColor: '#000000',
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.12,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
@@ -438,10 +598,22 @@ const moduleHeaderStyles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     shadowColor: '#000000',
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.12,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
+    position: 'relative',
+  },
+  bellBadgeDot: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
   eyebrow: {
     fontSize: 8.5,
@@ -450,10 +622,20 @@ const moduleHeaderStyles = StyleSheet.create({
     color: '#D4F5E6',
   },
   title: {
-    fontSize: 15.5,
-    fontWeight: '900',
+    fontSize: 16,
+    fontWeight: '700',
+    fontFamily: 'Poppins_700Bold',
     color: '#FFFFFF',
-    maxWidth: 220,
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  subtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: 'rgba(255, 255, 255, 0.88)',
+    textAlign: 'center',
+    marginTop: 1.5,
   },
   decorWave: {
     position: 'absolute',
@@ -474,6 +656,15 @@ const moduleHeaderStyles = StyleSheet.create({
     borderRadius: 40,
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
   },
+  decorMosqueArch: {
+    position: 'absolute',
+    right: 48,
+    top: -10,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
   tabIcon: {
     width: 38,
     height: 30,
@@ -488,12 +679,12 @@ const tabStyles = StyleSheet.create({
     width: 44,
     height: 28,
     borderRadius: 10,
-    backgroundColor: '#18A165',
+    backgroundColor: '#059669',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
-    shadowColor: '#18A165',
-    shadowOpacity: 0.3,
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
@@ -504,6 +695,28 @@ const tabStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
+  },
+  chatBadgeDot: {
+    position: 'absolute',
+    top: 2,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  chatBadgeDotActive: {
+    position: 'absolute',
+    top: 2,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#059669',
   },
   qrFabWrapper: {
     top: -18,
@@ -517,18 +730,18 @@ const tabStyles = StyleSheet.create({
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#18A165',
+    backgroundColor: '#059669',
     borderWidth: 4,
     borderColor: '#FFFFFF',
-    shadowColor: '#18A165',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.45,
+    shadowOpacity: 0.38,
     shadowRadius: 10,
     elevation: 8,
   },
   qrFabCircleActive: {
     borderColor: '#DEF7EC',
-    shadowOpacity: 0.65,
+    shadowOpacity: 0.6,
     transform: [{ scale: 1.05 }],
   },
 });

@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { getApiErrorMessage } from '../services/api';
 import { mobileApiService } from '../services/mobileApiService';
+import { useAuthStore } from '../stores/authStore';
+import { offlineCache } from '../utils/offlineCache';
 
 type RecordItem = {
   id: string;
@@ -27,6 +29,7 @@ type RecordItem = {
 const unwrap = <T,>(response: any): T => response?.data?.data ?? response?.data ?? response;
 
 export default function StudentPortalScreen() {
+  const user = useAuthStore((state) => state.user);
   const [profile, setProfile] = useState<any>();
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [tab, setTab] = useState<'schedules' | 'materials' | 'assignments'>('schedules');
@@ -36,21 +39,37 @@ export default function StudentPortalScreen() {
   const [assignmentId, setAssignmentId] = useState<string>();
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError('');
+    const cacheKey = offlineCache.buildKey('student_portal', user?.id, tab);
+
+    // Baca cache dulu
+    const cached = await offlineCache.get<{ profile: any; records: RecordItem[] }>(cacheKey);
+    if (cached) {
+      if (cached.profile) setProfile(cached.profile);
+      if (cached.records) setRecords(cached.records);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     try {
       const [dashboardResponse, listResponse] = await Promise.all([
         mobileApiService.getPortalDashboard(),
         mobileApiService.getPortalResource(tab),
       ]);
-      setProfile(unwrap<any>(dashboardResponse)?.student);
-      setRecords(unwrap<RecordItem[]>(listResponse) || []);
+      const freshProf = unwrap<any>(dashboardResponse)?.student;
+      const freshRecs = unwrap<RecordItem[]>(listResponse) || [];
+      if (freshProf) setProfile(freshProf);
+      setRecords(freshRecs);
+      void offlineCache.set(cacheKey, { profile: freshProf, records: freshRecs });
     } catch (err: any) {
-      setError(getApiErrorMessage(err, 'Data portal siswa belum berhasil dimuat.'));
+      if (!cached) {
+        setError(getApiErrorMessage(err, 'Data portal siswa belum berhasil dimuat.'));
+      }
     } finally {
       setLoading(false);
     }
-  }, [tab]);
+  }, [tab, user?.id]);
 
   useEffect(() => {
     void load();

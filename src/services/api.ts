@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
 import { useAuthStore } from '../stores/authStore';
+import { useNetworkStore } from '../stores/networkStore';
 
 export const normalizeApiUrl = (
   inputUrl?: string | null,
@@ -163,7 +164,7 @@ export const api = axios.create({
     'Content-Type': 'application/json',
     Accept: 'application/json',
   },
-  timeout: 5000,
+  timeout: 15000,
 });
 
 // Interceptor to attach Sanctum Bearer token & log requests safely
@@ -204,9 +205,16 @@ api.interceptors.response.use(
       console.log(`[LOGIN_TRACE] role_count: ${state.roles?.length ?? 0}`);
       console.log(`[LOGIN_TRACE] permission_count: ${state.permissions?.length ?? 0}`);
     }
+    useNetworkStore.getState().setOnline(true);
     return response;
   },
   async (error) => {
+    if (!error.response || error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
+      useNetworkStore.getState().setOnline(false);
+    } else {
+      useNetworkStore.getState().setOnline(true);
+    }
+
     const originalConfig = error.config;
     const startTime = (originalConfig as any)?.metadata?.startTime || Date.now();
     const duration = Date.now() - startTime;

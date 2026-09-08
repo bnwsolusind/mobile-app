@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,10 +11,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getApiErrorMessage } from '../services/api';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { getProfileImageUrl } from '../utils/profile';
+import { useAuthStore } from '../stores/authStore';
+import { offlineCache } from '../utils/offlineCache';
 
 type Child = Record<string, any>;
 type ParentDashboard = Record<string, any>;
@@ -22,49 +25,130 @@ type ParentDashboard = Record<string, any>;
 const childName = (child: Child): string => child.full_name || child.name || 'Siswa';
 const className = (child: Child): string => child.kelas?.nama_kelas || child.kelas?.name || 'Kelas belum ditentukan';
 
-export default function ParentPortalScreen({ navigation }: any) {
+const SUB_TABS = [
+  { key: 'mutabaah', label: 'Dashboard Mutaba’ah', icon: 'hand-heart-outline', activeColor: '#D97706', activeBg: '#FEF3C7', activeBorder: '#FDE68A' },
+  { key: 'setoran', label: 'Setoran Tahfizh Siswa', icon: 'book-check-outline', activeColor: '#059669', activeBg: '#D1FAE5', activeBorder: '#A7F3D0' },
+  { key: 'target', label: 'Target & Evaluasi', icon: 'trophy-outline', activeColor: '#0D9488', activeBg: '#CCFBF1', activeBorder: '#99F6E4' },
+  { key: 'ortu', label: 'Monitoring Orang Tua', icon: 'account-group-outline', activeColor: '#7C3AED', activeBg: '#EDE9FE', activeBorder: '#DDD6FE' },
+];
+
+export default function ParentPortalScreen({ route, navigation }: any) {
+  const user = useAuthStore((state) => state.user);
+  const targetChildId = route?.params?.child_id;
+  const routeTab = route?.params?.tab;
+  const [selectedId, setSelectedId] = useState<string | undefined>(targetChildId ? String(targetChildId) : undefined);
+  const selectedIdRef = useRef<string | undefined>(targetChildId ? String(targetChildId) : undefined);
   const [children, setChildren] = useState<Child[]>([]);
-  const [selectedId, setSelectedId] = useState<string>();
   const [dashboard, setDashboard] = useState<ParentDashboard>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reason, setReason] = useState('');
-  const [subTab, setSubTab] = useState<'mutabaah' | 'setoran' | 'target' | 'ortu'>('mutabaah');
+  const [subTab, setSubTab] = useState<'mutabaah' | 'setoran' | 'target' | 'ortu'>(
+    routeTab && ['mutabaah', 'setoran', 'target', 'ortu'].includes(routeTab) ? routeTab : 'mutabaah'
+  );
+
+  // Sync route params tab jika berpindah tab dari luar
+  useEffect(() => {
+    if (routeTab && ['mutabaah', 'setoran', 'target', 'ortu'].includes(routeTab)) {
+      setSubTab(routeTab);
+    }
+  }, [routeTab]);
+
+  // Sync route params child_id jika berpindah anak dari luar
+  useEffect(() => {
+    if (targetChildId && String(targetChildId) !== selectedIdRef.current) {
+      selectedIdRef.current = String(targetChildId);
+      setSelectedId(String(targetChildId));
+    }
+  }, [targetChildId]);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError('');
+    const childCacheKey = offlineCache.buildKey('parent_portal_children', user?.id);
+
+    // 1. Baca cache anak dulu
+    const cachedChildren = await offlineCache.get<Child[]>(childCacheKey);
+    let activeId = targetChildId || selectedIdRef.current;
+    if (cachedChildren && cachedChildren.length > 0) {
+      const filteredCached = targetChildId
+        ? cachedChildren.filter((c) => String(c.id) === String(targetChildId))
+        : cachedChildren;
+      setChildren(filteredCached.length > 0 ? filteredCached : cachedChildren);
+      activeId = targetChildId || selectedIdRef.current || String(cachedChildren[0]?.id);
+      if (activeId) {
+        const idStr = String(activeId);
+        if (selectedIdRef.current !== idStr) {
+          selectedIdRef.current = idStr;
+          setSelectedId(idStr);
+        }
+        const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, idStr);
+        const cachedDash = await offlineCache.get<ParentDashboard>(dashKey);
+        if (cachedDash) {
+          setDashboard(cachedDash);
+          setLoading(false);
+        }
+      }
+    }
+
     try {
       const childResponse = await mobileApiService.getPortalChildren();
       const available = (unwrapApiData<Child[]>(childResponse) || []);
-      const activeId = selectedId || available[0]?.id;
-      setChildren(available);
+      const filteredAvailable = targetChildId
+        ? available.filter((c) => String(c.id) === String(targetChildId))
+        : available;
+      activeId = targetChildId || selectedIdRef.current || (available[0]?.id ? String(available[0].id) : undefined);
+      if (filteredAvailable.length > 0) {
+        setChildren(filteredAvailable);
+        void offlineCache.set(childCacheKey, available);
+      }
       if (activeId) {
-        setSelectedId(String(activeId));
-        const dashboardResponse = await mobileApiService.getPortalDashboard(String(activeId));
-        setDashboard(unwrapApiData<ParentDashboard>(dashboardResponse) || {});
+        const idStr = String(activeId);
+        if (selectedIdRef.current !== idStr) {
+          selectedIdRef.current = idStr;
+          setSelectedId(idStr);
+        }
+        const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, idStr);
+        const dashboardResponse = await mobileApiService.getPortalDashboard(idStr);
+        const dashData = unwrapApiData<ParentDashboard>(dashboardResponse) || {};
+        setDashboard(dashData);
+        void offlineCache.set(dashKey, dashData);
       } else {
         setDashboard({});
       }
     } catch (requestError) {
-      setError(getApiErrorMessage(requestError, 'Data portal orang tua belum berhasil dimuat.'));
+      if (!cachedChildren) {
+        setError(getApiErrorMessage(requestError, 'Data portal orang tua belum berhasil dimuat.'));
+      }
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, [user?.id, targetChildId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const selectChild = async (id: string) => {
+    selectedIdRef.current = id;
     setSelectedId(id);
-    setLoading(true);
     setError('');
+    const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, id);
+    const cachedDash = await offlineCache.get<ParentDashboard>(dashKey);
+    if (cachedDash) {
+      setDashboard(cachedDash);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      setDashboard(unwrapApiData<ParentDashboard>(await mobileApiService.getPortalDashboard(id)) || {});
+      const res = await mobileApiService.getPortalDashboard(id);
+      const dashData = unwrapApiData<ParentDashboard>(res) || {};
+      setDashboard(dashData);
+      void offlineCache.set(dashKey, dashData);
     } catch (requestError) {
-      setError(getApiErrorMessage(requestError, 'Dashboard anak belum berhasil dimuat.'));
+      if (!cachedDash) {
+        setError(getApiErrorMessage(requestError, 'Dashboard anak belum berhasil dimuat.'));
+      }
     } finally {
       setLoading(false);
     }
@@ -134,7 +218,7 @@ export default function ParentPortalScreen({ navigation }: any) {
             </View>
             <Text style={styles.statLabel}>RATA-RATA RAPOR</Text>
             <Text numberOfLines={1} style={styles.statValue}>
-              {student?.gpa || student?.average_grade || 92}
+              {student?.gpa || student?.average_grade || '-'}
             </Text>
           </View>
 
@@ -144,66 +228,63 @@ export default function ParentPortalScreen({ navigation }: any) {
             </View>
             <Text style={styles.statLabel}>CAPAIAN TAHFIZH</Text>
             <Text numberOfLines={1} style={styles.statValue}>
-              {student?.tahfizh_summary || (kpi.total_tahfizh_ayat ? `${kpi.total_tahfizh_ayat} Ayat` : '172 Ayat')}
+              {student?.tahfizh_summary || (kpi.total_tahfizh_ayat ? `${kpi.total_tahfizh_ayat} Ayat` : '-')}
             </Text>
           </View>
-
           <View style={styles.statCard}>
             <View style={[styles.statIconBox, { backgroundColor: '#F3E8FF' }]}>
               <MaterialCommunityIcons name="hand-heart-outline" size={20} color="#7C3AED" />
             </View>
             <Text style={styles.statLabel}>MUTABAAH YAUMIYAH</Text>
             <Text numberOfLines={1} style={styles.statValue}>
-              {student?.mutabaah_score || 95}% Tertib
+              {student?.mutabaah_score != null ? `${student.mutabaah_score}% Tertib` : 'Belum Ada'}
             </Text>
           </View>
         </View>
 
-        {/* PEMANTAUAN TERPADU MUTABA'AH & TAHFIZH */}
         <View style={styles.monitoringSection}>
           <View style={styles.monitoringHeader}>
             <View style={styles.monitoringIconCircle}>
-              <MaterialCommunityIcons name="hand-heart-outline" size={18} color="#7C3AED" />
+              <MaterialCommunityIcons name="heart-pulse" size={20} color="#059669" />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text numberOfLines={1} style={styles.monitoringTitle}>
-                Pemantauan Terpadu Mutaba’ah & Tahfizh — {childName(student || {})}
+            <View>
+              <Text style={styles.monitoringTitle}>
+                Pemantauan Terpadu Mutaba’ah & Tahfizh
               </Text>
               <Text style={styles.monitoringSubtitle}>
-                Monitoring amalan yaumiyah, setoran hafalan, target & evaluasi, serta log wali murid.
+                Laporan komprehensif amalan yaumiyyah & capaian Al-Qur'an
               </Text>
             </View>
           </View>
 
-          {/* Sub-Tabs Switcher */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
-            {[
-              { key: 'mutabaah', label: 'Dashboard Mutaba’ah', icon: 'hand-heart-outline', activeColor: '#D97706', activeBg: '#FEF3C7', activeBorder: '#FDE68A' },
-              { key: 'setoran', label: 'Setoran Tahfizh Siswa', icon: 'book-check-outline', activeColor: '#059669', activeBg: '#D1FAE5', activeBorder: '#A7F3D0' },
-              { key: 'target', label: 'Target & Evaluasi', icon: 'trophy-outline', activeColor: '#0D9488', activeBg: '#CCFBF1', activeBorder: '#99F6E4' },
-              { key: 'ortu', label: 'Monitoring Orang Tua', icon: 'account-group-outline', activeColor: '#7C3AED', activeBg: '#EDE9FE', activeBorder: '#DDD6FE' },
-            ].map((tab) => {
-              const isActive = subTab === tab.key;
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabsRow}
+          >
+            {SUB_TABS.map((tab) => {
+              const active = subTab === tab.key;
               return (
                 <TouchableOpacity
                   key={tab.key}
-                  activeOpacity={0.8}
                   onPress={() => setSubTab(tab.key as any)}
                   style={[
                     styles.tabBtn,
-                    isActive && { backgroundColor: tab.activeBg, borderColor: tab.activeBorder },
+                    active && {
+                      backgroundColor: tab.activeBg,
+                      borderColor: tab.activeBorder,
+                    },
                   ]}
                 >
                   <MaterialCommunityIcons
                     name={tab.icon as any}
-                    size={14}
-                    color={isActive ? tab.activeColor : '#64748B'}
-                    style={{ marginRight: 5 }}
+                    size={16}
+                    color={active ? tab.activeColor : '#64748B'}
                   />
                   <Text
                     style={[
                       styles.tabBtnText,
-                      isActive && { color: tab.activeColor, fontWeight: '800' },
+                      active && { color: tab.activeColor, fontWeight: '800' },
                     ]}
                   >
                     {tab.label}
@@ -213,25 +294,35 @@ export default function ParentPortalScreen({ navigation }: any) {
             })}
           </ScrollView>
 
-          {/* Content Sub-Tabs */}
           {subTab === 'mutabaah' && (
-            <View style={styles.mutabaahGrid}>
-              <View style={[styles.mutabaahCard, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-                <Text style={[styles.mutabaahCardLabel, { color: '#047857' }]}>SHALAT 5 WAKTU</Text>
-                <Text style={[styles.mutabaahCardValue, { color: '#064E3B' }]}>100% Berjamaah</Text>
+            <View style={styles.mutabaahQuickBox}>
+              <View style={styles.mutabaahQuickHeader}>
+                <View style={styles.mutabaahQuickIconCircle}>
+                  <MaterialCommunityIcons name="clipboard-check-outline" size={22} color="#0D9488" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mutabaahQuickTitle}>Lembar Mutaba’ah Yaumiyyah</Text>
+                  <Text style={styles.mutabaahQuickDesc}>
+                    Pantau kepatuhan ibadah shalat 5 waktu, tilawah, adab, dan input kegiatan ibadah di rumah secara real-time.
+                  </Text>
+                </View>
               </View>
-              <View style={[styles.mutabaahCard, { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF' }]}>
-                <Text style={[styles.mutabaahCardLabel, { color: '#7C3AED' }]}>SHALAT DHUHA & TAHAJUD</Text>
-                <Text style={[styles.mutabaahCardValue, { color: '#581C87' }]}>Terlaksana Rutin</Text>
-              </View>
-              <View style={[styles.mutabaahCard, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                <Text style={[styles.mutabaahCardLabel, { color: '#1D4ED8' }]}>TILAWAH AL-QUR'AN</Text>
-                <Text style={[styles.mutabaahCardValue, { color: '#1E3A8A' }]}>1 Juz / Hari</Text>
-              </View>
-              <View style={[styles.mutabaahCard, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
-                <Text style={[styles.mutabaahCardLabel, { color: '#B45309' }]}>KEDISIPLINAN ADAB</Text>
-                <Text style={[styles.mutabaahCardValue, { color: '#78350F' }]}>Sangat Baik (A)</Text>
-              </View>
+              <TouchableOpacity
+                style={styles.mutabaahActionBtn}
+                onPress={() => navigation.navigate('Mutabaah', { child_id: student?.id })}
+                activeOpacity={0.88}
+              >
+                <LinearGradient
+                  colors={['#0D6B42', '#18A165']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.mutabaahActionGradient}
+                >
+                  <MaterialCommunityIcons name="book-open-page-variant-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.mutabaahActionBtnText}>Buka Lembar Mutaba’ah Lengkap</Text>
+                  <MaterialCommunityIcons name="arrow-right" size={18} color="#FFFFFF" />
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -239,27 +330,50 @@ export default function ParentPortalScreen({ navigation }: any) {
             <View style={[styles.detailBox, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
               <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={[styles.detailBoxLabel, { color: '#047857' }]}>SETORAN TERAKHIR AKTIF</Text>
-                <Text style={[styles.detailBoxTitle, { color: '#064E3B' }]}>Surah Al-Mulk: Ayat 1-30 (Lancar / Mumtaz)</Text>
-                <Text style={[styles.detailBoxMeta, { color: '#047857' }]}>Penguji: Ustadz Hamzah, S.Pd.I · Tanggal: 18 Agustus 2026</Text>
+                <Text style={[styles.detailBoxTitle, { color: '#064E3B' }]}>
+                  {kpi.latest_tahfizh_surah && kpi.latest_tahfizh_surah !== 'Belum Ada'
+                    ? kpi.latest_tahfizh_surah
+                    : 'Belum ada riwayat setoran tahfizh terbaru'}
+                </Text>
+                {student?.musyrif_name || student?.musyrif?.name ? (
+                  <Text style={[styles.detailBoxMeta, { color: '#047857' }]}>
+                    Pembina: {student?.musyrif_name || student?.musyrif?.name}
+                  </Text>
+                ) : null}
               </View>
-              <View style={[styles.pillBadge, { backgroundColor: '#059669' }]}>
-                <Text style={styles.pillBadgeText}>Nilai A+ (Mumtaz)</Text>
-              </View>
+              {kpi.latest_tahfizh_surah && kpi.latest_tahfizh_surah !== 'Belum Ada' && (
+                <View style={[styles.pillBadge, { backgroundColor: '#059669' }]}>
+                  <Text style={styles.pillBadgeText}>Tercatat</Text>
+                </View>
+              )}
             </View>
           )}
 
           {subTab === 'target' && (
             <View style={[styles.detailBox, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', flexDirection: 'column', alignItems: 'stretch' }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <Text style={[styles.detailBoxTitle, { color: '#1E3A8A', fontSize: 12.5 }]}>Pencapaian Target Semester (Juz 30, 29, 28)</Text>
-                <Text style={{ fontSize: 12, fontWeight: '900', color: '#1D4ED8' }}>88% Tercapai</Text>
+                <Text style={[styles.detailBoxTitle, { color: '#1E3A8A', fontSize: 12.5 }]}>
+                  {dashboard?.tahfizh_target?.surah_target ? `Target Hafalan (${dashboard.tahfizh_target.surah_target})` : 'Pencapaian Target Hafalan'}
+                </Text>
+                <Text style={{ fontSize: 12, fontWeight: '900', color: '#1D4ED8' }}>
+                  {kpi.total_tahfizh_ayat ? `${kpi.total_tahfizh_ayat} Ayat Tercapai` : 'Belum Ada Capaian'}
+                </Text>
               </View>
-              <View style={{ height: 7, backgroundColor: '#DBEAFE', borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
-                <View style={{ width: '88%', height: '100%', backgroundColor: '#2563EB', borderRadius: 4 }} />
-              </View>
+              {dashboard?.tahfizh_target?.target_ayat && dashboard.tahfizh_target.target_ayat > 0 ? (
+                <View style={{ height: 7, backgroundColor: '#DBEAFE', borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
+                  <View
+                    style={{
+                      width: `${Math.min(100, Math.round(((kpi.total_tahfizh_ayat || 0) / dashboard.tahfizh_target.target_ayat) * 100))}%`,
+                      height: '100%',
+                      backgroundColor: '#2563EB',
+                      borderRadius: 4,
+                    }}
+                  />
+                </View>
+              ) : null}
               <Text style={{ fontSize: 11.5, color: '#1E3A8A', lineHeight: 16 }}>
-                <Text style={{ fontWeight: '800' }}>Evaluasi Pembimbing: </Text>
-                "Anak menunjukkan konsistensi kelancaran hafalan dan makhraj tajwid yang tajam."
+                <Text style={{ fontWeight: '800' }}>Status Mutaba'ah: </Text>
+                {kpi.mutabaah_status || 'Dalam proses pembinaan karakter harian'}
               </Text>
             </View>
           )}
@@ -269,11 +383,15 @@ export default function ParentPortalScreen({ navigation }: any) {
               <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={[styles.detailBoxTitle, { color: '#581C87', fontSize: 12.5 }]}>Konfirmasi Pendampingan Wali Murid Harian</Text>
                 <Text style={[styles.detailBoxMeta, { color: '#6B21A8', marginTop: 3 }]}>
-                  Telah diverifikasi oleh Wali Kelas: Shalat jamaah & tilawah rumah telah diparaf oleh Orang Tua.
+                  {kpi.mutabaah_status === 'verified' || kpi.mutabaah_status === 'disetujui'
+                    ? 'Telah diverifikasi oleh Musyrif / Wali Kelas: Shalat jamaah & tilawah rumah telah diparaf oleh Orang Tua.'
+                    : 'Pantau dan paraf catatan ibadah serta tilawah harian santri melalui menu Lembar Mutaba\'ah.'}
                 </Text>
               </View>
-              <View style={[styles.pillBadge, { backgroundColor: '#7C3AED' }]}>
-                <Text style={styles.pillBadgeText}>Terverifikasi Wali Kelas</Text>
+              <View style={[styles.pillBadge, { backgroundColor: kpi.mutabaah_status === 'verified' ? '#7C3AED' : '#9333EA' }]}>
+                <Text style={styles.pillBadgeText}>
+                  {kpi.mutabaah_status === 'verified' ? 'Terverifikasi' : 'Monitoring Aktif'}
+                </Text>
               </View>
             </View>
           )}
@@ -432,26 +550,59 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#64748B',
   },
-  mutabaahGrid: {
+  mutabaahQuickBox: {
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    gap: 12,
+  },
+  mutabaahQuickHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 12,
+  },
+  mutabaahQuickIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#CCFBF1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mutabaahQuickTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  mutabaahQuickDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  mutabaahActionBtn: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    shadowColor: '#18A165',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  mutabaahActionGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     gap: 8,
   },
-  mutabaahCard: {
-    width: '48.5%',
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-  },
-  mutabaahCardLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-    marginBottom: 2,
-  },
-  mutabaahCardValue: {
+  mutabaahActionBtnText: {
+    color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   detailBox: {
     borderRadius: 12,

@@ -1,0 +1,512 @@
+
+#!/bin/zsh
+
+set -e
+
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+NODE_VERSION="22.23.2"
+METRO_PORT="8081"
+PACKAGE="id.sch.dareliman.simsit"
+ENV_FILE="$PROJECT_DIR/.env.local"
+SESSION_NAME="simsit-dev"
+
+cd "$PROJECT_DIR"
+
+echo ""
+echo "=========================================="
+echo " SIMSIT MOBILE DEVELOPMENT"
+echo "=========================================="
+echo ""
+
+# ==========================================
+# NODE / NVM
+# ==========================================
+
+export NVM_DIR="$HOME/.nvm"
+
+unset npm_config_prefix
+unset NPM_CONFIG_PREFIX
+
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    echo "ERROR: NVM tidak ditemukan."
+    exit 1
+fi
+
+source "$NVM_DIR/nvm.sh"
+
+nvm use "$NODE_VERSION" >/dev/null
+
+export PATH="$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH"
+hash -r
+
+echo "Node : $(node -v)"
+echo "NPM  : $(npm -v)"
+
+# ==========================================
+# ADB
+# ==========================================
+
+ADB="$(command -v adb || true)"
+
+if [ -z "$ADB" ]; then
+    echo ""
+    echo "ERROR: adb tidak ditemukan."
+    exit 1
+fi
+
+echo ""
+echo "ADB          : $ADB"
+echo "Menginisialisasi ADB..."
+
+"$ADB" kill-server >/dev/null 2>&1 || true
+sleep 1
+"$ADB" start-server >/dev/null 2>&1
+
+# ==========================================
+# TMUX
+# ==========================================
+
+echo ""
+echo "Memeriksa tmux..."
+
+TMUX="$(command -v tmux || true)"
+
+if [ -z "$TMUX" ]; then
+
+    echo "tmux         : Belum terinstall"
+
+    BREW="$(command -v brew || true)"
+
+    if [ -z "$BREW" ]; then
+        echo ""
+        echo "ERROR: Homebrew tidak ditemukan."
+        echo "Install Homebrew terlebih dahulu."
+        exit 1
+    fi
+
+    echo "Homebrew     : $BREW"
+    echo "Menginstall tmux..."
+    echo ""
+
+    "$BREW" install tmux
+
+    export PATH="$("$BREW" --prefix)/bin:$PATH"
+    hash -r
+
+    TMUX="$(command -v tmux || true)"
+
+    if [ -z "$TMUX" ] && [ -x "/opt/homebrew/bin/tmux" ]; then
+        TMUX="/opt/homebrew/bin/tmux"
+    fi
+
+    if [ -z "$TMUX" ] && [ -x "/usr/local/bin/tmux" ]; then
+        TMUX="/usr/local/bin/tmux"
+    fi
+
+    if [ -z "$TMUX" ]; then
+        echo ""
+        echo "ERROR: tmux gagal ditemukan."
+        exit 1
+    fi
+
+else
+
+    echo "tmux         : Sudah terinstall"
+
+fi
+
+echo "tmux path    : $TMUX"
+echo "tmux version : $("$TMUX" -V)"
+
+# ==========================================
+# CARI WIRELESS ADB
+# ==========================================
+
+echo ""
+echo "Mencari Wireless Debugging..."
+
+SERVICES="$("$ADB" mdns services 2>/dev/null | awk '
+/_adb-tls-connect\._tcp/ {
+    for (i=1; i<=NF; i++) {
+        if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) {
+            print $i
+        }
+    }
+}
+')"
+
+if [ -z "$SERVICES" ]; then
+
+    echo ""
+    echo "ERROR: Wireless Debugging tidak ditemukan."
+    echo ""
+    echo "Pastikan:"
+    echo "  1. Wireless Debugging aktif."
+    echo "  2. HP dan Mac berada di Wi-Fi yang sama."
+    echo "  3. Wireless Debugging sudah di-pair."
+    echo ""
+
+    exit 1
+fi
+
+DEVICE=""
+
+while IFS= read -r SERVICE; do
+
+    [ -z "$SERVICE" ] && continue
+
+    echo ""
+    echo "Connecting: $SERVICE"
+
+    RESULT="$("$ADB" connect "$SERVICE" 2>&1 || true)"
+
+    echo "  $RESULT"
+
+    sleep 1
+
+    DEVICE="$("$ADB" devices | awk '
+    NR > 1 && $2 == "device" {
+        print $1
+        exit
+    }')"
+
+    if [ -n "$DEVICE" ]; then
+        break
+    fi
+
+done <<< "$SERVICES"
+
+# ==========================================
+# VALIDASI DEVICE
+# ==========================================
+
+if [ -z "$DEVICE" ]; then
+
+    echo ""
+    echo "ERROR: Android device tidak berhasil terhubung."
+    echo ""
+
+    "$ADB" devices
+
+    exit 1
+fi
+
+echo ""
+echo "Android Device : $DEVICE"
+
+# ==========================================
+# DEVICE IP
+# ==========================================
+
+DEVICE_IP="$(echo "$DEVICE" | sed -E 's/:([0-9]+)$//')"
+
+echo "Device IP      : $DEVICE_IP"
+
+# ==========================================
+# DEVICE MODEL
+# ==========================================
+
+MODEL="$("$ADB" -s "$DEVICE" shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
+
+echo "Model          : ${MODEL:-Unknown}"
+
+# ==========================================
+# UPDATE ENV
+# ==========================================
+
+if [ -f "$ENV_FILE" ]; then
+
+    if grep -q "^EXPO_PUBLIC_DEVICE_IP=" "$ENV_FILE"; then
+
+        sed -i '' \
+            "s/^EXPO_PUBLIC_DEVICE_IP=.*/EXPO_PUBLIC_DEVICE_IP=$DEVICE_IP/" \
+            "$ENV_FILE"
+
+    else
+
+        printf "\nEXPO_PUBLIC_DEVICE_IP=%s\n" "$DEVICE_IP" >> "$ENV_FILE"
+
+    fi
+
+else
+
+    printf "EXPO_PUBLIC_DEVICE_IP=%s\n" "$DEVICE_IP" > "$ENV_FILE"
+
+fi
+
+echo "Device ENV     : $DEVICE_IP"
+
+# ==========================================
+# ADB REVERSE METRO
+# ==========================================
+
+echo ""
+echo "Menghubungkan device ke Metro..."
+
+"$ADB" -s "$DEVICE" reverse --remove tcp:$METRO_PORT \
+    >/dev/null 2>&1 || true
+
+"$ADB" -s "$DEVICE" reverse \
+    tcp:$METRO_PORT \
+    tcp:$METRO_PORT
+
+echo "ADB Reverse    : tcp:$METRO_PORT -> tcp:$METRO_PORT"
+
+# ==========================================
+# VERIFY ADB REVERSE
+# ==========================================
+
+echo ""
+echo "Memverifikasi ADB Reverse..."
+
+if "$ADB" -s "$DEVICE" reverse --list \
+    | grep -q "tcp:$METRO_PORT"; then
+
+    echo "ADB Reverse    : OK"
+
+else
+
+    echo "ERROR: ADB Reverse gagal."
+    exit 1
+
+fi
+
+# ==========================================
+# API URL
+# ==========================================
+
+API_URL=""
+
+if [ -f "$ENV_FILE" ]; then
+
+    API_URL="$(
+        grep '^EXPO_PUBLIC_API_URL=' "$ENV_FILE" \
+        | head -n 1 \
+        | cut -d '=' -f2-
+    )"
+
+fi
+
+echo "API            : ${API_URL:-Tidak ditemukan}"
+
+# ==========================================
+# STOP SIMSIT LAMA
+# ==========================================
+
+echo ""
+echo "Menutup SIMSIT lama..."
+
+"$ADB" -s "$DEVICE" shell am force-stop "$PACKAGE" \
+    >/dev/null 2>&1 || true
+
+# ==========================================
+# TMUX SESSION
+# ==========================================
+
+if "$TMUX" has-session -t "$SESSION_NAME" 2>/dev/null; then
+    "$TMUX" kill-session -t "$SESSION_NAME"
+fi
+
+METRO_LOG="$PROJECT_DIR/.metro.log"
+
+: > "$METRO_LOG"
+
+echo ""
+echo "=========================================="
+echo " SIMSIT METRO"
+echo "=========================================="
+echo ""
+echo "Device : $DEVICE"
+echo "Model  : ${MODEL:-Unknown}"
+echo "IP     : $DEVICE_IP"
+echo "Metro  : http://127.0.0.1:$METRO_PORT"
+echo ""
+echo "Starting Metro..."
+echo "=========================================="
+echo ""
+
+# ==========================================
+# CREATE TMUX SESSION
+#
+# Gunakan zsh langsung.
+# Tidak memakai bash login shell.
+# ==========================================
+
+"$TMUX" -f /dev/null \
+    new-session \
+    -d \
+    -s "$SESSION_NAME" \
+    -n "metro" \
+    -c "$PROJECT_DIR" \
+    /bin/zsh
+
+# ==========================================
+# SET TMUX SHELL
+# ==========================================
+
+"$TMUX" set-option \
+    -t "$SESSION_NAME" \
+    default-shell /bin/zsh
+
+"$TMUX" set-option \
+    -t "$SESSION_NAME" \
+    default-command /bin/zsh
+
+# ==========================================
+# START METRO
+# ==========================================
+
+"$TMUX" send-keys \
+    -t "$SESSION_NAME:metro.0" \
+    "cd '$PROJECT_DIR'; export NVM_DIR='$NVM_DIR'; source '$NVM_DIR/nvm.sh'; nvm use '$NODE_VERSION' >/dev/null; exec npx expo start --dev-client --port '$METRO_PORT' 2>&1 | tee '$METRO_LOG'" \
+    C-m
+
+# ==========================================
+# WAIT METRO
+# ==========================================
+
+echo "Menunggu Metro siap..."
+
+METRO_READY=false
+
+for i in {1..30}; do
+
+    if curl -s \
+        "http://127.0.0.1:$METRO_PORT/status" \
+        2>/dev/null \
+        | grep -q "packager-status:running"; then
+
+        METRO_READY=true
+        break
+    fi
+
+    sleep 1
+
+done
+
+if [ "$METRO_READY" = false ]; then
+
+    echo ""
+    echo "ERROR: Metro tidak berhasil startup."
+    echo ""
+    echo "Log Metro:"
+    echo "------------------------------------------"
+
+    cat "$METRO_LOG" 2>/dev/null || true
+
+    echo "------------------------------------------"
+
+    "$TMUX" kill-session \
+        -t "$SESSION_NAME" \
+        2>/dev/null || true
+
+    exit 1
+fi
+
+echo ""
+echo "Metro       : READY"
+
+# ==========================================
+# LAUNCH SIMSIT
+# ==========================================
+
+echo ""
+echo "Menjalankan SIMSIT..."
+
+"$ADB" -s "$DEVICE" shell monkey \
+    -p "$PACKAGE" 1 \
+    >/dev/null 2>&1 || true
+
+sleep 2
+
+# ==========================================
+# GET SIMSIT PID
+# ==========================================
+
+APP_PID="$(
+    "$ADB" -s "$DEVICE" shell pidof "$PACKAGE" \
+    2>/dev/null \
+    | tr -d '\r'
+)"
+
+echo "SIMSIT PID   : ${APP_PID:-Tidak ditemukan}"
+
+# ==========================================
+# CREATE LOGCAT PANE
+# ==========================================
+
+"$TMUX" split-window \
+    -v \
+    -t "$SESSION_NAME:metro.0" \
+    -c "$PROJECT_DIR" \
+    /bin/zsh
+
+# ==========================================
+# START LOGCAT
+# ==========================================
+
+if [ -n "$APP_PID" ]; then
+
+    "$TMUX" send-keys \
+        -t "$SESSION_NAME:metro.1" \
+        "echo '==========================================' ; echo ' SIMSIT LOGCAT' ; echo '==========================================' ; echo '' ; '$ADB' -s '$DEVICE' logcat --pid='$APP_PID'" \
+        C-m
+
+else
+
+    "$TMUX" send-keys \
+        -t "$SESSION_NAME:metro.1" \
+        "echo 'PID SIMSIT tidak ditemukan.' ; echo '' ; '$ADB' -s '$DEVICE' logcat | grep --line-buffered -E 'id.sch.dareliman.simsit|ReactNativeJS|AndroidRuntime'" \
+        C-m
+
+fi
+
+# ==========================================
+# RESIZE LOGCAT
+# ==========================================
+
+"$TMUX" resize-pane \
+    -t "$SESSION_NAME:metro.1" \
+    -y 15
+
+# ==========================================
+# SELECT METRO
+# ==========================================
+
+"$TMUX" select-pane \
+    -t "$SESSION_NAME:metro.0"
+
+# ==========================================
+# FINAL STATUS
+# ==========================================
+
+echo ""
+echo "=========================================="
+echo " SIMSIT READY"
+echo "=========================================="
+echo ""
+echo "Device : $DEVICE"
+echo "Model  : ${MODEL:-Unknown}"
+echo "IP     : $DEVICE_IP"
+echo "Metro  : http://127.0.0.1:$METRO_PORT"
+echo "PID    : ${APP_PID:-Unknown}"
+echo ""
+echo "=========================================="
+echo " PANEL ATAS  = METRO"
+echo " PANEL BAWAH = SIMSIT LOGCAT"
+echo "=========================================="
+echo ""
+echo "Metro tetap interaktif."
+echo ""
+echo "Shortcut tmux:"
+echo "  Ctrl+B lalu ↑ = Metro"
+echo "  Ctrl+B lalu ↓ = Logcat"
+echo ""
+echo "=========================================="
+echo ""
+
+# ==========================================
+# ATTACH
+# ==========================================
+
+exec "$TMUX" attach-session -t "$SESSION_NAME"

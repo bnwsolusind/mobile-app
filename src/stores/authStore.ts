@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { offlineCache } from '../utils/offlineCache';
 
 export interface UserScope {
   unit_id?: string | number | null;
@@ -73,6 +74,12 @@ const extractNames = (arr: unknown): string[] => {
     .filter(Boolean) as string[];
 };
 
+const areArraysEqual = (a?: string[] | null, b?: string[] | null): boolean => {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((val, idx) => val === b[idx]);
+};
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   token: null,
   user: null,
@@ -120,21 +127,42 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const serverScope = raw.scope ?? null;
     const serverPortal = raw.default_portal ?? raw.portal ?? get().portal;
 
+    const currentRoles = get().roles;
+    const currentPermissions = get().permissions;
+    const currentScope = get().scope;
+
+    const resolvedRoles = serverRoles.length > 0 ? serverRoles : currentRoles;
+    const newRoles = areArraysEqual(currentRoles, resolvedRoles) ? currentRoles : resolvedRoles;
+
+    const resolvedPermissions = serverPermissions.length > 0 ? serverPermissions : currentPermissions;
+    const newPermissions = areArraysEqual(currentPermissions, resolvedPermissions) ? currentPermissions : resolvedPermissions;
+
+    const newScope = serverScope || currentScope;
+
+    const photoUrl =
+      raw.photo_url ||
+      raw.avatar_url ||
+      raw.user?.photo_url ||
+      raw.user?.avatar_url ||
+      raw.employee?.foto_url ||
+      raw.parent?.photo_url ||
+      raw.student?.photo_url ||
+      get().user?.photo_url ||
+      null;
+
     const mergedUser: AuthUser = {
       ...(get().user || {}),
       ...(raw.user || raw),
       id: raw.id ?? raw.user?.id ?? get().user?.id,
       name: raw.name ?? raw.user?.name ?? get().user?.name,
       email: raw.email ?? raw.user?.email ?? get().user?.email,
-      roles: serverRoles.length > 0 ? serverRoles : get().roles,
-      permissions: serverPermissions.length > 0 ? serverPermissions : get().permissions,
-      scope: serverScope || get().scope,
+      photo_url: photoUrl,
+      avatar_url: photoUrl,
+      roles: newRoles,
+      permissions: newPermissions,
+      scope: newScope,
       default_portal: serverPortal,
     };
-
-    const newRoles = serverRoles.length > 0 ? serverRoles : get().roles;
-    const newPermissions = serverPermissions.length > 0 ? serverPermissions : get().permissions;
-    const newScope = serverScope || get().scope;
 
     set({
       user: mergedUser,
@@ -178,5 +206,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearSession: () => {
     set({ token: null, user: null, roles: [], permissions: [], portal: null, scope: null });
     persistSession(null);
+    // Hapus semua cache data screen saat logout
+    void offlineCache.clearAll();
   },
 }));

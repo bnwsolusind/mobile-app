@@ -2,8 +2,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Image,
+  LayoutAnimation,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -13,11 +15,12 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  UIManager,
   View,
 } from 'react-native';
 import { Card, Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { getApiErrorMessage } from '../services/api';
+import { API_BASE_URL, getApiErrorMessage } from '../services/api';
 import { mobileApiService, unwrapApiData, unwrapCollection } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
@@ -32,7 +35,18 @@ import {
   isTeacherRole,
   roleLabel,
 } from '../utils/roles';
-import { getProfileImageUrl } from '../utils/profile';
+import {
+  getProfileImageUrl,
+  DEFAULT_PARENT_AVATAR,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+} from '../utils/profile';
+import { offlineCache } from '../utils/offlineCache';
+import { canAccessScreen } from '../utils/accessControl';
+
+// Latar belakang header Sekolah Islam Terpadu & Masjid
+const HEADER_MOSQUE_BG = require('../../assets/header_mosque_bg.png');
+const SPLASH_LOGO = require('../../assets/launcher_source.png');
 
 const CARD_THEMES: Record<string, { primary: string; dark: string; secondary: string; soft: string; accent: string }> = {
   green: { primary: '#004D32', dark: '#003822', secondary: '#0E5C44', soft: '#ecfdf5', accent: '#E5A93C' },
@@ -43,9 +57,81 @@ const CARD_THEMES: Record<string, { primary: string; dark: string; secondary: st
   navy: { primary: '#172554', dark: '#0f172a', secondary: '#1E3A8A', soft: '#eff6ff', accent: '#60A5FA' },
 };
 
+// 3 Palet Warna Bergantian untuk Kartu Berita (Berita ke-4 kembali ke warna awal #18A165)
+const NEWS_CARD_THEMES = [
+  {
+    // Kartu 1, 4, 7... Warna Dasar Hijau Emerald (#18A165)
+    base: '#18A165',
+    gradient: ['#0D6B42', '#18A165', '#2BD988'],
+    locations: [0, 0.55, 1],
+    shadowColor: '#0D6B42',
+    dateColor: '#DEF7EC',
+    decorColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  {
+    // Kartu 2, 5, 8... Warna Biru Royal Elegan (#2563EB)
+    base: '#2563EB',
+    gradient: ['#1E3A8A', '#2563EB', '#60A5FA'],
+    locations: [0, 0.55, 1],
+    shadowColor: '#1E3A8A',
+    dateColor: '#DBEAFE',
+    decorColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  {
+    // Kartu 3, 6, 9... Warna Emas Amber Hangat (#D97706)
+    base: '#D97706',
+    gradient: ['#B45309', '#D97706', '#FBBF24'],
+    locations: [0, 0.55, 1],
+    shadowColor: '#B45309',
+    dateColor: '#FEF3C7',
+    decorColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+];
+
+const MENU_SUBTITLES: Record<string, string> = {
+  'Al-Qur\'an': 'Baca & tilawah',
+  'Doa & Dzikir': 'Amalan harian',
+  'Kalender': 'Agenda kegiatan',
+  'Informasi': 'Pengumuman',
+  'Jadwal': 'Jadwal pelajaran',
+  'Materi': 'Materi pembelajaran',
+  'Tugas': 'Kerjakan tugas',
+  'Tahfizh': 'Hafalan Al-Qur\'an',
+  'Tahfiz': 'Hafalan Al-Qur\'an',
+  'Nilai': 'Lihat hasil belajar',
+  'Komentar': 'Saran & masukan',
+  'Mutabaah': 'Pantau ibadah',
+  'Absensi': 'Kehadiran siswa',
+  'Kisi-kisi': 'Persiapan ujian',
+  'Kisi-kisi Ujian CBT': 'Persiapan ujian',
+  'Ujian CBT': 'Ujian online',
+  'Hasil Rapor': 'Lihat nilai rapor',
+  'Rapor': 'Lihat nilai rapor',
+  'Lainnya': 'Semua menu',
+  'Kembali': 'Tutup menu',
+  'Lihat Semua': 'Semua menu',
+  'Pengaturan': 'Kelola akun',
+  'Dashboard': 'Ringkasan data',
+  'Akademik': 'Data akademik',
+  'Laporan': 'Laporan berkala',
+  'Prestasi': 'Catatan prestasi',
+  'Monev': 'Monitoring evaluasi',
+  'Monitoring': 'Pantau progres',
+  'Data Siswa': 'Kelola siswa',
+  'Keuangan': 'Kelola keuangan',
+  'Surat': 'Persuratan',
+  'Inventaris': 'Aset & barang',
+  'Arsip': 'Arsip dokumen',
+};
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = Math.min(SCREEN_WIDTH * 0.75, 290);
-const NEWS_CARD_WIDTH = CARD_WIDTH + 30;
+const STUDENT_CARD_GAP = 12;
+const STUDENT_PEEK_WIDTH = 26;
+const CARD_WIDTH = SCREEN_WIDTH - 32;
+const NEWS_CARD_WIDTH = SCREEN_WIDTH - 50;
 const ITEM_SPACING = 12;
 
 function isValidHex(color: string | undefined): boolean {
@@ -90,12 +176,63 @@ const NEWS_FALLBACK_IMAGES = [
   'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=400&q=80',
 ];
 
-const getNewsThumbnail = (item: any, index: number) => {
-  const uri = item?.image_url || item?.thumbnail || item?.cover_image || item?.foto || item?.file_path;
-  if (uri && typeof uri === 'string' && uri.startsWith('http')) {
-    return { uri };
+const getNewsThumbnail = (item: any, index: number = 0) => {
+  const raw =
+    item?.image_url ||
+    item?.cover ||
+    item?.cover_image ||
+    item?.thumbnail ||
+    item?.foto ||
+    item?.file_path ||
+    item?.attachment_url;
+
+  if (raw && typeof raw === 'string' && raw.trim() !== '') {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('data:')) {
+      return { uri: trimmed };
+    }
+    const apiHost = API_BASE_URL.replace(/\/api\/?$/, '');
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const parsed = new URL(trimmed);
+        const isLocalHost =
+          parsed.hostname === 'localhost' ||
+          parsed.hostname === '127.0.0.1' ||
+          parsed.hostname === '10.0.2.2' ||
+          parsed.hostname.startsWith('192.168.');
+        if (isLocalHost || parsed.pathname.includes('/storage/')) {
+          return { uri: `${apiHost}${parsed.pathname}${parsed.search}` };
+        }
+        return { uri: trimmed };
+      } catch {
+        return { uri: trimmed };
+      }
+    }
+    let cleanPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+    if (!cleanPath.startsWith('/storage/')) {
+      cleanPath = `/storage${cleanPath}`;
+    }
+    return { uri: `${apiHost}${cleanPath}` };
   }
-  return { uri: NEWS_FALLBACK_IMAGES[index % NEWS_FALLBACK_IMAGES.length] };
+
+  const safeIndex = typeof item?._index === 'number' ? item._index : index;
+  return { uri: NEWS_FALLBACK_IMAGES[Math.abs(safeIndex) % NEWS_FALLBACK_IMAGES.length] };
+};
+
+const getActivityBadgeStyle = (badgeType: string) => {
+  switch (badgeType) {
+    case 'green':
+      return { bg: '#DCFCE7', text: '#15803D' };
+    case 'blue':
+      return { bg: '#DBEAFE', text: '#1D4ED8' };
+    case 'red':
+      return { bg: '#FEE2E2', text: '#DC2626' };
+    case 'purple':
+      return { bg: '#F3E8FF', text: '#7E22CE' };
+    case 'amber':
+    default:
+      return { bg: '#FEF3C7', text: '#B45309' };
+  }
 };
 
 export default function HomeScreen({ navigation }: any) {
@@ -112,10 +249,72 @@ export default function HomeScreen({ navigation }: any) {
   const [parentChildren, setParentChildren] = useState<any[]>([]);
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
   const studentScrollRef = useRef<ScrollView>(null);
+  const studentCardWidth = useMemo(() => {
+    return parentChildren.length > 1
+      ? SCREEN_WIDTH - 16 - STUDENT_CARD_GAP - STUDENT_PEEK_WIDTH
+      : SCREEN_WIDTH - 32;
+  }, [parentChildren.length]);
+  const studentSnapInterval = useMemo(() => {
+    return studentCardWidth + STUDENT_CARD_GAP;
+  }, [studentCardWidth]);
+  const newsScrollRef = useRef<ScrollView>(null);
   const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
   const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
   const [cardSetting, setCardSetting] = useState<any>(null);
-  const [mutabaahSubTab, setMutabaahSubTab] = useState<'mutabaah' | 'setoran' | 'target' | 'ortu'>('mutabaah');
+
+  // Live Timeline Aktivitas Siswa (Fullday & Boarding) — dengan navigasi hari
+  const [todayTimeline, setTodayTimeline] = useState<any>(null);
+  const [loadingTimeline, setLoadingTimeline] = useState<boolean>(false);
+  const [activeTimelineTab, setActiveTimelineTab] = useState<'pelajaran' | 'sholat' | 'tahfizh' | 'mutabaah'>('pelajaran');
+  const [selectedActivity, setSelectedActivity] = useState<any>(null);
+
+  // viewedDate: tanggal yang sedang ditampilkan di timeline (default = hari ini)
+  const todayDateStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+  const [viewedDate, setViewedDate] = useState<string>(todayDateStr);
+
+  const isViewingToday = viewedDate === todayDateStr;
+
+  const goToPrevDay = useCallback(() => {
+    setViewedDate(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() - 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
+  }, []);
+
+  const goToNextDay = useCallback(() => {
+    setViewedDate(prev => {
+      if (prev >= todayDateStr) return prev; // tidak bisa maju melampaui hari ini
+      const d = new Date(prev);
+      d.setDate(d.getDate() + 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
+  }, [todayDateStr]);
+
+  const fetchTodayTimeline = useCallback(async (childId?: string, date?: string) => {
+    try {
+      setLoadingTimeline(true);
+      const res = await mobileApiService.getTodayLiveTimeline(childId, date);
+      const data = unwrapApiData<any>(res);
+      if (data) {
+        setTodayTimeline(data);
+      }
+    } catch (err) {
+      console.warn('[HomeScreen] fetchTodayTimeline error:', err);
+    } finally {
+      setLoadingTimeline(false);
+    }
+  }, []);
+
+  const resolvedActivities = useMemo(() => {
+    if (todayTimeline?.activities && Array.isArray(todayTimeline.activities)) {
+      return todayTimeline.activities;
+    }
+    return [];
+  }, [todayTimeline]);
 
   useEffect(() => {
     if (!selectedIdCardStudent) return;
@@ -131,7 +330,57 @@ export default function HomeScreen({ navigation }: any) {
       });
   }, [selectedIdCardStudent]);
   const [idCardSide, setIdCardSide] = useState<'front' | 'back'>('front');
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(2);
+
+  // Widget Tugas Terbaru & Jadwal Hari Ini (Home Dashboard)
+  const [homeSchedule, setHomeSchedule] = useState<any>(null);
+  const [homeAssignments, setHomeAssignments] = useState<any[]>([]);
+  const [loadingHomeWidgets, setLoadingHomeWidgets] = useState(false);
+
+  const fetchHomeWidgets = useCallback(async (childId?: string) => {
+    try {
+      setLoadingHomeWidgets(true);
+      const uid = useAuthStore.getState().user?.id;
+      const cacheKeyAssign = offlineCache.buildKey('assignments', uid, childId || 'self');
+      const cached = await offlineCache.get<any>(cacheKeyAssign);
+      if (cached) {
+        const cachedList = Array.isArray(cached) ? cached : Array.isArray(cached?.list) ? cached.list : Array.isArray(cached?.data) ? cached.data : [];
+        if (cachedList.length > 0) {
+          setHomeAssignments(cachedList);
+        }
+      }
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const [schedRes, assignRes] = await Promise.allSettled([
+        mobileApiService.getPortalSchedules({ child_id: childId, date: todayStr }),
+        mobileApiService.getPortalAssignments({ child_id: childId, per_page: 20 }),
+      ]);
+      if (schedRes.status === 'fulfilled') {
+        const d = unwrapApiData<any>(schedRes.value) || schedRes.value?.data || schedRes.value;
+        setHomeSchedule(d);
+      }
+      if (assignRes.status === 'fulfilled') {
+        const raw = assignRes.value;
+        const list = Array.isArray(raw?.data?.data)
+          ? raw.data.data
+          : Array.isArray(raw?.data)
+          ? raw.data
+          : Array.isArray(raw?.items)
+          ? raw.items
+          : Array.isArray(raw)
+          ? raw
+          : [];
+        setHomeAssignments(list);
+        if (list.length > 0) {
+          void offlineCache.set(cacheKeyAssign, { list });
+        }
+      }
+    } catch {
+      // silent fail — widgets gracefully show empty state
+    } finally {
+      setLoadingHomeWidgets(false);
+    }
+  }, []);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -143,21 +392,182 @@ export default function HomeScreen({ navigation }: any) {
     ? (mobileConfig.theme.news_gradient_end as string)
     : '#E8F5E9';
   const [showAllNews, setShowAllNews] = useState<boolean>(false);
+  const [showTugasModal, setShowTugasModal] = useState<boolean>(false);
+  const [showJadwalModal, setShowJadwalModal] = useState<boolean>(false);
+  const [showChildPortalModal, setShowChildPortalModal] = useState<boolean>(false);
+  const [selectedPortalChild, setSelectedPortalChild] = useState<any>(null);
+
+  // Modal Notifikasi & Pengingat Akademik Siswa (Tugas LMS, Ujian CBT, Kuis)
+  const [showStudentNotificationModal, setShowStudentNotificationModal] = useState<boolean>(false);
+  const [selectedNotificationStudent, setSelectedNotificationStudent] = useState<any>(null);
+  const [studentNotificationsLoading, setStudentNotificationsLoading] = useState<boolean>(false);
+  const [studentAssignmentsList, setStudentAssignmentsList] = useState<any[]>([]);
+  const [studentCbtList, setStudentCbtList] = useState<any[]>([]);
+  const [studentNotifFilter, setStudentNotifFilter] = useState<'all' | 'tugas' | 'cbt' | 'pengumuman'>('all');
+
+  const handleOpenStudentNotifications = useCallback(async (student: any) => {
+    setSelectedNotificationStudent(student);
+    setShowStudentNotificationModal(true);
+    setStudentNotificationsLoading(true);
+    const sId = student?.id || student?.student_id;
+    try {
+      const [assignRes, cbtRes] = await Promise.allSettled([
+        mobileApiService.getPortalAssignments({ child_id: sId ? String(sId) : undefined, per_page: 20 }),
+        mobileApiService.getPortalCbtExams(sId ? String(sId) : undefined),
+      ]);
+      if (assignRes.status === 'fulfilled') {
+        const raw = assignRes.value;
+        const list = Array.isArray(raw?.data?.data)
+          ? raw.data.data
+          : Array.isArray(raw?.data)
+          ? raw.data
+          : Array.isArray(raw?.items)
+          ? raw.items
+          : Array.isArray(raw)
+          ? raw
+          : [];
+        setStudentAssignmentsList(list);
+      }
+      if (cbtRes.status === 'fulfilled') {
+        const rawCbt = cbtRes.value;
+        const cbtData = unwrapApiData<any[]>(rawCbt) || (Array.isArray(rawCbt?.data) ? rawCbt.data : Array.isArray(rawCbt) ? rawCbt : []);
+        setStudentCbtList(cbtData);
+      }
+    } catch (err) {
+      console.warn('[HomeScreen] handleOpenStudentNotifications error:', err);
+    } finally {
+      setStudentNotificationsLoading(false);
+    }
+  }, []);
+
+  const handleChildPortalMenuClick = useCallback(
+    (route: string, tabKey?: string) => {
+      setShowChildPortalModal(false);
+      const childId = selectedPortalChild?.id || selectedPortalChild?.student_id;
+      const isGeneralIslamic = route === 'Quran' || route === 'DoaDzikir';
+      const navParams: Record<string, any> = {};
+      if (tabKey) {
+        navParams.tab = String(tabKey);
+      }
+      if (childId && !isGeneralIslamic) {
+        navParams.child_id = String(childId);
+        navParams.student_id = String(childId);
+        navParams.single_child_only = true;
+      }
+      navigation.navigate(
+        String(route),
+        Object.keys(navParams).length > 0 ? navParams : undefined
+      );
+    },
+    [selectedPortalChild, navigation]
+  );
+
+  const childPortalMenus = useMemo(() => [
+    { label: 'Jadwal', icon: 'clock-time-four', color: '#7C3AED', bg: '#F5F3FF', route: 'Jadwal' },
+    { label: 'Tugas LMS', icon: 'clipboard-text', color: '#F59E0B', bg: '#FEF9EC', route: 'Tugas' },
+    { label: 'Materi', icon: 'book-multiple', color: '#059669', bg: '#ECFDF5', route: 'Materi' },
+    { label: 'Nilai & Rapor', icon: 'chart-box', color: '#0D9488', bg: '#E6FFFA', route: 'Nilai' },
+    { label: 'Tahfizh', icon: 'book-marker', color: '#2563EB', bg: '#EFF6FF', route: 'Tahfizh' },
+    { label: 'Mutaba’ah', icon: 'clipboard-check', color: '#F59E0B', bg: '#FEF9EC', route: 'Mutabaah' },
+    { label: 'Setoran', icon: 'book-check-outline', color: '#059669', bg: '#ECFDF5', route: 'Orang Tua', tab: 'setoran' },
+    { label: 'Target', icon: 'trophy-outline', color: '#0D9488', bg: '#CCFBF1', route: 'Orang Tua', tab: 'target' },
+    { label: 'Presensi', icon: 'account-check', color: '#7C3AED', bg: '#F5F3FF', route: 'Absensi' },
+    { label: 'Izin Sakit', icon: 'hand-heart-outline', color: '#2563EB', bg: '#EFF6FF', route: 'Orang Tua', tab: 'ortu' },
+    { label: 'Kisi-kisi', icon: 'file-question', color: '#EF4444', bg: '#FEF2F2', route: 'KisiKisi' },
+    { label: 'Ujian CBT', icon: 'laptop', color: '#2563EB', bg: '#EFF6FF', route: 'CbtExams' },
+  ], []);
   const [imageError, setImageError] = useState(false);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [activeMenuPage, setActiveMenuPage] = useState(0);
+  const [isMenuExpanded, setIsMenuExpanded] = useState(false);
   const [showAllMenusModal, setShowAllMenusModal] = useState(false);
 
+  const toggleMenuExpansion = useCallback(() => {
+    if (
+      Platform.OS === 'android' &&
+      !(globalThis as any)?.nativeFabricUIManager &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
+      try {
+        UIManager.setLayoutAnimationEnabledExperimental(true);
+      } catch {
+        // no-op in New Architecture
+      }
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setIsMenuExpanded((prev) => !prev);
+  }, []);
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  // Animasi halus untuk profil greeting besar (fade out & float up saat scroll down)
+  const greetingOpacity = useMemo(() => {
+    return scrollY.interpolate({
+      inputRange: [0, 45],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+  }, [scrollY]);
+
+  const greetingTranslateY = useMemo(() => {
+    return scrollY.interpolate({
+      inputRange: [0, 45],
+      outputRange: [0, -10],
+      extrapolate: 'clamp',
+    });
+  }, [scrollY]);
+
+  // Animasi halus untuk sticky compact header (fade in & slide down presisi, 100% native driver 60 FPS)
+  const stickyOpacity = useMemo(() => {
+    return scrollY.interpolate({
+      inputRange: [35, 80],
+      outputRange: [0, 1],
+      extrapolate: 'clamp',
+    });
+  }, [scrollY]);
+
+  const stickyTranslateY = useMemo(() => {
+    return scrollY.interpolate({
+      inputRange: [0, 34.9, 35, 80],
+      outputRange: [-200, -200, -14, 0],
+      extrapolate: 'clamp',
+    });
+  }, [scrollY]);
+
+  // Gunakan useNativeDriver: true agar animasi berjalan di UI thread tanpa lag JS bridge
+  const handleMainScroll = useMemo(() => {
+    return Animated.event(
+      [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+      { useNativeDriver: true }
+    );
+  }, [scrollY]);
 
 
-  const setUser = useAuthStore((state) => state.setUser);
+
+  const rolesKey = (roles || []).join(',');
 
   const load = useCallback(async () => {
     setError('');
     setLoading(true);
+    const uid = useAuthStore.getState().user?.id;
+    const cacheKeyDash = offlineCache.buildKey('home_dashboard', uid);
+    const cacheKeyAnn  = offlineCache.buildKey('home_announcements', uid);
+    const cacheKeyChildren = offlineCache.buildKey('home_children', uid);
+
+    // 1. Baca cache dulu — tampil instan saat offline
+    const [cachedDash, cachedAnn, cachedChildren] = await Promise.all([
+      offlineCache.get<DashboardData>(cacheKeyDash),
+      offlineCache.get<any[]>(cacheKeyAnn),
+      offlineCache.get<any[]>(cacheKeyChildren),
+    ]);
+    if (cachedDash) setDashboard(cachedDash);
+    if (cachedAnn && cachedAnn.length > 0) setFetchedAnnouncements(cachedAnn);
+    if (cachedChildren && cachedChildren.length > 0) setParentChildren(cachedChildren);
+
+    // 2. Fetch dari backend
     try {
+      const currentRoles = useAuthStore.getState().roles;
       const [dashRes, profRes, infoRes, notifRes, childrenRes] = await Promise.allSettled([
-        mobileApiService.getRoleDashboard(roles),
+        mobileApiService.getRoleDashboard(currentRoles),
         mobileApiService.getProfile(),
         mobileApiService.getSchoolInformation({ per_page: 10 }),
         mobileApiService.getNotifications(),
@@ -165,16 +575,21 @@ export default function HomeScreen({ navigation }: any) {
       ]);
 
       if (dashRes.status === 'fulfilled') {
-        setDashboard(unwrapApiData<DashboardData>(dashRes.value) || {});
+        const d = unwrapApiData<DashboardData>(dashRes.value) || {};
+        setDashboard(d);
+        void offlineCache.set(cacheKeyDash, d);
       }
       if (profRes.status === 'fulfilled') {
         const profile = profRes.value?.data?.data ?? profRes.value?.data ?? profRes.value;
-        if (profile) setUser(profile);
+        if (profile) {
+          useAuthStore.getState().syncServerProfile(profile);
+        }
       }
       if (infoRes.status === 'fulfilled') {
         const infoList = unwrapCollection<any>(infoRes.value);
         if (Array.isArray(infoList) && infoList.length > 0) {
           setFetchedAnnouncements(infoList);
+          void offlineCache.set(cacheKeyAnn, infoList);
         }
       }
       if (notifRes.status === 'fulfilled') {
@@ -188,15 +603,28 @@ export default function HomeScreen({ navigation }: any) {
         const chList = unwrapApiData<any[]>(childrenRes.value) || [];
         if (Array.isArray(chList)) {
           setParentChildren(chList);
+          if (chList.length > 0) {
+            void offlineCache.set(cacheKeyChildren, chList);
+            const curActive = chList[activeChildIndex] || chList[0];
+            const curId = curActive?.id || curActive?.student_id;
+            if (curId) {
+              void fetchTodayTimeline(curId);
+              void fetchHomeWidgets(curId);
+            }
+          } else {
+            void fetchTodayTimeline(undefined);
+            void fetchHomeWidgets(undefined);
+          }
         }
       }
     } catch (requestError) {
+      // Offline: data cache sudah tampil dari step 1
       setError(getApiErrorMessage(requestError, 'Dashboard belum berhasil dimuat.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [roles, setUser]);
+  }, [rolesKey]);
 
   useEffect(() => {
     void load();
@@ -210,39 +638,16 @@ export default function HomeScreen({ navigation }: any) {
   const student = isStudentRole(roles);
 
   const announcements = useMemo(() => {
-    const list = fetchedAnnouncements.length > 0
-      ? fetchedAnnouncements
-      : listAt(dashboard, [
-          'tables.announcements',
-          'recent_information',
-          'agenda_yayasan',
-          'announcements',
-          'pengumuman_sekolah',
-        ]);
-    
-    // Fallback Islamic announcements if database hasn't seeded any yet
-    if (!list || list.length === 0) {
-      return [
-        {
-          id: 1,
-          judul_pengumuman: 'Libur Hari Raya Idul Adha',
-          isi_pengumuman: 'Sekolah libur pada tanggal 17 Juni 2024 dalam rangka Hari Raya Idul Adha 1445 H. Kegiatan belajar mengajar akan dimulai kembali pada 19 Juni 2024.',
-          created_at: '2024-05-12',
-        },
-        {
-          id: 2,
-          judul_pengumuman: 'Lomba Tahfiz',
-          isi_pengumuman: 'Pendaftaran lomba tahfizh Al-Quran antar unit sekolah dibuka mulai 1 Juni 2024.',
-          created_at: '2024-05-10',
-        },
-        {
-          id: 3,
-          judul_pengumuman: 'Pembayaran SPP',
-          isi_pengumuman: 'Pembayaran SPP bulan Juni paling lambat tanggal 10 Juni 2024.',
-          created_at: '2024-05-08',
-        },
-      ];
-    }
+    if (fetchedAnnouncements.length > 0) return fetchedAnnouncements;
+    // Ambil dari data dashboard jika tersedia
+    const list = listAt(dashboard, [
+      'tables.announcements',
+      'recent_information',
+      'agenda_yayasan',
+      'announcements',
+      'pengumuman_sekolah',
+    ]);
+    // Hanya tampilkan data real dari backend, jika kosong kembalikan array kosong
     return list;
   }, [fetchedAnnouncements, dashboard]);
 
@@ -250,12 +655,12 @@ export default function HomeScreen({ navigation }: any) {
   const profileImageUrl = getProfileImageUrl(user, dashboard);
 
   useEffect(() => {
-    setImageError(false);
+    setImageError((prev) => (prev ? false : prev));
   }, [profileImageUrl]);
 
-  const studentClass = dashboard?.student?.kelas?.nama_kelas || user?.kelas || 'Kelas 5A';
+  const studentClass = dashboard?.student?.kelas?.nama_kelas || user?.kelas || '';
   const subGreeting = student
-    ? `${studentClass} · Siswa`
+    ? studentClass ? `${studentClass} · Siswa` : 'Siswa'
     : parent
     ? `Orang Tua dari ${user?.student_name || 'Siswa'}`
     : teacher
@@ -271,6 +676,8 @@ export default function HomeScreen({ navigation }: any) {
     if (principal) {
       return [
         ['Dashboard', 'view-dashboard-outline', '#059669', '#E6F4EA', 'Data'],
+        ['Al-Qur\'an', 'book-open-variant', '#059669', '#E6F4EA', 'Quran'],
+        ['Doa & Dzikir', 'hands-pray', '#0D9488', '#E6FFFA', 'DoaDzikir'],
         ['Absensi', 'calendar-check-outline', '#0D9488', '#E6FFFA', 'Absensi'],
         ['Tahfiz', 'book-open-page-variant', '#10B981', '#ECFDF5', 'Lainnya'],
         ['Mutabaah', 'check-decagram-outline', '#047857', '#DEF7EC', 'Lainnya'],
@@ -282,6 +689,8 @@ export default function HomeScreen({ navigation }: any) {
     }
     if (foundation || superAdmin) {
       return [
+        ['Al-Qur\'an', 'book-open-variant', '#059669', '#E6F4EA', 'Quran'],
+        ['Doa & Dzikir', 'hands-pray', '#0D9488', '#E6FFFA', 'DoaDzikir'],
         ['Kalender', 'calendar-month-outline', '#0891B2', '#CFFAFE', 'Kalender'],
         ['Monev', 'chart-box-outline', '#4F46E5', '#EEF2FF', 'Data'],
         ['Tahfiz', 'book-open-page-variant', '#10B981', '#ECFDF5', 'Lainnya'],
@@ -295,50 +704,61 @@ export default function HomeScreen({ navigation }: any) {
     }
     if (teacher) {
       return [
-        ['Kalender', 'calendar-month-outline', '#0891B2', '#CFFAFE', 'Kalender'],
-        ['Absensi', 'calendar-check-outline', '#059669', '#E6F4EA', 'Guru'],
-        ['Tahfiz', 'book-open-page-variant', '#10B981', '#ECFDF5', 'Guru'],
-        ['Mutabaah', 'check-decagram-outline', '#0D9488', '#E6FFFA', 'Guru'],
-        ['Tugas', 'clipboard-text-outline', '#7C3AED', '#F5F3FF', 'Tugas'],
-        ['Nilai', 'star-outline', '#F59E0B', '#FEF3C7', 'Guru'],
-        ['Informasi', 'bullhorn-outline', '#4F46E5', '#E0E7FF', 'Informasi'],
-        ['Jadwal', 'calendar-clock-outline', '#EA580C', '#FFF7ED', 'Jadwal'],
-        ['Materi', 'book-open-page-variant-outline', '#2563EB', '#EFF6FF', 'Materi'],
-        ['Pengaturan', 'cog-outline', '#64748B', '#F1F5F9', 'Lainnya'],
+        ['Al-Qur\'an', 'book-open-variant', '#059669', '#F0FDF4', 'Quran'],
+        ['Doa & Dzikir', 'hands-pray', '#F97316', '#FFF7ED', 'DoaDzikir'],
+        ['Kalender', 'calendar-month', '#2563EB', '#EFF6FF', 'Kalender'],
+        ['Absensi', 'account-check', '#7C3AED', '#F5F3FF', 'Absensi'],
+        ['Tahfiz', 'book-marker', '#2563EB', '#EFF6FF', 'Tahfizh'],
+        ['Mutabaah', 'clipboard-check', '#F59E0B', '#FEF9EC', 'Guru'],
+        ['Tugas', 'clipboard-text', '#F59E0B', '#FEF9EC', 'Tugas'],
+        ['Nilai', 'chart-box', '#10B981', '#E8FAF2', 'Guru'],
+        ['Informasi', 'bullhorn', '#E11D48', '#FFF1F2', 'Informasi'],
+        ['Jadwal', 'clock-time-four', '#7C3AED', '#F5F3FF', 'Jadwal'],
+        ['Materi', 'book-multiple', '#059669', '#ECFDF5', 'Materi'],
+        ['Pengaturan', 'cog', '#64748B', '#F8FAFC', 'Lainnya'],
       ];
     }
     if (parent) {
       return [
-        ['Kalender', 'calendar-month-outline', '#0891B2', '#CFFAFE', 'Kalender'],
-        ['Informasi', 'bullhorn-outline', '#4F46E5', '#E0E7FF', 'Informasi'],
-        ['Jadwal', 'calendar-clock-outline', '#7C3AED', '#EDE9FE', 'Jadwal'],
-        ['Materi', 'book-open-page-variant-outline', '#9333EA', '#F3E8FF', 'Materi'],
-        ['Tugas', 'clipboard-text-outline', '#C026D3', '#FAE8FF', 'Tugas'],
-        ['Tahfizh', 'book-check-outline', '#059669', '#D1FAE5', 'Orang Tua', 'tahfizh'],
-        ['Nilai', 'star-outline', '#0D9488', '#CCFBF1', 'Orang Tua', 'grades'],
-        ['Komentar', 'comment-text-outline', '#0891B2', '#CFFAFE', 'Orang Tua', 'student-notes'],
-        ['Mutabaah', 'handshake-outline', '#D97706', '#FEF3C7', 'Orang Tua', 'mutabaah'],
-        ['Absensi', 'calendar-check-outline', '#EA580C', '#FFEDD5', 'Orang Tua', 'attendance'],
-        ['Kisi-kisi', 'file-document-outline', '#CA8A04', '#FEF9C3', 'Orang Tua', 'kisi'],
-        ['Ujian CBT', 'file-check-outline', '#65A30D', '#ECFCCB', 'Orang Tua', 'ujian'],
-        ['Hasil Rapor', 'certificate-outline', '#E11D48', '#FFE4E6', 'Orang Tua', 'hasil'],
+        ['Al-Qur\'an', 'book-open-variant', '#059669', '#F0FDF4', 'Quran'],
+        ['Doa & Dzikir', 'hands-pray', '#F97316', '#FFF7ED', 'DoaDzikir'],
+        ['Kalender', 'calendar-month', '#2563EB', '#EFF6FF', 'Kalender'],
+        ['Informasi', 'bullhorn', '#E11D48', '#FFF1F2', 'Informasi'],
+        ['Jadwal', 'clock-time-four', '#7C3AED', '#F5F3FF', 'Jadwal'],
+        ['Materi', 'book-multiple', '#059669', '#ECFDF5', 'Materi'],
+        ['Tugas', 'clipboard-text', '#F59E0B', '#FEF9EC', 'Tugas'],
+        ['Tahfizh', 'book-marker', '#2563EB', '#EFF6FF', 'Tahfizh'],
+        ['Nilai', 'chart-box', '#10B981', '#E8FAF2', 'Nilai'],
+        ['Komentar', 'chat-processing', '#2563EB', '#EFF6FF', 'Komentar'],
+        ['Mutabaah', 'clipboard-check', '#F59E0B', '#FEF9EC', 'Mutabaah'],
+        ['Absensi', 'account-check', '#7C3AED', '#F5F3FF', 'Absensi'],
+        ['Kisi-kisi', 'file-question', '#EF4444', '#FEF2F2', 'KisiKisi'],
+        ['Ujian CBT', 'laptop', '#2563EB', '#EFF6FF', 'CbtExams'],
+        ['Hasil Rapor', 'file-certificate', '#059669', '#ECFDF5', 'Nilai'],
       ];
     }
     if (student) {
       return [
-        ['Kalender', 'calendar-month-outline', '#0891B2', '#CFFAFE', 'Kalender'],
-        ['Absensi', 'calendar-check-outline', '#059669', '#E6F4EA', 'Siswa'],
-        ['Informasi', 'bullhorn-outline', '#4F46E5', '#E0E7FF', 'Informasi'],
-        ['Tahfiz', 'book-open-page-variant', '#10B981', '#ECFDF5', 'Siswa'],
-        ['Mutabaah', 'check-decagram-outline', '#0D9488', '#E6FFFA', 'Siswa'],
-        ['Tugas', 'clipboard-text-outline', '#7C3AED', '#F5F3FF', 'Tugas'],
-        ['Nilai', 'star-outline', '#F59E0B', '#FEF3C7', 'Siswa'],
-        ['Jadwal', 'calendar-clock-outline', '#EA580C', '#FFF7ED', 'Jadwal'],
-        ['Materi', 'book-open-page-variant-outline', '#2563EB', '#EFF6FF', 'Materi'],
+        ['Al-Qur\'an', 'book-open-variant', '#059669', '#F0FDF4', 'Quran'],
+        ['Doa & Dzikir', 'hands-pray', '#F97316', '#FFF7ED', 'DoaDzikir'],
+        ['Kalender', 'calendar-month', '#2563EB', '#EFF6FF', 'Kalender'],
+        ['Informasi', 'bullhorn', '#E11D48', '#FFF1F2', 'Informasi'],
+        ['Jadwal', 'clock-time-four', '#7C3AED', '#F5F3FF', 'Jadwal'],
+        ['Materi', 'book-multiple', '#059669', '#ECFDF5', 'Materi'],
+        ['Tugas', 'clipboard-text', '#F59E0B', '#FEF9EC', 'Tugas'],
+        ['Tahfiz', 'book-marker', '#2563EB', '#EFF6FF', 'Tahfizh'],
+        ['Nilai', 'chart-box', '#10B981', '#E8FAF2', 'Nilai'],
+        ['Absensi', 'account-check', '#7C3AED', '#F5F3FF', 'Absensi'],
+        ['Mutabaah', 'clipboard-check', '#F59E0B', '#FEF9EC', 'Mutabaah'],
+        ['Kisi-kisi', 'file-question', '#EF4444', '#FEF2F2', 'KisiKisi'],
+        ['Ujian CBT', 'laptop', '#2563EB', '#EFF6FF', 'CbtExams'],
+        ['Hasil Rapor', 'file-certificate', '#059669', '#ECFDF5', 'Nilai'],
       ];
     }
     // Default Tata Usaha / Staff
     return [
+      ['Al-Qur\'an', 'book-open-variant', '#059669', '#E6F4EA', 'Quran'],
+      ['Doa & Dzikir', 'hands-pray', '#0D9488', '#E6FFFA', 'DoaDzikir'],
       ['Data Siswa', 'account-group-outline', '#059669', '#E6F4EA', 'Data'],
       ['Absensi', 'calendar-check-outline', '#0D9488', '#E6FFFA', 'Absensi'],
       ['Keuangan', 'cash-multiple', '#F59E0B', '#FEF3C7', 'Data'],
@@ -350,93 +770,205 @@ export default function HomeScreen({ navigation }: any) {
     ];
   }, [principal, foundation, superAdmin, teacher, parent, student]);
 
-  const menuPages = useMemo(() => {
-    const pages: any[][] = [];
-    for (let i = 0; i < roleMenus.length; i += 8) {
-      pages.push(roleMenus.slice(i, i + 8));
+  const primaryMenuItems = useMemo(() => {
+    const top7 = roleMenus.slice(0, 7);
+    const toggleTile = isMenuExpanded
+      ? ['Kembali', 'chevron-up', '#047857', '#DEF7EC', '__TOGGLE__']
+      : ['Lainnya', 'view-grid-plus-outline', '#10B981', '#ECFDF5', '__TOGGLE__'];
+    return [...top7, toggleTile];
+  }, [roleMenus, isMenuExpanded]);
+
+  const primaryRows = useMemo(() => {
+    const rows: any[][] = [];
+    for (let i = 0; i < primaryMenuItems.length; i += 4) {
+      rows.push(primaryMenuItems.slice(i, i + 4));
     }
-    return pages;
+    return rows;
+  }, [primaryMenuItems]);
+
+  const expandedRows = useMemo(() => {
+    const remaining = roleMenus.slice(7);
+    const rows: any[][] = [];
+    for (let i = 0; i < remaining.length; i += 4) {
+      rows.push(remaining.slice(i, i + 4));
+    }
+    return rows;
   }, [roleMenus]);
+
+  const handleMenuNavigation = useCallback(
+    (route: string, tabKey?: string) => {
+      if (route === 'Lainnya' || route === '__TOGGLE__') {
+        toggleMenuExpansion();
+        return;
+      }
+      const isGeneralIslamic = route === 'Quran' || route === 'DoaDzikir';
+      const activeStudent = parentChildren[activeChildIndex];
+      const activeChildId = activeStudent?.id || activeStudent?.student_id;
+
+      const navParams: Record<string, any> = {};
+      if (tabKey) {
+        navParams.tab = String(tabKey);
+      }
+      if (parent && activeChildId && !isGeneralIslamic) {
+        navParams.child_id = String(activeChildId);
+        navParams.student_id = String(activeChildId);
+        navParams.single_child_only = true;
+      }
+
+      navigation.navigate(
+        String(route),
+        Object.keys(navParams).length > 0 ? navParams : undefined
+      );
+    },
+    [parent, parentChildren, activeChildIndex, navigation]
+  );
+
+  const isMultiNewsCentered = announcements.length > 3;
+
+  const newsGap = isMultiNewsCentered ? 10 : STUDENT_CARD_GAP;
+
+  const newsCardWidth = useMemo(() => {
+    if (announcements.length === 0) return SCREEN_WIDTH - 32;
+    if (announcements.length === 1) return SCREEN_WIDTH - 32;
+    if (isMultiNewsCentered) {
+      // Jika > 3 card berita: tampilkan potongan kartu terpotong di kiri & kanan (centered peek carousel)
+      return SCREEN_WIDTH - 64;
+    }
+    // Jika 2 atau 3 card berita: kartu panjang dengan cuplikan di sebelah kanan
+    return SCREEN_WIDTH - 16 - STUDENT_CARD_GAP - STUDENT_PEEK_WIDTH;
+  }, [announcements.length, isMultiNewsCentered]);
+
+  const newsSnapInterval = useMemo(() => {
+    return newsCardWidth + newsGap;
+  }, [newsCardWidth, newsGap]);
+
+  const newsTrackPaddingHorizontal = useMemo(() => {
+    if (announcements.length <= 1) return 16;
+    if (isMultiNewsCentered) {
+      return Math.round((SCREEN_WIDTH - newsCardWidth) / 2); // 32px (10px gap + 22px peek)
+    }
+    return 16;
+  }, [announcements.length, isMultiNewsCentered, newsCardWidth]);
 
   const handleCarouselScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const offsetX = event.nativeEvent.contentOffset.x;
-    const index = Math.round(offsetX / (NEWS_CARD_WIDTH + ITEM_SPACING));
+    const index = Math.round(offsetX / newsSnapInterval);
     if (index !== activeSlideIndex && index >= 0 && index < announcements.length) {
       setActiveSlideIndex(index);
     }
   };
 
+  const activeStudent = parentChildren[activeChildIndex];
+  const activeChildId = activeStudent ? String(activeStudent.id || activeStudent.student_id || '') : undefined;
+
+  // Re-fetch saat child atau tanggal yang dilihat berubah
+  useEffect(() => {
+    void fetchTodayTimeline(activeChildId, viewedDate);
+  }, [activeChildId, viewedDate, fetchTodayTimeline]);
+
+  // Fetch widget tugas & jadwal hari ini saat child aktif berubah
+  useEffect(() => {
+    void fetchHomeWidgets(activeChildId);
+  }, [activeChildId, fetchHomeWidgets]);
+
+  const activeChildName = activeStudent?.full_name || activeStudent?.nama_lengkap || activeStudent?.name || '';
+  const activeChildPhoto = activeStudent ? getProfileImageUrl(activeStudent) : null;
+  const activeChildGender = activeStudent?.gender || activeStudent?.jenis_kelamin;
+  const isFemaleStudent = activeChildGender === 'female' || activeChildGender === 'P';
+  const defaultStudentAvatar = isFemaleStudent ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+
+  const stickyDisplayName = parent && activeChildName ? activeChildName : `${name} 👋`;
+  const stickyAvatarSource = useMemo(() => {
+    if (parent && activeStudent) {
+      if (activeChildPhoto) return { uri: activeChildPhoto };
+      return defaultStudentAvatar;
+    }
+    if (profileImageUrl && !imageError) return { uri: String(profileImageUrl) };
+    return DEFAULT_PARENT_AVATAR;
+  }, [parent, activeStudent, activeChildPhoto, defaultStudentAvatar, profileImageUrl, imageError]);
+
   return (
     <View style={styles.safeArea}>
-      {/* Top Header Bar (Green Gradient #18A165 matching reference image) */}
-      <View style={styles.headerWrapper}>
+      {/* 1. STICKY COMPACT APP BAR (Hanya Avatar Profil, Nama, dan Icon Bell saat di-scroll) */}
+      <Animated.View
+        pointerEvents="box-none"
+        style={[
+          styles.stickyHeaderBar,
+          {
+            paddingTop: topInset + 6,
+            opacity: stickyOpacity,
+            transform: [{ translateY: stickyTranslateY }],
+          },
+        ]}
+      >
+        {/* Latar Belakang Gambar Masjid (Sama persis dengan header atas) */}
+        <Image
+          source={HEADER_MOSQUE_BG}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien halus persis seperti header atas */}
         <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.headerBar, { paddingTop: topInset + 8 }]}
-        >
-          {/* Soft Organic Decorative Blobs / Waves (Like user screenshot) */}
-          <View style={styles.headerDecorWave} />
-          <View style={styles.headerDecorCircle} />
-
-          <View style={styles.userProfileSection}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => navigation.navigate('Profil')}
-              style={styles.avatarWrapper}
-            >
-              {profileImageUrl && !imageError ? (
-                <Image
-                  source={{ uri: String(profileImageUrl) }}
-                  style={styles.avatarImage}
-                  resizeMode="cover"
-                  onError={() => setImageError(true)}
-                />
-              ) : (
-                <View style={styles.avatarFallback}>
-                  <Text style={styles.avatarInitial}>{name.slice(0, 1).toUpperCase()}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.greetingTextColumn}>
-              <Text style={styles.greetingSub}>Assalamu'alaikum,</Text>
-              <Text numberOfLines={1} style={styles.greetingName}>{name} 👋</Text>
-              <Text numberOfLines={1} style={styles.greetingRole}>{subGreeting}</Text>
-            </View>
-          </View>
-
-          {/* Notification Button with Badge Counter (White button with Green Icon) */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Notifikasi')}
-            style={styles.bellButton}
-            accessibilityLabel="Notifikasi"
-          >
-            <MaterialCommunityIcons name="bell-outline" size={20} color="#18A165" />
-            {unreadNotificationCount > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadBadgeText}>
-                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </LinearGradient>
-      </View>
-
-      {/* Main Content Sheet with Curved Top & Gradient Body */}
-      <View style={styles.sheetContainer}>
-        <LinearGradient
-          colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
+          colors={['rgba(8, 90, 56, 0.35)', 'rgba(10, 100, 65, 0.08)', 'rgba(52, 211, 153, 0.12)']}
+          locations={[0, 0.45, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFill}
         />
-        <ScrollView
-          style={styles.screen}
-          contentContainerStyle={styles.contentContainer}
+        <View style={styles.headerDecorWave} />
+        <View style={styles.headerDecorCircle} />
+
+        <View style={styles.stickyHeaderContent}>
+          {/* Avatar Profil / Siswa Terpilih + Nama */}
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => {
+              if (parent && activeStudent) {
+                setSelectedIdCardStudent(activeStudent);
+              } else {
+                navigation.navigate('Profil');
+              }
+            }}
+            style={styles.stickyUserRow}
+          >
+            <View style={styles.stickyAvatarWrap}>
+              <Image
+                source={stickyAvatarSource}
+                style={styles.stickyAvatarImg}
+                resizeMode="cover"
+              />
+            </View>
+            <View style={styles.stickyTextCol}>
+              {parent && activeChildName ? (
+                <Text style={styles.stickyRoleTagText}>Siswa Terpilih</Text>
+              ) : null}
+              <Text numberOfLines={1} style={styles.stickyUserName}>
+                {stickyDisplayName}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Bell Icon Button */}
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('Notifikasi')}
+            style={styles.stickyBellBtn}
+            accessibilityLabel="Notifikasi"
+          >
+            <MaterialCommunityIcons name="bell-outline" size={20} color="#054835" />
+            {unreadNotificationCount > 0 && (
+              <View style={styles.unreadBadgeDot} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </Animated.View>
+
+      {/* 2. MAIN SCROLLABLE DASHBOARD BODY */}
+      <Animated.ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.mainScrollContent}
+        onScroll={handleMainScroll}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -445,26 +977,109 @@ export default function HomeScreen({ navigation }: any) {
               void load();
             }}
             colors={['#084835']}
+            progressViewOffset={topInset + 10}
           />
         }
         showsVerticalScrollIndicator={false}
       >
+        {/* ============================================================ */}
+        {/* HEADER DENGAN GAMBAR BACKGROUND: Greeting + Anak Saya        */}
+        {/* ============================================================ */}
+        <View style={[styles.extendedHeaderGradient, { paddingTop: topInset + 8 }]}>
+          {/* Latar Belakang Gambar Masjid */}
+          <Image
+            source={HEADER_MOSQUE_BG}
+            style={[StyleSheet.absoluteFill, styles.headerMosqueBgImage]}
+            resizeMode="cover"
+          />
+          {/* Overlay gradien halus agar teks putih tetap tajam & kontras */}
+          <LinearGradient
+            colors={['rgba(8, 90, 56, 0.35)', 'rgba(10, 100, 65, 0.08)', 'rgba(52, 211, 153, 0.12)']}
+            locations={[0, 0.45, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {/* Soft Organic Decorative Blobs / Waves */}
+          <View style={styles.headerDecorWave} />
+          <View style={styles.headerDecorCircle} />
 
-        {/* SECTION: Kartu Data Siswa (Bergeser / Horizontal Swiper Tanpa Tab) */}
-        {parentChildren.length > 0 && (
-          <View style={styles.studentCardContainer}>
-            <View style={styles.studentCardHeaderRow}>
-              <View style={styles.studentCardHeaderTitleWrap}>
-                <Text style={styles.studentCardHeaderTitle}>Data Ananda</Text>
+          {/* Baris Atas: Logo Splashscreen & Judul SIMSIT + Tombol Notifikasi */}
+          <Animated.View
+            style={[
+              styles.headerProfileRow,
+              {
+                opacity: greetingOpacity,
+                transform: [{ translateY: greetingTranslateY }],
+              },
+            ]}
+          >
+            <View style={styles.headerBrandSection}>
+              <View style={styles.headerLogoOuter}>
+                <Image
+                  source={SPLASH_LOGO}
+                  style={styles.headerLogoImg}
+                  resizeMode="contain"
+                />
               </View>
-              {parentChildren.length > 1 && (
-                <View style={styles.studentCardCountBadge}>
-                  <Text style={styles.studentCardCountBadgeText}>
-                    {activeChildIndex + 1} dari {parentChildren.length} Ananda
-                  </Text>
-                </View>
-              )}
+              <View style={styles.headerBrandTextCol}>
+                <Text style={styles.headerWelcomeText}>Selamat Datang</Text>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.75}
+                  style={styles.headerAppTitleText}
+                >
+                  DI SIMSIT DAR EL - IMAN
+                </Text>
+              </View>
             </View>
+
+            {/* Header Right Actions: Login Avatar + Notification Bell */}
+            <View style={styles.headerActionBtnsRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('Profil')}
+                style={styles.headerAvatarBtn}
+                accessibilityLabel="Profil Pengguna"
+              >
+                {profileImageUrl && !imageError ? (
+                  <Image
+                    source={{ uri: String(profileImageUrl) }}
+                    style={styles.headerAvatarImg}
+                    resizeMode="cover"
+                    onError={() => setImageError(true)}
+                  />
+                ) : (
+                  <Image
+                    source={DEFAULT_PARENT_AVATAR}
+                    style={styles.headerAvatarImg}
+                    resizeMode="cover"
+                  />
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('Notifikasi')}
+                style={styles.bellButton}
+                accessibilityLabel="Notifikasi"
+              >
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#18A165" />
+                {unreadNotificationCount > 0 && (
+                  <View style={styles.unreadBadgeDot} />
+                )}
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+
+          {/* SECTION: Kartu Data Siswa (Di dalam Header Hijau Penuh) */}
+          {parentChildren.length > 0 && (
+            <View style={styles.studentCardContainerInHeader}>
+              {/* Latar Belakang 2 Warna: Setengah Gambar Header, Setengah Container Body #EBF8F2 */}
+              <View style={styles.bodyOverlapBackdrop} pointerEvents="none">
+                <View style={styles.bodyOverlapSheet} />
+              </View>
 
             {/* Horizontal Scrollable Track of Student Cards */}
             <ScrollView
@@ -473,10 +1088,10 @@ export default function HomeScreen({ navigation }: any) {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.studentCardsTrack}
               decelerationRate="fast"
-              snapToInterval={CARD_WIDTH + 40}
+              snapToInterval={studentSnapInterval}
               onScroll={(e) => {
                 const offsetX = e.nativeEvent.contentOffset.x;
-                const idx = Math.round(offsetX / (CARD_WIDTH + 40));
+                const idx = Math.round(offsetX / studentSnapInterval);
                 if (idx !== activeChildIndex && idx >= 0 && idx < parentChildren.length) {
                   setActiveChildIndex(idx);
                 }
@@ -490,17 +1105,30 @@ export default function HomeScreen({ navigation }: any) {
                 const sUnit = student.education_unit?.name || student.unit_name || 'Unit Pendidikan';
                 const sKelas = student.kelas?.nama_kelas || student.kelas?.name || student.class_name || 'Kelas Belum Ditentukan';
                 const sJenjang = student.kelas?.jenjang || student.education_unit?.level || 'Terpadu';
+                const rawPresensi =
+                  student.attendance_today?.status ||
+                  student.presensi_hari_ini?.status ||
+                  student.attendance_status ||
+                  student.status_kehadiran ||
+                  student.presensi_status ||
+                  (String(todayTimeline?.student?.id || '') === String(student.id || '') ? todayTimeline?.summary?.attendance_status : undefined) ||
+                  'Hadir';
+                const isHadir = String(rawPresensi).toLowerCase().includes('hadir');
+                const isIzinSakit = String(rawPresensi).toLowerCase().includes('izin') || String(rawPresensi).toLowerCase().includes('sakit');
+                const isTerlambat = String(rawPresensi).toLowerCase().includes('terlambat') || String(rawPresensi).toLowerCase().includes('alpha');
+                const presensiTextColor = isHadir ? '#DEF7EC' : isIzinSakit ? '#FEF08A' : isTerlambat ? '#FECACA' : '#E2E8F0';
+                const presensiDotColor = isHadir ? '#10B981' : isIzinSakit ? '#F59E0B' : isTerlambat ? '#EF4444' : '#94A3B8';
 
                 return (
                   <LinearGradient
                     key={String(student.id || sIdx)}
-                    colors={['#0A5232', '#138A56', '#98E8BF']}
-                    locations={[0, 0.6, 1]}
+                    colors={['#0D6B42', '#18A165', '#2BD988']}
+                    locations={[0, 0.55, 1]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={[
                       styles.studentMainCard,
-                      { width: CARD_WIDTH + 30 },
+                      { width: studentCardWidth },
                     ]}
                   >
                     {/* Decorative Blob Like Header */}
@@ -520,13 +1148,22 @@ export default function HomeScreen({ navigation }: any) {
                             resizeMode="cover"
                           />
                         ) : (
-                          <Text style={styles.studentAvatarInitial}>
-                            {sName.charAt(0).toUpperCase()}
-                          </Text>
+                          <Image
+                            source={
+                              student?.gender === 'female' ||
+                              student?.jenis_kelamin === 'P' ||
+                              student?.jenis_kelamin === 'female' ||
+                              student?.gender === 'P'
+                                ? DEFAULT_STUDENT_GIRL_AVATAR
+                                : DEFAULT_STUDENT_BOY_AVATAR
+                            }
+                            style={styles.studentAvatarImg}
+                            resizeMode="cover"
+                          />
                         )}
                       </TouchableOpacity>
 
-                      <View style={styles.studentInfoCol}>
+                       <View style={styles.studentInfoCol}>
                         <View style={styles.studentNameBadgeRow}>
                           <Text numberOfLines={1} style={styles.studentFullName}>
                             {sName}
@@ -545,33 +1182,55 @@ export default function HomeScreen({ navigation }: any) {
                         </View>
                       </View>
 
-                      {/* Icon Button QR Code Siswa (White button with green icon like bell on header) */}
-                      <TouchableOpacity
-                        activeOpacity={0.75}
-                        onPress={() => setSelectedQrStudent(student)}
-                        style={styles.studentQrBtn}
-                        accessibilityLabel="Tampilkan QR Code Siswa"
-                      >
-                        <MaterialCommunityIcons name="qrcode-scan" size={18} color="#18A165" />
-                        <Text style={styles.studentQrBtnText}>QR</Text>
-                      </TouchableOpacity>
+                      {/* Icon Buttons Siswa: Notifikasi Akademik (Bel) & QR Code */}
+                      <View style={styles.studentCardHeaderActions}>
+                        <TouchableOpacity
+                          activeOpacity={0.75}
+                          onPress={() => void handleOpenStudentNotifications(student)}
+                          style={styles.studentQrBtn}
+                          accessibilityLabel="Pengingat & Notifikasi Siswa"
+                        >
+                          <MaterialCommunityIcons name="bell-ring-outline" size={19} color="#18A165" />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          activeOpacity={0.75}
+                          onPress={() => setSelectedQrStudent(student)}
+                          style={styles.studentQrBtn}
+                          accessibilityLabel="Tampilkan QR Code Siswa"
+                        >
+                          <MaterialCommunityIcons name="qrcode-scan" size={19} color="#18A165" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
-                    {/* Card Middle: Key Student Attributes (Glassmorphism Box) */}
+                    {/* Card Middle: Key Student Attributes (Glassmorphism Box with Icons) */}
                     <View style={styles.studentAttributesGrid}>
                       <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Kelas</Text>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Kelas</Text>
+                        </View>
                         <Text numberOfLines={1} style={styles.studentAttrValue}>{sKelas}</Text>
                       </View>
                       <View style={styles.studentAttrDivider} />
                       <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Jenjang</Text>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
+                        </View>
                         <Text numberOfLines={1} style={styles.studentAttrValue}>{sJenjang}</Text>
                       </View>
                       <View style={styles.studentAttrDivider} />
                       <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Presensi</Text>
+                        </View>
+                        <View style={styles.studentPresensiValueRow}>
+                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: presensiTextColor }]}>{rawPresensi}</Text>
+                          <View style={[styles.presensiGreenDot, { backgroundColor: presensiDotColor }]} />
+                        </View>
                       </View>
                     </View>
 
@@ -591,20 +1250,23 @@ export default function HomeScreen({ navigation }: any) {
 
                       <TouchableOpacity
                         activeOpacity={0.82}
-                        onPress={() => navigation.navigate('Kalender', { child_id: student.id })}
+                        onPress={() => navigation.navigate('Kalender', { child_id: String(student.id), student_id: String(student.id), single_child_only: true })}
                         style={styles.studentActionBtnSecondary}
                       >
-                        <MaterialCommunityIcons name="calendar-month-outline" size={15} color="#064E3B" style={{ marginRight: 4 }} />
+                        <MaterialCommunityIcons name="calendar-month" size={15} color="#064E3B" style={{ marginRight: 4 }} />
                         <Text style={styles.studentActionBtnSecondaryText}>Kalender</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        onPress={() => navigation.navigate('Orang Tua')}
+                        onPress={() => {
+                          setSelectedPortalChild(student);
+                          setShowChildPortalModal(true);
+                        }}
                         style={styles.studentActionBtnPrimary}
                       >
+                        <MaterialCommunityIcons name="view-grid" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
                         <Text style={styles.studentActionBtnPrimaryText}>Portal</Text>
-                        <MaterialCommunityIcons name="arrow-right" size={14} color="#FFFFFF" style={{ marginLeft: 2 }} />
                       </TouchableOpacity>
                     </View>
                   </LinearGradient>
@@ -614,7 +1276,7 @@ export default function HomeScreen({ navigation }: any) {
 
             {/* Pagination Dots for Multiple Children */}
             {parentChildren.length > 1 && (
-              <View style={styles.studentDotsRow}>
+              <View style={styles.studentDotsRowInHeader}>
                 {parentChildren.map((_, dotIdx) => (
                   <TouchableOpacity
                     key={dotIdx}
@@ -622,194 +1284,607 @@ export default function HomeScreen({ navigation }: any) {
                     onPress={() => {
                       setActiveChildIndex(dotIdx);
                       studentScrollRef.current?.scrollTo({
-                        x: dotIdx * (CARD_WIDTH + 40),
+                        x: dotIdx * studentSnapInterval,
                         animated: true,
                       });
                     }}
                     style={[
                       styles.studentDot,
-                      activeChildIndex === dotIdx ? styles.studentDotActive : styles.studentDotInactive,
+                      activeChildIndex === dotIdx ? styles.studentDotActiveInHeader : styles.studentDotInactiveInHeader,
                     ]}
                   />
                 ))}
               </View>
             )}
 
-
           </View>
         )}
+        </View>
 
-        {/* SECTION: Menu Utama (Maksimal 8 Ikon per Halaman, Geser Samping & Modal Lihat Semua) */}
-        <View style={styles.menuSection}>
-          <View style={styles.menuHeaderRow}>
-            <Text style={styles.menuHeaderTitle}>Menu Utama</Text>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setShowAllMenusModal(true)}
+        {/* ============================================================ */}
+        {/* SHEET PUTIH/SLATE: Melengkung Dimulai Tepat di Bawah Anak    */}
+        {/* ============================================================ */}
+        <View style={styles.curvedSheetBody}>
+
+        {/* SECTION: Menu Utama (Expandable Card Container) */}
+        <View style={styles.menuCardContainer}>
+          {/* Baris Utama (2 Baris Pertama, Tepat 4 Ikon per Baris, Ikon ke-8 di Sebelah Tugas adalah Tombol Expand/Kembali) */}
+          {primaryRows.map((rowItems, rIdx) => (
+            <View
+              key={`prim-${rIdx}`}
+              style={[
+                styles.menuRow,
+                (!isMenuExpanded && rIdx === primaryRows.length - 1) && styles.menuRowLast,
+              ]}
             >
-              <Text style={[styles.seeAllText, { color: '#18A165' }]}>Lihat Semua</Text>
-            </TouchableOpacity>
-          </View>
+              {rowItems.map(([label, icon, color, bgPastel, route], idx) => {
+                const isToggleTile = route === '__TOGGLE__';
+                const tabKey = isToggleTile ? undefined : (primaryMenuItems[rIdx * 4 + idx] as any)?.[5];
+                const subtitle = MENU_SUBTITLES[String(label)] || 'Menu layanan';
+                return (
+                  <TouchableOpacity
+                    key={idx}
+                    activeOpacity={0.75}
+                    style={[styles.menuCardTile, { backgroundColor: bgPastel }]}
+                    onPress={() => {
+                      if (isToggleTile) {
+                        toggleMenuExpansion();
+                      } else {
+                        handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined);
+                      }
+                    }}
+                  >
+                    <View style={styles.menuIconCircleHalo}>
+                      <MaterialCommunityIcons
+                        name={String(icon) as never}
+                        size={28}
+                        color={String(color)}
+                      />
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                      style={styles.menuTileTitle}
+                    >
+                      {String(label)}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                      style={styles.menuTileSubtitle}
+                    >
+                      {subtitle}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {rowItems.length < 4 &&
+                Array.from({ length: 4 - rowItems.length }).map((_, emptyIdx) => (
+                  <View key={`prim-spacer-${emptyIdx}`} style={styles.menuCardTileSpacer} />
+                ))}
+            </View>
+          ))}
 
-          <ScrollView
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={(e) => {
-              const offsetX = e.nativeEvent.contentOffset.x;
-              const page = Math.round(offsetX / (SCREEN_WIDTH - 40));
-              if (page !== activeMenuPage && page >= 0 && page < menuPages.length) {
-                setActiveMenuPage(page);
-              }
-            }}
-            scrollEventThrottle={16}
-          >
-            {menuPages.map((pageItems, pIdx) => (
-              <View key={pIdx} style={[styles.menuGridPage, { width: SCREEN_WIDTH - 40 }]}>
-                {pageItems.map(([label, icon, color, bgPastel, route], idx) => {
-                  const itemGlobalIdx = pIdx * 8 + idx;
-                  const tabKey = (roleMenus[itemGlobalIdx] as any)?.[5];
+          {/* Baris Tambahan saat di-Expand (Tepat 4 Ikon per Baris) */}
+          {isMenuExpanded &&
+            expandedRows.map((rowItems, rIdx) => (
+              <View
+                key={`exp-${rIdx}`}
+                style={[
+                  styles.menuRow,
+                  rIdx === expandedRows.length - 1 && styles.menuRowLast,
+                ]}
+              >
+                {rowItems.map(([label, icon, color, bgPastel, route], idx) => {
+                  const remainingIndex = rIdx * 4 + idx;
+                  const originalRemaining = roleMenus.slice(7);
+                  const tabKey = (originalRemaining[remainingIndex] as any)?.[5];
+                  const subtitle = MENU_SUBTITLES[String(label)] || 'Menu layanan';
                   return (
                     <TouchableOpacity
                       key={idx}
                       activeOpacity={0.75}
-                      style={styles.menuItem}
-                      onPress={() => {
-                        if (tabKey) {
-                          navigation.navigate(String(route), { tab: String(tabKey) });
-                        } else {
-                          navigation.navigate(String(route));
-                        }
-                      }}
+                      style={[styles.menuCardTile, { backgroundColor: bgPastel }]}
+                      onPress={() => handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined)}
                     >
-                      <View style={[styles.iconSquircle, { backgroundColor: bgPastel }]}>
+                      <View style={styles.menuIconCircleHalo}>
                         <MaterialCommunityIcons
                           name={String(icon) as never}
-                          size={24}
+                          size={28}
                           color={String(color)}
                         />
                       </View>
-                      <Text numberOfLines={1} style={styles.menuLabel}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                        style={styles.menuTileTitle}
+                      >
                         {String(label)}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        style={styles.menuTileSubtitle}
+                      >
+                        {subtitle}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
+                {rowItems.length < 4 &&
+                  Array.from({ length: 4 - rowItems.length }).map((_, emptyIdx) => (
+                    <View key={`exp-spacer-${emptyIdx}`} style={styles.menuCardTileSpacer} />
+                  ))}
               </View>
             ))}
-          </ScrollView>
+        </View>
 
-          {/* Dots Indicator untuk Halaman Menu Utama */}
-          {menuPages.length > 1 && (
-            <View style={styles.menuDotsRow}>
-              {menuPages.map((_, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.menuDot,
-                    activeMenuPage === i ? styles.menuDotActive : styles.menuDotInactive,
-                  ]}
-                />
-              ))}
+        {/* ============================================================ */}
+        {/* ============================================================ */}
+        {/* SECTION: Aktivitas Siswa Hari Berjalan (Realtime Feed)        */}
+        {/* ============================================================ */}
+        <View style={styles.activityTimelineCard}>
+          {/* Header Bar: Navigasi Hari + Tanggal + Status */}
+          <View style={styles.activityTimelineHeaderRow}>
+            {/* Tombol Panah Kiri (hari sebelumnya) */}
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={goToPrevDay}
+              style={styles.activityDayNavBtn}
+              accessibilityLabel="Hari sebelumnya"
+            >
+              <MaterialCommunityIcons name="chevron-left" size={20} color="#059669" />
+            </TouchableOpacity>
+
+            {/* Tengah: Ikon Pulse + Tanggal + Subtitle */}
+            <View style={styles.activityTimelineHeaderCenter}>
+              <View style={styles.activityTimelinePulseBox}>
+                <MaterialCommunityIcons name="pulse" size={18} color="#059669" />
+              </View>
+              <View style={styles.activityTimelineTitleCol}>
+                <View style={styles.activityTimelineDateRow}>
+                  <MaterialCommunityIcons name="calendar-check" size={12} color="#059669" style={{ marginRight: 3 }} />
+                  <Text style={styles.activityTimelineDateTitle} numberOfLines={1}>
+                    {new Date(viewedDate + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                  </Text>
+                  {isViewingToday && (
+                    <View style={styles.activityTodayBadge}>
+                      <Text style={styles.activityTodayBadgeText}>Hari ini</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.activityTimelineSubtitle} numberOfLines={1}>
+                  {todayTimeline?.program?.label ? `${todayTimeline.program.label}` : 'Aktivitas hari berjalan'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Tombol Panah Kanan (hari berikutnya, dinonaktifkan kalau sudah hari ini) */}
+            <TouchableOpacity
+              activeOpacity={isViewingToday ? 0.3 : 0.7}
+              onPress={goToNextDay}
+              style={[styles.activityDayNavBtn, isViewingToday && styles.activityDayNavBtnDisabled]}
+              accessibilityLabel="Hari berikutnya"
+              disabled={isViewingToday}
+            >
+              <MaterialCommunityIcons name="chevron-right" size={20} color={isViewingToday ? '#CBD5E1' : '#059669'} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Timeline Feed (Aktif Scroll Vertikal di Dalam Card) */}
+          {loadingTimeline && (!resolvedActivities || resolvedActivities.length === 0) ? (
+            <View style={styles.activityTimelineLoadingBox}>
+              <ActivityIndicator size="small" color="#10B981" />
+              <Text style={styles.activityTimelineLoadingText}>Menghubungkan ke aktivitas realtime...</Text>
+            </View>
+          ) : resolvedActivities && resolvedActivities.length > 0 ? (
+            <ScrollView
+              style={styles.activityTimelineScrollArea}
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+              contentContainerStyle={styles.activityTimelineFeedList}
+            >
+              {resolvedActivities.map((act: any, aIdx: number) => {
+                const isFirst = aIdx === 0;
+                const isLast = aIdx === resolvedActivities.length - 1;
+                const badgeStyle = getActivityBadgeStyle(act.badge_type);
+                const isPast = Boolean(act.is_past || (act.date_label && act.date_label !== 'Hari ini'));
+
+                return (
+                  <View key={act.id || aIdx} style={styles.timelineRowContainer}>
+                    {/* Column 1: Time Stamp */}
+                    <View style={styles.timelineColTime}>
+                      {isPast ? (
+                        <>
+                          {act.date_label ? (
+                            <Text style={styles.timelinePastDateText} numberOfLines={1}>
+                              {act.date_label}
+                            </Text>
+                          ) : null}
+                          <Text style={styles.timelinePastTimeText}>
+                            {act.time_label || '--:--'}
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={styles.timelineTimeText}>
+                          {act.time_label || '--:--'}
+                        </Text>
+                      )}
+                    </View>
+
+                    {/* Column 2: Vertical Connecting Line & Node Ring */}
+                    <View style={styles.timelineColTrack}>
+                      {/* Top connecting line segment */}
+                      <View
+                        style={[
+                          styles.timelineTrackLineTop,
+                          isFirst && { opacity: 0 },
+                          isPast && styles.timelineTrackLinePast,
+                        ]}
+                      />
+
+                      {/* Circular Ring Node */}
+                      <View
+                        style={[
+                          styles.timelineTrackNodeRing,
+                          isPast ? styles.timelineTrackNodeRingPast : styles.timelineTrackNodeRingActive,
+                        ]}
+                      />
+
+                      {/* Bottom connecting line segment */}
+                      <View
+                        style={[
+                          styles.timelineTrackLineBottom,
+                          isLast && { opacity: 0 },
+                          isPast && styles.timelineTrackLinePast,
+                        ]}
+                      />
+                    </View>
+
+                    {/* Column 3: Activity Row Card */}
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => setSelectedActivity(act)}
+                      style={styles.timelineColCard}
+                    >
+                      {/* Pastel Icon Box */}
+                      <View style={[styles.timelineCardIconBox, { backgroundColor: act.icon_bg || '#ECFDF5' }]}>
+                        <MaterialCommunityIcons
+                          name={(act.icon || 'star-outline') as any}
+                          size={22}
+                          color={act.icon_color || '#10B981'}
+                        />
+                      </View>
+
+                      {/* Text Column */}
+                      <View style={styles.timelineCardTextCol}>
+                        <Text style={styles.timelineCardTitle} numberOfLines={1}>
+                          {act.title}
+                        </Text>
+                        <Text style={styles.timelineCardSubtitle} numberOfLines={1}>
+                          {act.subtitle}
+                        </Text>
+                      </View>
+
+                      {/* Status Badge Pill */}
+                      <View style={styles.timelineBadgeContainer}>
+                        <View style={[styles.timelineBadgePill, { backgroundColor: badgeStyle.bg }]}>
+                          <Text style={[styles.timelineBadgeText, { color: badgeStyle.text }]}>
+                            {act.badge_label}
+                          </Text>
+                        </View>
+                        {act.has_red_dot && <View style={styles.timelineBadgeRedDot} />}
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          ) : (
+            /* Empty State */
+            <View style={styles.activityTimelineEmptyBox}>
+              <MaterialCommunityIcons name="timeline-clock-outline" size={34} color="#CBD5E1" />
+              <Text style={styles.activityTimelineEmptyTitle}>Belum Ada Aktivitas Hari Ini</Text>
+              <Text style={styles.activityTimelineEmptySub}>
+                Data presensi mapel, sholat, dan tahfizh yang diinput guru atau musyrif hari ini akan otomatis tampil di sini secara realtime.
+              </Text>
             </View>
           )}
         </View>
 
-        {/* SECTION: Berita & Informasi (Tanpa Gradasi & Tanpa Garis Container) */}
-        <View style={styles.carouselContainerWrapper}>
-          <View style={styles.carouselCleanBox}>
-            <View style={styles.carouselHeaderRow}>
-              <View style={styles.carouselTitleWrapper}>
-                <Text style={styles.carouselHeaderTitle}>Berita & Informasi</Text>
-              </View>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => navigation.navigate('Informasi')}
-              >
-                <Text style={styles.seeAllText}>Lihat Semua</Text>
-              </TouchableOpacity>
-            </View>
+        {/* ============================================================ */}
+        {/* SECTION: Widget Tugas Terbaru & Jadwal Hari Ini              */}
+        {/* ============================================================ */}
+        {(student || parent) && (
+          <View style={styles.homeWidgetRow}>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.carouselTrack}
-              decelerationRate="fast"
-              snapToInterval={NEWS_CARD_WIDTH + ITEM_SPACING}
-              onScroll={handleCarouselScroll}
-              scrollEventThrottle={16}
+            {/* ── Card Kiri: Tugas Terbaru ── */}
+            <TouchableOpacity
+              activeOpacity={0.82}
+              style={styles.homeWidgetCard}
+              onPress={() => {
+                setShowTugasModal(true);
+                void fetchHomeWidgets(activeChildId);
+              }}
             >
-              {announcements.map((item: any, index: number) => (
-                <TouchableOpacity
-                  key={String(item.id || index)}
-                  activeOpacity={0.88}
-                  onPress={() => setSelectedNews(item)}
-                >
-                  <LinearGradient
-                    colors={['#158052', '#22A871', '#B8EBCE']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[
-                      styles.newsCard,
-                      { width: NEWS_CARD_WIDTH },
-                    ]}
-                  >
-                    {/* Decorative Organic Circle */}
-                    <View style={styles.cardDecorCircle} />
+              {/* Header */}
+              <View style={styles.homeWidgetCardHeader}>
+                <View style={[styles.homeWidgetIconBox, { backgroundColor: '#F5F3FF' }]}>
+                  <MaterialCommunityIcons name="clipboard-text" size={18} color="#7C3AED" />
+                </View>
+                <Text style={styles.homeWidgetCardTitle}>Tugas Terbaru</Text>
+              </View>
 
-                    {/* Top Row: Thumbnail Image + Content Column */}
-                    <View style={styles.newsTopRow}>
-                      <Image
-                        source={getNewsThumbnail(item, index)}
-                        style={styles.newsThumbnail}
-                        resizeMode="cover"
-                      />
-                      <View style={styles.newsContentCol}>
-                        <View style={styles.newsCardHeader}>
-                          <Text numberOfLines={2} style={styles.newsCardTitle}>
-                            {titleOf(item)}
+              {loadingHomeWidgets ? (
+                <View style={styles.homeWidgetLoadingBox}>
+                  <ActivityIndicator size="small" color="#7C3AED" />
+                </View>
+              ) : homeAssignments.length > 0 ? (() => {
+                const latestTask = homeAssignments[0];
+                const subjectName = latestTask?.subject?.name ?? latestTask?.subject?.nama_mapel ?? latestTask?.mata_pelajaran ?? '';
+                const taskTitle = latestTask?.judul_tugas ?? latestTask?.judul ?? latestTask?.title ?? 'Tugas';
+                const deadline = latestTask?.deadline
+                  ? new Date(latestTask.deadline).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                  : null;
+                const submission = Array.isArray(latestTask?.pengumpulanTugas) ? latestTask.pengumpulanTugas[0]
+                  : Array.isArray(latestTask?.pengumpulan_tugas) ? latestTask.pengumpulan_tugas[0]
+                  : null;
+                const isSubmitted = submission && ['dikumpulkan','submitted','dinilai','graded'].includes(submission.status);
+                const isLate = !isSubmitted && latestTask?.deadline && new Date(latestTask.deadline) < new Date();
+                const pendingCount = homeAssignments.filter((a: any) => {
+                  const sub = Array.isArray(a?.pengumpulanTugas) ? a.pengumpulanTugas[0] : Array.isArray(a?.pengumpulan_tugas) ? a.pengumpulan_tugas[0] : null;
+                  return !sub || !['dikumpulkan','submitted','dinilai','graded'].includes(sub?.status);
+                }).length;
+                return (
+                  <View style={styles.homeWidgetBody}>
+                    <Text style={styles.homeWidgetSubject} numberOfLines={1}>{subjectName}</Text>
+                    <Text style={styles.homeWidgetMainText} numberOfLines={2}>{taskTitle}</Text>
+                    {deadline && (
+                      <View style={styles.homeWidgetDeadlineRow}>
+                        <MaterialCommunityIcons name="clock-outline" size={11} color={isLate ? '#DC2626' : '#64748B'} style={{ marginRight: 3 }} />
+                        <Text style={[styles.homeWidgetDeadlineText, isLate && { color: '#DC2626' }]}>
+                          {isLate ? 'Terlambat · ' : 'Kumpulkan sebelum '}{deadline}
+                        </Text>
+                      </View>
+                    )}
+                    {pendingCount > 0 && (
+                      <View style={styles.homeWidgetBadgeRow}>
+                        <View style={styles.homeWidgetBadge}>
+                          <Text style={styles.homeWidgetBadgeText}>{pendingCount} belum dikumpul</Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              })() : (
+                <View style={styles.homeWidgetEmptyBox}>
+                  <MaterialCommunityIcons name="check-circle-outline" size={22} color="#A7F3D0" />
+                  <Text style={styles.homeWidgetEmptyText}>Semua tugas selesai 🎉</Text>
+                </View>
+              )}
+
+              <View style={styles.homeWidgetFooter}>
+                <Text style={styles.homeWidgetFooterText}>Lihat semua tugas</Text>
+                <MaterialCommunityIcons name="chevron-right" size={14} color="#7C3AED" />
+              </View>
+            </TouchableOpacity>
+
+            {/* ── Card Kanan: Jadwal Hari Ini ── */}
+            <TouchableOpacity
+              activeOpacity={0.82}
+              style={styles.homeWidgetCard}
+              onPress={() => setShowJadwalModal(true)}
+            >
+              {/* Header */}
+              <View style={styles.homeWidgetCardHeader}>
+                <View style={[styles.homeWidgetIconBox, { backgroundColor: '#EFF6FF' }]}>
+                  <MaterialCommunityIcons name="calendar-today" size={18} color="#2563EB" />
+                </View>
+                <Text style={styles.homeWidgetCardTitle}>Jadwal Hari Ini</Text>
+              </View>
+
+              {loadingHomeWidgets ? (
+                <View style={styles.homeWidgetLoadingBox}>
+                  <ActivityIndicator size="small" color="#2563EB" />
+                </View>
+              ) : (() => {
+                const todayItems: any[] = Array.isArray(homeSchedule?.today_schedules)
+                  ? homeSchedule.today_schedules
+                  : Array.isArray(homeSchedule?.data?.today_schedules)
+                  ? homeSchedule.data.today_schedules
+                  : [];
+                const totalCount = homeSchedule?.kpi?.today_count ?? todayItems.length;
+                const preview = todayItems.slice(0, 3);
+                const ongoingItem = todayItems.find((s: any) => s.is_ongoing);
+
+                return preview.length > 0 ? (
+                  <View style={styles.homeWidgetBody}>
+                    {ongoingItem && (
+                      <View style={styles.homeWidgetOngoingBadge}>
+                        <View style={styles.homeWidgetOngoingDot} />
+                        <Text style={styles.homeWidgetOngoingText}>Sedang Berlangsung</Text>
+                      </View>
+                    )}
+                    {preview.map((s: any, i: number) => (
+                      <View key={s.id ?? i} style={styles.homeWidgetScheduleRow}>
+                        <Text style={[
+                          styles.homeWidgetScheduleTime,
+                          s.is_ongoing && { color: '#2563EB', fontWeight: '700' },
+                        ]}>
+                          {String(s.time_start ?? '').slice(0, 5)}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.homeWidgetScheduleSubject,
+                            s.is_ongoing && { color: '#1E40AF', fontWeight: '700' },
+                          ]}
+                        >
+                          {s.subject?.name ?? 'Mapel'}
+                        </Text>
+                      </View>
+                    ))}
+                    {totalCount > 3 && (
+                      <Text style={styles.homeWidgetMoreText}>+{totalCount - 3} jadwal lainnya</Text>
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.homeWidgetEmptyBox}>
+                    <MaterialCommunityIcons name="calendar-blank-outline" size={22} color="#93C5FD" />
+                    <Text style={styles.homeWidgetEmptyText}>Tidak ada jadwal hari ini</Text>
+                  </View>
+                );
+              })()}
+
+              <View style={styles.homeWidgetFooter}>
+                <Text style={[styles.homeWidgetFooterText, { color: '#2563EB' }]}>Lihat jadwal</Text>
+                <MaterialCommunityIcons name="chevron-right" size={14} color="#2563EB" />
+              </View>
+            </TouchableOpacity>
+
+          </View>
+        )}
+
+        {/* SECTION: Berita & Informasi (Clean Modern Card Sesuai Mockup Gambar) */}
+        <View style={styles.newsSectionContainer}>
+          <View style={[styles.sectionHeaderRow, styles.newsSectionHeaderRow]}>
+            <View style={styles.sectionHeaderTitleWithIcon}>
+              <MaterialCommunityIcons name="newspaper-variant" size={20} color="#10B981" style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitleBold}>Berita & Informasi</Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => navigation.navigate('Informasi')}
+              style={styles.seeAllButton}
+            >
+              <Text style={styles.seeAllTextBlue}>Lihat Semua</Text>
+              <MaterialCommunityIcons name="chevron-right" size={14} color="#2563EB" />
+            </TouchableOpacity>
+          </View>
+
+          {announcements.length === 0 ? (
+            /* Empty State: Tidak ada data dari backend */
+            <View style={styles.newsEmptyStateClean}>
+              <MaterialCommunityIcons name="newspaper-variant-outline" size={38} color="#94A3B8" />
+              <Text style={styles.newsEmptyTitle}>Belum Ada Berita</Text>
+              <Text style={styles.newsEmptySubtitle}>Informasi & pengumuman dari sekolah akan tampil di sini</Text>
+            </View>
+          ) : (
+            <>
+              <ScrollView
+                ref={newsScrollRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={[
+                  styles.cleanNewsTrack,
+                  {
+                    paddingHorizontal: newsTrackPaddingHorizontal,
+                    gap: newsGap,
+                  },
+                ]}
+                decelerationRate="fast"
+                snapToInterval={newsSnapInterval}
+                onScroll={handleCarouselScroll}
+                scrollEventThrottle={16}
+              >
+                {announcements.map((item: any, index: number) => {
+                  const theme = NEWS_CARD_THEMES[index % NEWS_CARD_THEMES.length];
+                  const formattedDate = (item.created_at || item.published_at || item.date)
+                    ? new Date(item.created_at || item.published_at || item.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+                    : '-';
+
+                  return (
+                    <TouchableOpacity
+                      key={String(item.id || index)}
+                      activeOpacity={0.88}
+                      onPress={() => setSelectedNews({ ...item, _index: index })}
+                      style={{ width: newsCardWidth }}
+                    >
+                      <LinearGradient
+                        colors={theme.gradient as [string, string, ...string[]]}
+                        locations={theme.locations as [number, number, ...number[]]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={[
+                          styles.cleanNewsCard,
+                          {
+                            shadowColor: theme.shadowColor,
+                            borderColor: theme.borderColor,
+                          },
+                        ]}
+                      >
+                        {/* Decorative background circle */}
+                        <View
+                          style={[
+                            styles.cleanNewsDecorCircle,
+                            { backgroundColor: theme.decorColor },
+                          ]}
+                        />
+
+                        {/* Left: Rounded Thumbnail Image */}
+                        <Image
+                          source={getNewsThumbnail(item, index)}
+                          style={styles.cleanNewsThumbnail}
+                          resizeMode="cover"
+                        />
+
+                        {/* Right: Content Info */}
+                        <View style={styles.cleanNewsContentCol}>
+                          <Text style={styles.cleanNewsTitle}>
+                            {titleOf(item) || 'Informasi Sekolah'}
                           </Text>
-                          <View style={styles.newsChevronBox}>
-                            <MaterialCommunityIcons name="chevron-right" size={14} color="#FFFFFF" />
+                          <View style={styles.cleanNewsDateRow}>
+                            <MaterialCommunityIcons
+                              name="calendar-clock"
+                              size={13}
+                              color={theme.dateColor}
+                              style={{ marginRight: 4 }}
+                            />
+                            <Text style={[styles.cleanNewsDate, { color: theme.dateColor }]}>
+                              {formattedDate}
+                            </Text>
                           </View>
                         </View>
-                        <Text numberOfLines={2} style={styles.newsCardSnippet}>
-                          {subtitleOf(item)}
-                        </Text>
-                      </View>
-                    </View>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
 
-                    {/* Footer Row: Date Badge + Action */}
-                    <View style={styles.newsCardFooter}>
-                      <View style={styles.newsDateBadge}>
-                        <MaterialCommunityIcons name="calendar-clock-outline" size={12} color="#DEF7EC" style={{ marginRight: 4 }} />
-                        <Text style={styles.newsCardDate}>
-                          {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Terbaru'}
-                        </Text>
-                      </View>
-                      <Text style={styles.newsReadMore}>Lihat Detail →</Text>
-                    </View>
-                  </LinearGradient>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            {/* Carousel Pagination Dots Indicator */}
-            {announcements.length > 1 && (
-              <View style={styles.dotsRow}>
-                {announcements.slice(0, 6).map((_, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.dot,
-                      activeSlideIndex === i ? styles.dotActive : styles.dotInactive,
-                    ]}
-                  />
-                ))}
-              </View>
-            )}
-          </View>
+              {/* Carousel Pagination Dots Indicator */}
+              {announcements.length > 1 && (
+                <View style={styles.dotsRow}>
+                  {announcements.slice(0, 5).map((_, i) => {
+                    const dotTheme = NEWS_CARD_THEMES[i % NEWS_CARD_THEMES.length];
+                    const isActive = activeSlideIndex === i;
+                    return (
+                      <TouchableOpacity
+                        key={i}
+                        activeOpacity={0.7}
+                        onPress={() => {
+                          setActiveSlideIndex(i);
+                          newsScrollRef.current?.scrollTo({
+                            x: i * newsSnapInterval,
+                            animated: true,
+                          });
+                        }}
+                        style={[
+                          styles.dot,
+                          isActive
+                            ? [styles.dotActive, { backgroundColor: dotTheme.base, width: 22 }]
+                            : styles.dotInactive,
+                        ]}
+                      />
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
         </View>
 
         {/* Loading Indicator */}
@@ -825,8 +1900,145 @@ export default function HomeScreen({ navigation }: any) {
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
-        </ScrollView>
-      </View>
+        </View>
+      </Animated.ScrollView>
+
+      {/* MODAL DETAIL AKTIVITAS REALTIME */}
+      <Modal
+        visible={Boolean(selectedActivity)}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setSelectedActivity(null)}
+      >
+        <View style={styles.activityModalBackdrop}>
+          <View style={styles.activityModalCard}>
+            {/* Modal Header */}
+            <View style={styles.activityModalHeader}>
+              <View style={[styles.activityModalIconBox, { backgroundColor: selectedActivity?.icon_bg || '#ECFDF5' }]}>
+                <MaterialCommunityIcons
+                  name={(selectedActivity?.icon || 'star-outline') as any}
+                  size={24}
+                  color={selectedActivity?.icon_color || '#10B981'}
+                />
+              </View>
+              <View style={styles.activityModalHeaderCol}>
+                <Text style={styles.activityModalHeaderTitle}>Detail Aktivitas</Text>
+                <Text style={styles.activityModalHeaderSub}>
+                  {selectedActivity?.date_label || 'Hari ini'} · Pukul {selectedActivity?.time_label || '-'} WIB
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedActivity(null)}
+                style={styles.activityModalCloseBtn}
+                accessibilityLabel="Tutup Detail"
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Content Body */}
+            <View style={styles.activityModalBody}>
+              {/* Title & Badge */}
+              <View style={styles.activityModalTitleRow}>
+                <Text style={styles.activityModalMainTitle}>
+                  {selectedActivity?.title}
+                </Text>
+                {selectedActivity && (
+                  <View
+                    style={[
+                      styles.timelineBadgePill,
+                      { backgroundColor: getActivityBadgeStyle(selectedActivity.badge_type).bg },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.timelineBadgeText,
+                        { color: getActivityBadgeStyle(selectedActivity.badge_type).text },
+                      ]}
+                    >
+                      {selectedActivity.badge_label}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Subtitle / Description Card */}
+              <View style={styles.activityModalDescCard}>
+                <Text style={styles.activityModalDescLabel}>Keterangan / Rincian:</Text>
+                <Text style={styles.activityModalDescText}>
+                  {selectedActivity?.subtitle || '-'}
+                </Text>
+              </View>
+
+              {/* Info Items List */}
+              <View style={styles.activityModalInfoList}>
+                <View style={styles.activityModalInfoItem}>
+                  <MaterialCommunityIcons name="account-school-outline" size={18} color="#059669" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activityModalInfoLabel}>Nama Siswa</Text>
+                    <Text style={styles.activityModalInfoVal}>
+                      {todayTimeline?.student?.name || 'Siswa'} ({todayTimeline?.student?.class_name || 'Kelas'})
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.activityModalInfoItem}>
+                  <MaterialCommunityIcons name="clock-time-four-outline" size={18} color="#059669" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activityModalInfoLabel}>Waktu Pencatatan</Text>
+                    <Text style={styles.activityModalInfoVal}>
+                      {selectedActivity?.time_label ? `Pukul ${selectedActivity.time_label} WIB (${selectedActivity.date_label || 'Hari ini'})` : 'Realtime'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.activityModalInfoItem}>
+                  <MaterialCommunityIcons name="shield-check-outline" size={18} color="#059669" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activityModalInfoLabel}>Status Validasi</Text>
+                    <Text style={styles.activityModalInfoVal}>
+                      Telah terverifikasi oleh sistem sekolah / musyrif
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.activityModalActionsRow}>
+              {selectedActivity?.screen && (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    const targetScreen = selectedActivity.screen;
+                    setSelectedActivity(null);
+                    try {
+                      navigation.navigate(targetScreen);
+                    } catch {}
+                  }}
+                  style={styles.activityModalPrimaryBtn}
+                >
+                  <MaterialCommunityIcons name="arrow-right-circle-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.activityModalPrimaryBtnText}>
+                    Buka {selectedActivity.screen}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setSelectedActivity(null)}
+                style={[
+                  styles.activityModalCloseActionBtn,
+                  !selectedActivity?.screen && { flex: 1 },
+                ]}
+              >
+                <Text style={styles.activityModalCloseActionBtnText}>Tutup</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* MODAL QR CODE SISWA */}
       <Modal
@@ -875,7 +2087,7 @@ export default function HomeScreen({ navigation }: any) {
                 NIS: {selectedQrStudent?.nis || '-'} · Kelas: {selectedQrStudent?.kelas?.nama_kelas || selectedQrStudent?.kelas?.name || '-'}
               </Text>
               <Text style={styles.qrStudentUnit}>
-                {selectedQrStudent?.education_unit?.name || 'Yayasan Dar El-Iman'}
+                {selectedQrStudent?.education_unit?.name || selectedQrStudent?.unit_name || ''}
               </Text>
             </View>
 
@@ -952,12 +2164,12 @@ export default function HomeScreen({ navigation }: any) {
               const showCardAcademicYear = cardSetting?.show_academic_year ?? false;
               const showCardMotto = cardSetting?.show_motto ?? true;
 
-              const sName = selectedIdCardStudent?.full_name || selectedIdCardStudent?.nama_lengkap || selectedIdCardStudent?.name || 'AHMAD ZAKY';
+              const sName = selectedIdCardStudent?.full_name || selectedIdCardStudent?.nama_lengkap || selectedIdCardStudent?.name || 'Siswa';
               const sInitial = sName.charAt(0).toUpperCase();
               const sNis = selectedIdCardStudent?.nis || '-';
               const sNisn = selectedIdCardStudent?.nisn || selectedIdCardStudent?.metadata?.nisn || '-';
               const cardBloodType = selectedIdCardStudent?.golongan_darah || selectedIdCardStudent?.metadata?.golongan_darah || selectedIdCardStudent?.blood_type || '-';
-              const cardClassName = selectedIdCardStudent?.kelas?.nama_kelas || selectedIdCardStudent?.kelas?.name || selectedIdCardStudent?.class_name || 'Kelas 6A';
+              const cardClassName = selectedIdCardStudent?.kelas?.nama_kelas || selectedIdCardStudent?.kelas?.name || selectedIdCardStudent?.class_name || '';
               const cardRombelName = selectedIdCardStudent?.kelas?.rombel || selectedIdCardStudent?.rombel || selectedIdCardStudent?.metadata?.rombel || '';
               const cardClassDisplay = showCardRombel && cardRombelName ? `${cardClassName} (${cardRombelName})` : cardClassName;
 
@@ -1122,7 +2334,7 @@ export default function HomeScreen({ navigation }: any) {
                                 <Text style={styles.webTableLabel}>Thn Ajaran</Text>
                                 <Text style={styles.webTableColon}>:</Text>
                                 <Text numberOfLines={1} style={styles.webTableVal}>
-                                  {selectedIdCardStudent?.academic_year?.name || '2025/2026'}
+                                  {selectedIdCardStudent?.academic_year?.name || selectedIdCardStudent?.tahun_ajaran || '-'}
                                 </Text>
                               </View>
                             )}
@@ -1258,131 +2470,201 @@ export default function HomeScreen({ navigation }: any) {
         </View>
       </Modal>
 
-      {/* MODAL LIHAT SEMUA BERITA & INFORMASI */}
+      {/* MODAL LIHAT SEMUA BERITA & INFORMASI (NON-FULLSCREEN) */}
       <Modal
         visible={showAllNews}
         animationType="slide"
-        transparent={false}
+        transparent={true}
+        statusBarTranslucent
         onRequestClose={() => setShowAllNews(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity
-              onPress={() => setShowAllNews(false)}
-              style={styles.modalBackButton}
-              accessibilityLabel="Kembali"
+        <View style={styles.newsModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowAllNews(false)}
+          />
+
+          <View style={styles.newsModalSheet}>
+            <LinearGradient
+              colors={['#0D6B42', '#18A165', '#2BD988']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.newsModalHeaderGradient}
             >
-              <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
-            </TouchableOpacity>
-            <Text numberOfLines={1} style={styles.modalTopTitle}>
-              Berita & Informasi Sekolah
-            </Text>
-            <View style={{ width: 40 }} />
-          </View>
+              <View style={styles.newsHeaderDecorWave} />
+              <View style={styles.newsHeaderDecorCircle} />
 
-          <ScrollView contentContainerStyle={styles.allNewsListContainer}>
-            <View style={styles.allNewsHeaderBox}>
-              <Text style={styles.allNewsHeaderTitle}>Warta & Agenda Terpadu</Text>
-              <Text style={styles.allNewsHeaderSub}>
-                Pembaruan informasi resmi, agenda akademik, dan pengumuman sekolah.
-              </Text>
-            </View>
+              <View style={styles.newsModalHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setShowAllNews(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Kembali"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color="#18A165" />
+                </TouchableOpacity>
 
-            {announcements.map((item: any, idx: number) => (
-              <TouchableOpacity
-                key={String(item.id || idx)}
-                activeOpacity={0.82}
-                onPress={() => {
-                  setSelectedNews(item);
-                }}
-                style={styles.allNewsCard}
-              >
-                <View style={styles.allNewsCardTopRow}>
-                  <View style={styles.newsTagBadge}>
-                    <MaterialCommunityIcons name="bullhorn" size={11} color="#084835" style={{ marginRight: 4 }} />
-                    <Text style={styles.newsTagText}>Warta Sekolah</Text>
-                  </View>
-                  <Text style={styles.allNewsDate}>
-                    {item.created_at
-                      ? new Date(item.created_at).toLocaleDateString('id-ID', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })
-                      : 'Terbaru'}
+                <View style={styles.newsModalTitleCol}>
+                  <Text style={styles.newsModalEyebrow}>AGENDA & PENGUMUMAN</Text>
+                  <Text numberOfLines={1} style={styles.newsModalTopTitle}>
+                    Berita & Informasi Sekolah
                   </Text>
                 </View>
 
-                <Text style={styles.allNewsTitle}>{titleOf(item)}</Text>
-                <Text numberOfLines={3} style={styles.allNewsSnippet}>
-                  {subtitleOf(item)}
-                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowAllNews(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Tutup"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="close" size={20} color="#18A165" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
 
-                <View style={styles.allNewsReadMoreRow}>
-                  <Text style={styles.allNewsReadMoreText}>Baca Selengkapnya</Text>
-                  <MaterialCommunityIcons name="arrow-right" size={15} color="#084835" />
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </SafeAreaView>
+            <ScrollView contentContainerStyle={styles.allNewsListContainer} showsVerticalScrollIndicator={false}>
+              <View style={styles.allNewsHeaderBox}>
+                <Text style={styles.allNewsHeaderTitle}>Warta & Agenda Terpadu</Text>
+                <Text style={styles.allNewsHeaderSub}>
+                  Pembaruan informasi resmi, agenda akademik, dan pengumuman sekolah.
+                </Text>
+              </View>
+
+              {announcements.map((item: any, idx: number) => (
+                <TouchableOpacity
+                  key={String(item.id || idx)}
+                  activeOpacity={0.82}
+                  onPress={() => {
+                    setSelectedNews({ ...item, _index: idx });
+                  }}
+                  style={styles.allNewsCard}
+                >
+                  <View style={styles.allNewsCardTopRow}>
+                    <View style={styles.newsTagBadge}>
+                      <MaterialCommunityIcons name="bullhorn" size={11} color="#084835" style={{ marginRight: 4 }} />
+                      <Text style={styles.newsTagText}>Warta Sekolah</Text>
+                    </View>
+                    <Text style={styles.allNewsDate}>
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString('id-ID', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })
+                        : 'Terbaru'}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.allNewsTitle}>{titleOf(item)}</Text>
+                  <Text numberOfLines={3} style={styles.allNewsSnippet}>
+                    {subtitleOf(item)}
+                  </Text>
+
+                  <View style={styles.allNewsReadMoreRow}>
+                    <Text style={styles.allNewsReadMoreText}>Baca Selengkapnya</Text>
+                    <MaterialCommunityIcons name="arrow-right" size={15} color="#084835" />
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
 
-      {/* DETAIL BERITA MODAL (MOCKUP #5) */}
+      {/* DETAIL BERITA MODAL (NON-FULLSCREEN BOTTOM SHEET DENGAN HEADER KALENDER) */}
       <Modal
         visible={Boolean(selectedNews)}
         animationType="slide"
-        transparent={false}
+        transparent={true}
+        statusBarTranslucent
         onRequestClose={() => setSelectedNews(null)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity
-              onPress={() => setSelectedNews(null)}
-              style={styles.modalBackButton}
-              accessibilityLabel="Kembali"
+        <View style={styles.newsModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setSelectedNews(null)}
+          />
+
+          <View style={styles.newsModalSheet}>
+            <LinearGradient
+              colors={['#0D6B42', '#18A165', '#2BD988']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.newsModalHeaderGradient}
             >
-              <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
-            </TouchableOpacity>
-            <Text numberOfLines={1} style={styles.modalTopTitle}>
-              {titleOf(selectedNews || {})}
-            </Text>
-            <View style={{ width: 40 }} />
+              <View style={styles.newsHeaderDecorWave} />
+              <View style={styles.newsHeaderDecorCircle} />
+
+              <View style={styles.newsModalHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setSelectedNews(null)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Kembali"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color="#18A165" />
+                </TouchableOpacity>
+
+                <View style={styles.newsModalTitleCol}>
+                  <Text style={styles.newsModalEyebrow}>INFORMASI SEKOLAH</Text>
+                  <Text numberOfLines={1} style={styles.newsModalTopTitle}>
+                    {titleOf(selectedNews || {})}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => setSelectedNews(null)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Tutup"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="close" size={20} color="#18A165" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+
+            <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+              {/* Cover Image Identical to Card Thumbnail */}
+              <View style={styles.modalNewsCoverBox}>
+                <Image
+                  source={getNewsThumbnail(selectedNews, selectedNews?._index ?? 0)}
+                  style={styles.modalNewsCoverImage}
+                  resizeMode="cover"
+                />
+              </View>
+
+              <View style={styles.newsModalMetaRow}>
+                <View style={styles.carouselTagBadgeModal}>
+                  <MaterialCommunityIcons name="bullhorn" size={12} color="#FFFFFF" style={{ marginRight: 5 }} />
+                  <Text style={styles.carouselTagTextModal}>Pengumuman</Text>
+                </View>
+                <View style={styles.newsModalDateBadge}>
+                  <MaterialCommunityIcons name="calendar-blank-outline" size={13} color="#64748B" style={{ marginRight: 4 }} />
+                  <Text style={styles.modalDateTextClean}>
+                    {selectedNews?.created_at
+                      ? new Date(selectedNews.created_at).toLocaleDateString('id-ID', {
+                          day: 'numeric',
+                          month: 'long',
+                          year: 'numeric',
+                        })
+                      : 'Informasi Sekolah'}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.modalMainTitle}>{titleOf(selectedNews || {})}</Text>
+
+              <Text style={styles.modalBodyText}>
+                {selectedNews?.isi_pengumuman ||
+                  selectedNews?.isi ||
+                  subtitleOf(selectedNews || {}) ||
+                  'Kegiatan belajar mengajar dan operasional sekolah mengikuti agenda terpadu yang telah ditetapkan.'}
+              </Text>
+            </ScrollView>
           </View>
-
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            <Text style={styles.modalMainTitle}>{titleOf(selectedNews || {})}</Text>
-            <Text style={styles.modalDateText}>
-              {selectedNews?.created_at
-                ? new Date(selectedNews.created_at).toLocaleDateString('id-ID', {
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric',
-                  })
-                : 'Informasi Sekolah'}
-            </Text>
-
-            <Text style={styles.modalBodyText}>
-              {selectedNews?.isi_pengumuman ||
-                selectedNews?.isi ||
-                subtitleOf(selectedNews || {}) ||
-                'Kegiatan belajar mengajar dan operasional sekolah mengikuti agenda terpadu yang telah ditetapkan.'}
-            </Text>
-
-            {/* Bottom Islamic School / Mosque Illustration Container */}
-            <View style={styles.modalIllustrationFrame}>
-              <LinearGradient
-                colors={['#08382A', '#0B4D3A']}
-                style={styles.illustrationGradient}
-              >
-                <MaterialCommunityIcons name="mosque" size={88} color="#D4AF37" />
-                <Text style={styles.illustrationCaption}>
-                  {mobileConfig.branding?.school_name || 'Yayasan Dar el-Iman'}
-                </Text>
-              </LinearGradient>
-            </View>
-          </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* MODAL SEMUA MENU */}
@@ -1416,7 +2698,8 @@ export default function HomeScreen({ navigation }: any) {
                     style={styles.allMenusItem}
                     onPress={() => {
                       setShowAllMenusModal(false);
-                      navigation.navigate(String(route));
+                      const tabKey = (roleMenus[idx] as any)?.[5];
+                      handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined);
                     }}
                   >
                     <View style={[styles.iconSquircle, { backgroundColor: bgPastel }]}>
@@ -1432,6 +2715,910 @@ export default function HomeScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* ============================================================ */}
+      {/* MODAL: Tugas Terbaru                                         */}
+      {/* ============================================================ */}
+      <Modal
+        visible={showTugasModal}
+        animationType="slide"
+        transparent={true}
+        statusBarTranslucent
+        onRequestClose={() => setShowTugasModal(false)}
+      >
+        <View style={styles.newsModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowTugasModal(false)}
+          />
+          <View style={styles.newsModalSheet}>
+            {/* Header Gradient — ungu untuk Tugas */}
+            <LinearGradient
+              colors={['#4C1D95', '#7C3AED', '#A78BFA']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.newsModalHeaderGradient}
+            >
+              <View style={styles.newsHeaderDecorWave} />
+              <View style={styles.newsHeaderDecorCircle} />
+              <View style={styles.newsModalHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setShowTugasModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Kembali"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color="#7C3AED" />
+                </TouchableOpacity>
+                <View style={styles.newsModalTitleCol}>
+                  <Text style={styles.newsModalEyebrow}>PORTAL AKADEMIK · LMS</Text>
+                  <Text numberOfLines={1} style={styles.newsModalTopTitle}>Tugas Terbaru</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowTugasModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Tutup"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="close" size={20} color="#7C3AED" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+
+            <ScrollView
+              contentContainerStyle={styles.allNewsListContainer}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Subheader */}
+              <View style={styles.allNewsHeaderBox}>
+                <Text style={styles.allNewsHeaderTitle}>Daftar Tugas Aktif</Text>
+                <Text style={styles.allNewsHeaderSub}>
+                  Tugas yang diberikan guru dan perlu dikumpulkan sesuai deadline.
+                </Text>
+              </View>
+
+              {loadingHomeWidgets && homeAssignments.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                  <ActivityIndicator size="large" color="#7C3AED" />
+                  <Text style={{ color: '#64748B', fontWeight: '600', marginTop: 12 }}>
+                    Memuat tugas aktif...
+                  </Text>
+                </View>
+              ) : homeAssignments.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <MaterialCommunityIcons name="check-circle-outline" size={48} color="#A7F3D0" />
+                  <Text style={{ color: '#64748B', fontWeight: '600', marginTop: 8 }}>Tidak ada tugas aktif 🎉</Text>
+                </View>
+              ) : (
+                homeAssignments.map((item: any, idx: number) => {
+                  const subjectName = item?.subject?.name ?? item?.subject?.nama_mapel ?? item?.mata_pelajaran ?? item?.subject_name ?? '';
+                  const taskTitle = item?.judul_tugas ?? item?.judul ?? item?.title ?? item?.nama_tugas ?? 'Tugas';
+                  const taskDesc = item?.deskripsi ?? item?.instruksi ?? item?.description ?? '';
+                  const deadline = item?.deadline ?? item?.tenggat_waktu ?? item?.due_date;
+                  const deadlineFormatted = deadline
+                    ? new Date(deadline).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    : null;
+                  const teacher = item?.teacher?.nama_lengkap ?? item?.teacher?.name ?? item?.guru?.nama_lengkap ?? item?.guru?.nama ?? item?.teacher_name ?? null;
+                  const submission = Array.isArray(item?.pengumpulanTugas) && item.pengumpulanTugas.length > 0 ? item.pengumpulanTugas[0]
+                    : Array.isArray(item?.pengumpulan_tugas) && item.pengumpulan_tugas.length > 0 ? item.pengumpulan_tugas[0]
+                    : item?.submission ?? null;
+                  const isGraded = submission && (submission.status === 'dinilai' || submission.status === 'graded' || (submission.nilai_guru !== null && submission.nilai_guru !== undefined));
+                  const isSubmitted = submission && ['dikumpulkan', 'submitted', 'revisi'].includes(submission.status);
+                  const isLate = !isSubmitted && !isGraded && deadline && new Date(deadline) < new Date();
+                  const statusLabel = isGraded ? 'Dinilai' : isSubmitted ? 'Sudah Dikumpulkan' : isLate ? 'Terlambat' : 'Belum Dikumpulkan';
+                  const statusColor = isGraded ? '#059669' : isSubmitted ? '#2563EB' : isLate ? '#DC2626' : '#D97706';
+                  const statusBg = isGraded ? '#ECFDF5' : isSubmitted ? '#EFF6FF' : isLate ? '#FEF2F2' : '#FFFBEB';
+                  const score = submission?.nilai_guru ?? submission?.nilai ?? null;
+                  const teacherNote = submission?.catatan_guru ?? submission?.catatan ?? null;
+
+                  return (
+                    <TouchableOpacity
+                      key={String(item.id || idx)}
+                      activeOpacity={0.88}
+                      onPress={() => {
+                        setShowTugasModal(false);
+                        navigation.navigate('Tugas', {
+                          child_id: parent && activeChildId ? String(activeChildId) : undefined,
+                          student_id: parent && activeChildId ? String(activeChildId) : undefined,
+                        });
+                      }}
+                      style={styles.allNewsCard}
+                    >
+                      <View style={styles.allNewsCardTopRow}>
+                        {subjectName ? (
+                          <View style={[styles.newsTagBadge, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
+                            <MaterialCommunityIcons name="clipboard-text" size={11} color="#7C3AED" style={{ marginRight: 4 }} />
+                            <Text style={[styles.newsTagText, { color: '#7C3AED' }]}>{subjectName}</Text>
+                          </View>
+                        ) : (
+                          <View style={[styles.newsTagBadge, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
+                            <MaterialCommunityIcons name="clipboard-text" size={11} color="#7C3AED" style={{ marginRight: 4 }} />
+                            <Text style={[styles.newsTagText, { color: '#7C3AED' }]}>Tugas LMS</Text>
+                          </View>
+                        )}
+                        <View style={[styles.newsTagBadge, { backgroundColor: statusBg }]}>
+                          <Text style={[styles.newsTagText, { color: statusColor }]}>{statusLabel}</Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.allNewsTitle}>{taskTitle}</Text>
+
+                      {taskDesc ? (
+                        <Text numberOfLines={2} style={[styles.allNewsSnippet, { marginBottom: 8 }]}>
+                          {taskDesc}
+                        </Text>
+                      ) : null}
+
+                      <View style={{ gap: 4, marginTop: 2 }}>
+                        {teacher ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <MaterialCommunityIcons name="account-tie" size={13} color="#94A3B8" style={{ marginRight: 5 }} />
+                            <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '500' }}>{teacher}</Text>
+                          </View>
+                        ) : null}
+
+                        {deadlineFormatted ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <MaterialCommunityIcons
+                              name="clock-outline"
+                              size={13}
+                              color={isLate ? '#DC2626' : '#64748B'}
+                              style={{ marginRight: 5 }}
+                            />
+                            <Text style={{ fontSize: 12, color: isLate ? '#DC2626' : '#64748B', fontWeight: '500' }}>
+                              {isLate ? 'Terlambat · ' : 'Deadline: '}{deadlineFormatted}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {score !== null && score !== undefined && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                            <MaterialCommunityIcons name="star-circle" size={15} color="#059669" style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#059669' }}>
+                              Nilai: {score}
+                            </Text>
+                          </View>
+                        )}
+
+                        {teacherNote ? (
+                          <View style={{ backgroundColor: '#F0FDF4', borderRadius: 8, padding: 8, marginTop: 4, borderWidth: 1, borderColor: '#DCFCE7' }}>
+                            <Text style={{ fontSize: 11, color: '#166534', fontWeight: '600' }}>
+                              Catatan: {teacherNote}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#7C3AED', marginRight: 4 }}>
+                          {isSubmitted || isGraded ? 'Lihat Detail' : 'Buka & Kerjakan'}
+                        </Text>
+                        <MaterialCommunityIcons name="chevron-right" size={15} color="#7C3AED" />
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+
+              {/* Tombol lihat semua di AssignmentScreen */}
+              <TouchableOpacity
+                style={styles.allNewsReadMoreRow}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setShowTugasModal(false);
+                  navigation.navigate('Tugas', parent && activeChildId ? { child_id: String(activeChildId), student_id: String(activeChildId) } : undefined);
+                }}
+              >
+                <Text style={[styles.allNewsReadMoreText, { color: '#7C3AED' }]}>Lihat Semua Tugas</Text>
+                <MaterialCommunityIcons name="arrow-right" size={15} color="#7C3AED" />
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* MODAL: Jadwal Hari Ini                                       */}
+      {/* ============================================================ */}
+      <Modal
+        visible={showJadwalModal}
+        animationType="slide"
+        transparent={true}
+        statusBarTranslucent
+        onRequestClose={() => setShowJadwalModal(false)}
+      >
+        <View style={styles.newsModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowJadwalModal(false)}
+          />
+          <View style={styles.newsModalSheet}>
+            {/* Header Gradient — biru untuk Jadwal */}
+            <LinearGradient
+              colors={['#1E3A8A', '#2563EB', '#60A5FA']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.newsModalHeaderGradient}
+            >
+              <View style={styles.newsHeaderDecorWave} />
+              <View style={styles.newsHeaderDecorCircle} />
+              <View style={styles.newsModalHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setShowJadwalModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Kembali"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color="#2563EB" />
+                </TouchableOpacity>
+                <View style={styles.newsModalTitleCol}>
+                  <Text style={styles.newsModalEyebrow}>AKADEMIK · HARI INI</Text>
+                  <Text numberOfLines={1} style={styles.newsModalTopTitle}>
+                    {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowJadwalModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Tutup"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="close" size={20} color="#2563EB" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+
+            <ScrollView
+              contentContainerStyle={styles.allNewsListContainer}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Subheader */}
+              <View style={styles.allNewsHeaderBox}>
+                <Text style={styles.allNewsHeaderTitle}>Jadwal Pelajaran</Text>
+                <Text style={styles.allNewsHeaderSub}>
+                  Daftar sesi belajar lengkap untuk hari ini beserta status presensi.
+                </Text>
+              </View>
+
+              {(() => {
+                const todayItems: any[] = Array.isArray(homeSchedule?.today_schedules)
+                  ? homeSchedule.today_schedules
+                  : Array.isArray(homeSchedule?.data?.today_schedules)
+                  ? homeSchedule.data.today_schedules
+                  : [];
+
+                if (loadingHomeWidgets && todayItems.length === 0) {
+                  return (
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <ActivityIndicator size="large" color="#2563EB" />
+                      <Text style={{ color: '#64748B', fontWeight: '600', marginTop: 12 }}>
+                        Memuat jadwal hari ini...
+                      </Text>
+                    </View>
+                  );
+                }
+
+                if (todayItems.length === 0) {
+                  return (
+                    <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                      <MaterialCommunityIcons name="calendar-blank-outline" size={48} color="#93C5FD" />
+                      <Text style={{ color: '#64748B', fontWeight: '600', marginTop: 8 }}>Tidak ada jadwal hari ini</Text>
+                    </View>
+                  );
+                }
+
+                return todayItems.map((s: any, idx: number) => {
+                  const isOngoing = Boolean(s.is_ongoing);
+                  const isPast = Boolean(s.is_past);
+                  const isFirst = idx === 0;
+                  const isLast = idx === todayItems.length - 1;
+                  const timeStart = s.time_start ? String(s.time_start).slice(0, 5) : '07:30';
+                  const timeEnd = s.time_end ? String(s.time_end).slice(0, 5) : '08:50';
+                  const subjectName = s.subject?.name ?? s.subject?.nama_mapel ?? 'Mata Pelajaran';
+                  const teacherName = s.teacher?.nama_lengkap ?? s.teacher?.name ?? s.guru?.nama_lengkap ?? s.guru?.nama ?? null;
+                  const room = s.room ?? s.ruangan ?? null;
+                  const attStatus = s.attendance?.status_label ?? (s.attendance?.status ? String(s.attendance.status).toUpperCase() : null);
+                  const statusColor = isOngoing ? '#2563EB' : isPast ? '#059669' : '#D97706';
+                  const statusBg = isOngoing ? '#DBEAFE' : isPast ? '#ECFDF5' : '#FEF3C7';
+                  const statusLabel = isOngoing ? 'Berlangsung' : isPast ? 'Selesai' : 'Akan Datang';
+
+                  return (
+                    <View key={s.id ?? idx} style={styles.milestoneRow}>
+                      {/* Col 1: Time Stamp */}
+                      <View style={styles.milestoneTimeCol}>
+                        <Text style={[styles.milestoneTimeStart, isOngoing && { color: '#2563EB' }]}>
+                          {timeStart}
+                        </Text>
+                        <Text style={styles.milestoneTimeEnd}>
+                          {timeEnd}
+                        </Text>
+                        <View style={[styles.milestoneSessionPill, isOngoing && { backgroundColor: '#EFF6FF' }]}>
+                          <Text style={[styles.milestoneSessionText, isOngoing && { color: '#2563EB' }]}>
+                            Sesi {idx + 1}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Col 2: Milestone Track & Node */}
+                      <View style={styles.milestoneTrackCol}>
+                        {/* Top track line */}
+                        <View
+                          style={[
+                            styles.milestoneTrackLineTop,
+                            isFirst && { opacity: 0 },
+                            isPast && styles.milestoneTrackLinePast,
+                            isOngoing && styles.milestoneTrackLineActive,
+                          ]}
+                        />
+
+                        {/* Milestone Node */}
+                        <View style={styles.milestoneNodeWrap}>
+                          {isOngoing ? (
+                            <View style={styles.milestoneNodeOngoing}>
+                              <View style={styles.milestoneNodeOngoingInner} />
+                            </View>
+                          ) : isPast ? (
+                            <View style={styles.milestoneNodePast}>
+                              <MaterialCommunityIcons name="check" size={13} color="#FFFFFF" />
+                            </View>
+                          ) : (
+                            <View style={styles.milestoneNodeUpcoming} />
+                          )}
+                        </View>
+
+                        {/* Bottom track line */}
+                        <View
+                          style={[
+                            styles.milestoneTrackLineBottom,
+                            isLast && { opacity: 0 },
+                            isPast && styles.milestoneTrackLinePast,
+                          ]}
+                        />
+                      </View>
+
+                      {/* Col 3: Milestone Card */}
+                      <View style={styles.milestoneCardCol}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            setShowJadwalModal(false);
+                            navigation.navigate('Jadwal', parent && activeChildId ? { child_id: String(activeChildId), student_id: String(activeChildId) } : undefined);
+                          }}
+                          style={[
+                            styles.milestoneCard,
+                            isOngoing && styles.milestoneCardOngoing,
+                          ]}
+                        >
+                          <View style={styles.milestoneCardHeader}>
+                            <View style={styles.milestoneSubjectRow}>
+                              <View style={[
+                                styles.milestoneSubjectIconBox,
+                                { backgroundColor: isOngoing ? '#DBEAFE' : isPast ? '#F1F5F9' : '#FEF3C7' }
+                              ]}>
+                                <MaterialCommunityIcons
+                                  name="book-open-page-variant"
+                                  size={15}
+                                  color={isOngoing ? '#2563EB' : isPast ? '#64748B' : '#D97706'}
+                                />
+                              </View>
+                              <Text numberOfLines={1} style={styles.milestoneSubjectTitle}>
+                                {subjectName}
+                              </Text>
+                            </View>
+
+                            <View style={[styles.milestoneStatusBadge, { backgroundColor: statusBg }]}>
+                              {isOngoing && <View style={styles.milestoneLiveDot} />}
+                              <Text style={[styles.milestoneStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                            </View>
+                          </View>
+
+                          {/* Metadata: Guru & Ruangan */}
+                          <View style={styles.milestoneMetaRow}>
+                            {teacherName ? (
+                              <View style={styles.milestoneMetaItem}>
+                                <MaterialCommunityIcons name="account-tie" size={13} color="#94A3B8" />
+                                <Text numberOfLines={1} style={styles.milestoneMetaText}>{teacherName}</Text>
+                              </View>
+                            ) : null}
+
+                            {room ? (
+                              <View style={styles.milestoneMetaItem}>
+                                <MaterialCommunityIcons name="door" size={13} color="#94A3B8" />
+                                <Text numberOfLines={1} style={styles.milestoneMetaText}>{room}</Text>
+                              </View>
+                            ) : null}
+                          </View>
+
+                          {attStatus && (
+                            <View style={styles.milestoneAttendanceRow}>
+                              <MaterialCommunityIcons name="check-circle" size={13} color="#059669" />
+                              <Text style={styles.milestoneAttendanceText}>
+                                Presensi: {attStatus}
+                              </Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                });
+              })()}
+
+              {/* Tombol lihat jadwal lengkap */}
+              <TouchableOpacity
+                style={styles.allNewsReadMoreRow}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setShowJadwalModal(false);
+                  navigation.navigate('Jadwal', parent && activeChildId ? { child_id: String(activeChildId), student_id: String(activeChildId) } : undefined);
+                }}
+              >
+                <Text style={[styles.allNewsReadMoreText, { color: '#2563EB' }]}>Lihat Jadwal Lengkap</Text>
+                <MaterialCommunityIcons name="arrow-right" size={15} color="#2563EB" />
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* MODAL: Menu Utama Portal Siswa (Ananda)                       */}
+      {/* ============================================================ */}
+      <Modal
+        visible={showChildPortalModal}
+        animationType="slide"
+        transparent={true}
+        statusBarTranslucent
+        onRequestClose={() => setShowChildPortalModal(false)}
+      >
+        <View style={styles.newsModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildPortalModal(false)}
+          />
+          <View style={styles.newsModalSheet}>
+            {/* Header Gradient — Hijau Emerald Portal */}
+            <LinearGradient
+              colors={['#064E3B', '#059669', '#10B981']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.newsModalHeaderGradient}
+            >
+              <View style={styles.newsHeaderDecorWave} />
+              <View style={styles.newsHeaderDecorCircle} />
+              <View style={styles.newsModalHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setShowChildPortalModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Kembali"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+                </TouchableOpacity>
+                <View style={styles.newsModalTitleCol}>
+                  <Text style={styles.newsModalEyebrow}>PORTAL ANANDA · MENU UTAMA</Text>
+                  <Text numberOfLines={1} style={styles.newsModalTopTitle}>
+                    {selectedPortalChild?.full_name || selectedPortalChild?.nama_lengkap || selectedPortalChild?.name || 'Ananda'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowChildPortalModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Tutup"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="close" size={20} color="#059669" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+
+            <ScrollView
+              contentContainerStyle={styles.allNewsListContainer}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Subheader */}
+              <View style={styles.allNewsHeaderBox}>
+                <Text style={styles.allNewsHeaderTitle}>
+                  {selectedPortalChild?.kelas?.nama_kelas || selectedPortalChild?.kelas?.name || selectedPortalChild?.class_name || 'Portal Siswa Terpadu'}
+                </Text>
+                <Text style={styles.allNewsHeaderSub}>
+                  Pilih menu layanan akademik, ibadah, atau evaluasi ananda di bawah ini.
+                </Text>
+              </View>
+
+              {/* Grid Menu 4 Kolom */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 18, paddingHorizontal: 4 }}>
+                {childPortalMenus.map((item, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    activeOpacity={0.75}
+                    style={{ width: '25%', alignItems: 'center', paddingHorizontal: 2 }}
+                    onPress={() => handleChildPortalMenuClick(item.route, item.tab)}
+                  >
+                    <View style={[styles.iconSquircle, { backgroundColor: item.bg }]}>
+                      <MaterialCommunityIcons name={item.icon as any} size={24} color={item.color} />
+                    </View>
+                    <Text numberOfLines={1} style={[styles.menuLabel, { textAlign: 'center', marginTop: 6, fontSize: 11 }]}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Tombol Buka Dashboard Portal Lengkap */}
+              <TouchableOpacity
+                style={[
+                  styles.allNewsReadMoreRow,
+                  {
+                    backgroundColor: '#F0FDF4',
+                    borderColor: '#BBF7D0',
+                    borderWidth: 1,
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: 14,
+                    justifyContent: 'center',
+                    marginTop: 22,
+                    marginBottom: 10,
+                  }
+                ]}
+                activeOpacity={0.82}
+                onPress={() => {
+                  setShowChildPortalModal(false);
+                  const childId = selectedPortalChild?.id || selectedPortalChild?.student_id;
+                  navigation.navigate('Orang Tua', childId ? { child_id: String(childId), student_id: String(childId), single_child_only: true } : undefined);
+                }}
+              >
+                <MaterialCommunityIcons name="view-dashboard-outline" size={18} color="#059669" style={{ marginRight: 6 }} />
+                <Text style={[styles.allNewsReadMoreText, { color: '#059669', fontSize: 13, fontWeight: '800' }]}>
+                  Buka Dashboard Portal Lengkap
+                </Text>
+                <MaterialCommunityIcons name="arrow-right" size={15} color="#059669" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* MODAL: Notifikasi Akademik Siswa (Tugas, Ujian CBT, Kuis)    */}
+      {/* ============================================================ */}
+      <Modal
+        visible={showStudentNotificationModal}
+        animationType="slide"
+        transparent={true}
+        statusBarTranslucent
+        onRequestClose={() => setShowStudentNotificationModal(false)}
+      >
+        <View style={styles.newsModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowStudentNotificationModal(false)}
+          />
+          <View style={styles.newsModalSheet}>
+            {/* Header Gradient — Emerald Emas Akademik */}
+            <LinearGradient
+              colors={['#064E3B', '#0D6B42', '#18A165']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.newsModalHeaderGradient}
+            >
+              <View style={styles.newsHeaderDecorWave} />
+              <View style={styles.newsHeaderDecorCircle} />
+              <View style={styles.newsModalHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setShowStudentNotificationModal(false)}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Kembali"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+                </TouchableOpacity>
+                <View style={styles.newsModalTitleCol}>
+                  <Text style={styles.newsModalEyebrow}>NOTIFIKASI & PENGINGAT AKADEMIK</Text>
+                  <Text numberOfLines={1} style={styles.newsModalTopTitle}>
+                    {selectedNotificationStudent?.full_name || selectedNotificationStudent?.nama_lengkap || selectedNotificationStudent?.name || 'Ananda'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (selectedNotificationStudent) {
+                      void handleOpenStudentNotifications(selectedNotificationStudent);
+                    }
+                  }}
+                  style={styles.newsModalRoundcubeBtn}
+                  accessibilityLabel="Muat Ulang"
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons name="refresh" size={20} color="#059669" />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+
+            <ScrollView
+              contentContainerStyle={[styles.allNewsListContainer, { paddingBottom: 28 }]}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Subheader */}
+              <View style={styles.allNewsHeaderBox}>
+                <Text style={styles.allNewsHeaderTitle}>
+                  Agenda & Tugas Terjadwal
+                </Text>
+                <Text style={styles.allNewsHeaderSub}>
+                  Pengingat penugasan LMS, jadwal ujian CBT, kuis daring, dan maklumat sekolah.
+                </Text>
+              </View>
+
+              {/* Filter Tabs */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 4, gap: 8, marginBottom: 16 }}
+              >
+                {[
+                  { key: 'all', label: 'Semua Agenda', icon: 'view-grid-outline', count: studentAssignmentsList.length + studentCbtList.length + announcements.length },
+                  { key: 'tugas', label: 'Tugas & Kuis', icon: 'clipboard-text-outline', count: studentAssignmentsList.length },
+                  { key: 'cbt', label: 'Ujian CBT', icon: 'laptop', count: studentCbtList.length },
+                  { key: 'pengumuman', label: 'Pengumuman', icon: 'bullhorn-outline', count: announcements.length },
+                ].map((tab) => {
+                  const isActive = studentNotifFilter === tab.key;
+                  return (
+                    <TouchableOpacity
+                      key={tab.key}
+                      activeOpacity={0.8}
+                      onPress={() => setStudentNotifFilter(tab.key as any)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingVertical: 7,
+                        paddingHorizontal: 12,
+                        borderRadius: 20,
+                        backgroundColor: isActive ? '#059669' : '#F1F5F9',
+                        borderWidth: 1,
+                        borderColor: isActive ? '#047857' : '#E2E8F0',
+                      }}
+                    >
+                      <MaterialCommunityIcons
+                        name={tab.icon as any}
+                        size={15}
+                        color={isActive ? '#FFFFFF' : '#475569'}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: '700',
+                          color: isActive ? '#FFFFFF' : '#475569',
+                        }}
+                      >
+                        {tab.label} ({tab.count})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Loader */}
+              {studentNotificationsLoading ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#059669" />
+                  <Text style={{ marginTop: 12, fontSize: 13, color: '#64748B', fontWeight: '600' }}>
+                    Memuat agenda & notifikasi siswa...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  {/* Bagian Ujian CBT (jika tab all atau cbt) */}
+                  {(studentNotifFilter === 'all' || studentNotifFilter === 'cbt') && studentCbtList.length > 0 && (
+                    <View style={{ marginBottom: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <MaterialCommunityIcons name="laptop" size={16} color="#2563EB" />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1E293B' }}>
+                          Ujian CBT & Asesmen Daring
+                        </Text>
+                      </View>
+                      {studentCbtList.map((exam: any, eIdx: number) => {
+                        const sId = selectedNotificationStudent?.id || selectedNotificationStudent?.student_id;
+                        return (
+                          <TouchableOpacity
+                            key={exam.id || eIdx}
+                            activeOpacity={0.82}
+                            onPress={() => {
+                              setShowStudentNotificationModal(false);
+                              navigation.navigate('CbtExams', sId ? { child_id: String(sId), student_id: String(sId) } : undefined);
+                            }}
+                            style={{
+                              backgroundColor: '#EFF6FF',
+                              borderColor: '#BFDBFE',
+                              borderWidth: 1,
+                              borderRadius: 14,
+                              padding: 12,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <View style={{ flex: 1, marginRight: 8 }}>
+                                <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '800', color: '#1E3A8A' }}>
+                                  {exam.title || exam.nama_ujian || 'Ujian CBT Online'}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: '#3B82F6', marginTop: 2 }}>
+                                  {exam.subject?.name || exam.mapel || 'Mata Pelajaran'} · {exam.duration_minutes || exam.durasi || 60} Menit
+                                </Text>
+                              </View>
+                              <View style={{ backgroundColor: '#2563EB', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                                <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>CBT</Text>
+                              </View>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#DBEAFE' }}>
+                              <Text style={{ fontSize: 11, color: '#64748B' }}>
+                                📅 {exam.start_time || exam.jadwal || 'Terjadwal'}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563EB' }}>Ikuti Ujian</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={14} color="#2563EB" />
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Bagian Tugas & Kuis LMS (jika tab all atau tugas) */}
+                  {(studentNotifFilter === 'all' || studentNotifFilter === 'tugas') && studentAssignmentsList.length > 0 && (
+                    <View style={{ marginBottom: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <MaterialCommunityIcons name="clipboard-text-clock" size={16} color="#D97706" />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1E293B' }}>
+                          Tugas & Kuis LMS Aktif
+                        </Text>
+                      </View>
+                      {studentAssignmentsList.map((item: any, tIdx: number) => {
+                        const sId = selectedNotificationStudent?.id || selectedNotificationStudent?.student_id;
+                        const deadline = item.due_date || item.deadline || item.tanggal_jatuh_tempo || '';
+                        return (
+                          <TouchableOpacity
+                            key={item.id || tIdx}
+                            activeOpacity={0.82}
+                            onPress={() => {
+                              setShowStudentNotificationModal(false);
+                              navigation.navigate('Tugas', sId ? { child_id: String(sId), student_id: String(sId) } : undefined);
+                            }}
+                            style={{
+                              backgroundColor: '#FFFBEB',
+                              borderColor: '#FDE68A',
+                              borderWidth: 1,
+                              borderRadius: 14,
+                              padding: 12,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <View style={{ flex: 1, marginRight: 8 }}>
+                                <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '800', color: '#92400E' }}>
+                                  {item.title || item.judul || 'Tugas Siswa'}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
+                                  {item.subject?.name || item.mapel || 'Mata Pelajaran'} · {item.teacher?.name || item.guru || 'Guru Pengampu'}
+                                </Text>
+                              </View>
+                              <View style={{ backgroundColor: '#F59E0B', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                                <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>LMS</Text>
+                              </View>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#FEF3C7' }}>
+                              <Text style={{ fontSize: 11, color: '#B45309', fontWeight: '600' }}>
+                                ⏰ Batas: {deadline ? deadline : 'Segera kumpulkan'}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706' }}>Buka Tugas</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={14} color="#D97706" />
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Bagian Pengumuman Sekolah (jika tab all atau pengumuman) */}
+                  {(studentNotifFilter === 'all' || studentNotifFilter === 'pengumuman') && announcements.length > 0 && (
+                    <View style={{ marginBottom: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <MaterialCommunityIcons name="bullhorn" size={16} color="#059669" />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1E293B' }}>
+                          Pemberitahuan & Maklumat Sekolah
+                        </Text>
+                      </View>
+                      {announcements.slice(0, 5).map((ann: any, aIdx: number) => {
+                        const cleanBody = (ann.content || ann.isi || ann.description || '').replace(/<[^>]*>?/gm, '').trim();
+                        const dateStr = ann.created_at ? new Date(ann.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : (ann.date || '');
+                        return (
+                          <View
+                            key={ann.id || aIdx}
+                            style={{
+                              backgroundColor: '#F0FDF4',
+                              borderColor: '#BBF7D0',
+                              borderWidth: 1,
+                              borderRadius: 14,
+                              padding: 12,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <Text numberOfLines={2} style={{ fontSize: 13, fontWeight: '800', color: '#065F46' }}>
+                              {ann.title || ann.judul || 'Pemberitahuan Sekolah'}
+                            </Text>
+                            {cleanBody ? (
+                              <Text numberOfLines={2} style={{ fontSize: 11, color: '#047857', marginTop: 4 }}>
+                                {cleanBody}
+                              </Text>
+                            ) : null}
+                            {dateStr ? (
+                              <Text style={{ fontSize: 10, color: '#65A30D', marginTop: 6 }}>
+                                📅 {dateStr}
+                              </Text>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Empty State jika tidak ada data untuk filter yang dipilih */}
+                  {((studentNotifFilter === 'all' && studentAssignmentsList.length === 0 && studentCbtList.length === 0 && announcements.length === 0) ||
+                    (studentNotifFilter === 'tugas' && studentAssignmentsList.length === 0) ||
+                    (studentNotifFilter === 'cbt' && studentCbtList.length === 0) ||
+                    (studentNotifFilter === 'pengumuman' && announcements.length === 0)) && (
+                    <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 20 }}>
+                      <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                        <MaterialCommunityIcons name="bell-check-outline" size={28} color="#16A34A" />
+                      </View>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#1E293B', textAlign: 'center' }}>
+                        Tidak Ada Pengingat Mendesak
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center', marginTop: 4, lineHeight: 18 }}>
+                        Semua tugas, ujian CBT, atau agenda ananda telah tuntas atau belum ada pengumuman baru.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+
+              {/* Tombol Akses Pusat Notifikasi Lengkap */}
+              <TouchableOpacity
+                style={[
+                  styles.allNewsReadMoreRow,
+                  {
+                    backgroundColor: '#F8FAFC',
+                    borderColor: '#CBD5E1',
+                    borderWidth: 1,
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: 14,
+                    justifyContent: 'center',
+                    marginTop: 10,
+                  }
+                ]}
+                activeOpacity={0.82}
+                onPress={() => {
+                  setShowStudentNotificationModal(false);
+                  navigation.navigate('Notifications');
+                }}
+              >
+                <MaterialCommunityIcons name="bell-outline" size={18} color="#475569" style={{ marginRight: 6 }} />
+                <Text style={[styles.allNewsReadMoreText, { color: '#334155', fontSize: 13, fontWeight: '800' }]}>
+                  Buka Pusat Notifikasi Lengkap
+                </Text>
+                <MaterialCommunityIcons name="arrow-right" size={15} color="#475569" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -1439,7 +3626,263 @@ export default function HomeScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    backgroundColor: '#0D7A4E',
+  },
+  stickyHeaderBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 999,
+    backgroundColor: '#0D7A4E',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.2)',
+    overflow: 'hidden',
+  },
+  stickyHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 16,
+  },
+  stickyUserRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  stickyAvatarWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  stickyAvatarImg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 10,
+  },
+  stickyTextCol: {
+    marginLeft: 10,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  stickyRoleTagText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#A7F3D0',
+    letterSpacing: 0.2,
+    marginBottom: 1,
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  stickyUserName: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+    textShadowColor: 'rgba(0, 0, 0, 0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  stickyBellBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  extendedHeaderGradient: {
+    paddingBottom: 4,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  headerMosqueBgImage: {
+    height: '150%',
+    transform: [{ translateY: -110 }],
+  },
+  headerProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    zIndex: 1,
+  },
+  headerBrandSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  headerLogoOuter: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  headerLogoImg: {
+    width: 34,
+    height: 34,
+  },
+  headerBrandTextCol: {
+    marginLeft: 8,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  headerWelcomeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DEF7EC',
+    letterSpacing: 0.2,
+    textShadowColor: 'rgba(0, 0, 0, 0.25)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  headerAppTitleText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+    marginTop: 1,
+    textShadowColor: 'rgba(0, 0, 0, 0.35)',
+    textShadowOffset: { width: 0, height: 1.5 },
+    textShadowRadius: 3,
+  },
+  headerActionBtnsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerAvatarBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentCardContainerInHeader: {
+    marginTop: 60,
+    marginBottom: 0,
+    position: 'relative',
+  },
+  bodyOverlapBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: -60,
+    zIndex: 0,
+  },
+  bodyOverlapSheet: {
+    position: 'absolute',
+    top: 138,
+    left: 0,
+    right: 0,
+    bottom: -60,
+    backgroundColor: '#EBF8F2',
+    borderTopLeftRadius: 36,
+    borderTopRightRadius: 36,
+    borderTopWidth: 1.5,
+    borderTopColor: 'rgba(255, 255, 255, 0.65)',
+  },
+  studentCardHeaderRowInHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 10,
+    zIndex: 1,
+  },
+  sectionTitleBoldWhite: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  seeAllTextMint: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#DEF7EC',
+  },
+  studentDotsRowInHeader: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+    zIndex: 1,
+  },
+  studentDotActiveInHeader: {
+    width: 18,
     backgroundColor: '#0D6B42',
+  },
+  studentDotInactiveInHeader: {
+    width: 6,
+    backgroundColor: 'rgba(13, 107, 66, 0.3)',
+  },
+  curvedSheetBody: {
+    backgroundColor: '#EBF8F2',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    marginTop: 0,
+    paddingTop: 4,
+    paddingBottom: 94,
+    minHeight: 500,
+  },
+  mainScrollContent: {
+    flexGrow: 1,
+    backgroundColor: '#EBF8F2',
   },
   headerWrapper: {
     width: '100%',
@@ -1451,7 +3894,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingBottom: 22,
+    paddingBottom: 26,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
     overflow: 'hidden',
@@ -1500,24 +3943,25 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   avatarWrapper: {
-    width: 48,
-    height: 48,
-    borderRadius: 15,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.85)',
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   avatarImage: {
     width: '100%',
     height: '100%',
+    borderRadius: 18,
   },
   avatarFallback: {
     width: '100%',
@@ -1528,7 +3972,7 @@ const styles = StyleSheet.create({
   },
   avatarInitial: {
     color: '#084835',
-    fontSize: 19,
+    fontSize: 24,
     fontWeight: '900',
   },
   greetingTextColumn: {
@@ -1536,56 +3980,50 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   greetingSub: {
-    fontSize: 11.5,
-    color: 'rgba(255, 255, 255, 0.88)',
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
     fontWeight: '600',
   },
   greetingName: {
-    fontSize: 16.5,
-    fontWeight: '900',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#FFFFFF',
     marginTop: 1,
     letterSpacing: 0.2,
   },
   greetingRole: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.82)',
-    fontWeight: '600',
+    fontSize: 11.5,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '500',
     marginTop: 1,
   },
   bellButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: 13,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.14,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
     zIndex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
   },
-  unreadBadge: {
+  unreadBadgeDot: {
     position: 'absolute',
-    top: -2,
-    right: -2,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#EF4444',
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
-  },
-  unreadBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 9.5,
-    fontWeight: '900',
   },
   carouselHeaderRow: {
     flexDirection: 'row',
@@ -1686,6 +4124,31 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 6,
   },
+  newsEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(236, 253, 245, 0.7)',
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 6,
+  },
+  newsEmptyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#047857',
+    marginTop: 4,
+  },
+  newsEmptySubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   carouselCleanBox: {
     width: '100%',
     paddingVertical: 4,
@@ -1718,103 +4181,97 @@ const styles = StyleSheet.create({
   carouselTrack: {
     paddingHorizontal: 16,
     gap: 12,
+    paddingBottom: 4,
   },
   newsCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.45)',
+    borderRadius: 22,
     overflow: 'hidden',
-    padding: 14,
-    shadowColor: '#158052',
+    shadowColor: '#0D6B42',
     shadowOpacity: 0.18,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
-    justifyContent: 'space-between',
-    minHeight: 138,
     position: 'relative',
+    minHeight: 110,
+    justifyContent: 'center',
   },
-  newsTopRow: {
+  newsCardBody: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    padding: 12,
     zIndex: 1,
   },
   newsThumbnail: {
-    width: 68,
-    height: 68,
-    borderRadius: 14,
-    marginRight: 11,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-    backgroundColor: '#158052',
+    width: 82,
+    height: 82,
+    borderRadius: 16,
+    backgroundColor: '#0D6B42',
   },
   newsContentCol: {
     flex: 1,
-  },
-  newsCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  newsCardTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    flex: 1,
-    marginRight: 6,
-    lineHeight: 18,
-    textShadowColor: 'rgba(0, 0, 0, 0.25)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  newsChevronBox: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    alignItems: 'center',
+    marginLeft: 12,
     justifyContent: 'center',
-    marginTop: 1,
   },
-  newsCardSnippet: {
-    fontSize: 11.5,
-    color: '#EAFBF3',
-    lineHeight: 16,
-    marginTop: 4,
-  },
-  newsCardFooter: {
+  newsMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-    zIndex: 1,
   },
-  newsDateBadge: {
+  carouselTagBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(4, 47, 30, 0.35)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 8,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  carouselTagText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  newsDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
   },
   newsCardDate: {
     fontSize: 10.5,
-    color: '#DEF7EC',
-    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.95)',
+    fontWeight: '600',
   },
-  newsReadMore: {
-    fontSize: 11,
-    color: '#FFFFFF',
+  newsCardTitle: {
+    fontSize: 13,
     fontWeight: '800',
+    color: '#FFFFFF',
+    lineHeight: 17,
+    marginTop: 5,
+  },
+  newsCardSnippet: {
+    fontSize: 10.5,
+    color: 'rgba(255, 255, 255, 0.85)',
+    lineHeight: 14,
+    marginTop: 3,
+  },
+  newsActionCircleBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
   dotsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 8,
+    marginTop: 10,
   },
   dot: {
     height: 5,
@@ -1822,59 +4279,762 @@ const styles = StyleSheet.create({
   },
   dotActive: {
     width: 16,
-    backgroundColor: '#084835',
+    backgroundColor: '#18A165',
   },
   dotInactive: {
     width: 5,
     backgroundColor: '#CBD5E1',
   },
-  menuSection: {
+  seeAllTextBlue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  sectionHeaderTitleWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionTitleBold: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E293B',
+    letterSpacing: -0.2,
+  },
+  familyBannerContainer: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 16,
+  },
+  familyBannerCard: {
+    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+  },
+  familyBannerImg: {
+    width: 100,
+    height: 72,
+    marginRight: 12,
+  },
+  familyBannerTextCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  familyBannerHeading: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#064E3B',
+    lineHeight: 18,
+  },
+  familyBannerSubheading: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#047857',
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  newsSectionContainer: {
+    marginBottom: 18,
+  },
+  newsSectionHeaderRow: {
+    paddingHorizontal: 16,
+  },
+  cleanNewsTrack: {
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    gap: STUDENT_CARD_GAP,
+  },
+  cleanNewsCard: {
+    borderRadius: 18,
+    padding: 13,
+    minHeight: 110,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 4,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  cleanNewsDecorCircle: {
+    position: 'absolute',
+    top: -24,
+    right: -24,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    zIndex: 0,
+  },
+  cleanNewsThumbnail: {
+    width: 96,
+    height: 86,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.45)',
+    zIndex: 1,
+  },
+  cleanNewsContentCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  cleanNewsTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    lineHeight: 20,
+    textShadowColor: 'rgba(0, 0, 0, 0.15)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  cleanNewsDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 6,
+  },
+  cleanNewsDate: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#DEF7EC',
+  },
+  newsEmptyStateClean: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  // Tinjau Aktivitas Styles (Sesuai Desain Mockup Timeline Terbaru)
+  activityTimelineCard: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  activityTimelineHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    marginBottom: 12,
+  },
+  activityTimelineHeaderCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  activityTimelineHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  activityDayNavBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  activityDayNavBtnDisabled: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  activityTodayBadge: {
+    marginLeft: 5,
+    backgroundColor: '#059669',
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+  },
+  activityTodayBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  activityTimelinePulseBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    flexShrink: 0,
+  },
+  activityTimelineTitleCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  activityTimelineDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+    flexShrink: 1,
+  },
+  activityTimelineDateTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+    flexShrink: 1,
+  },
+  activityTimelineSubtitle: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 2,
+    fontWeight: '500',
+    flexShrink: 1,
+  },
+  activityTimelineHeaderRight: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  activityTimelineStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 4.5,
+    borderRadius: 14,
+    gap: 4,
+  },
+  activityTimelineStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  activityTimelineStatusPillText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  activityTimelineScrollArea: {
+    maxHeight: 270,
+  },
+  activityTimelineFeedList: {
+    width: '100%',
+    paddingTop: 2,
+    paddingRight: 4,
+  },
+  timelineRowContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 58,
+  },
+  timelineColTime: {
+    width: 48,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingRight: 8,
+  },
+  timelineTimeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  timelinePastDateText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  timelinePastTimeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  timelineColTrack: {
+    width: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+    position: 'relative',
+  },
+  timelineTrackLineTop: {
+    position: 'absolute',
+    top: 0,
+    bottom: '50%',
+    width: 2,
+    backgroundColor: '#34D399',
+  },
+  timelineTrackLineBottom: {
+    position: 'absolute',
+    top: '50%',
+    bottom: 0,
+    width: 2,
+    backgroundColor: '#34D399',
+  },
+  timelineTrackLinePast: {
+    backgroundColor: '#CBD5E1',
+  },
+  timelineTrackNodeRing: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 3,
+    borderColor: '#10B981',
+    zIndex: 2,
+  },
+  timelineTrackNodeRingActive: {
+    borderColor: '#10B981',
+  },
+  timelineTrackNodeRingPast: {
+    borderColor: '#94A3B8',
+  },
+  timelineColCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingLeft: 8,
+  },
+  timelineCardIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineCardTextCol: {
+    flex: 1,
+    paddingHorizontal: 10,
+    justifyContent: 'center',
+  },
+  timelineCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  timelineCardSubtitle: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  timelineBadgeContainer: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineBadgePill: {
+    paddingHorizontal: 11,
+    paddingVertical: 4.5,
+    borderRadius: 14,
+    minWidth: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  timelineBadgeRedDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  activityTimelineLoadingBox: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  activityTimelineLoadingText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  activityTimelineEmptyBox: {
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  activityTimelineEmptyTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 4,
+  },
+  activityTimelineEmptySub: {
+    fontSize: 11.5,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  // Modal Detail Aktivitas Styles
+  activityModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 20,
+  },
+  activityModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  activityModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  activityModalIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityModalHeaderCol: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  activityModalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  activityModalHeaderSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  activityModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityModalBody: {
+    paddingVertical: 14,
+  },
+  activityModalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 12,
+  },
+  activityModalMainTitle: {
+    flex: 1,
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 22,
+  },
+  activityModalDescCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+  },
+  activityModalDescLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  activityModalDescText: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#1E293B',
+    lineHeight: 20,
+  },
+  activityModalInfoList: {
+    gap: 10,
+  },
+  activityModalInfoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  activityModalInfoLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  activityModalInfoVal: {
+    fontSize: 12.5,
+    color: '#1E293B',
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  activityModalActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  activityModalPrimaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  activityModalPrimaryBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  activityModalCloseActionBtn: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityModalCloseActionBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  menuCardContainer: {
+    marginHorizontal: 16,
+    marginTop: 2,
+    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    paddingTop: 14,
+    paddingBottom: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  menuSectionHeaderRow: {
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  menuTitleWithChildRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+    gap: 8,
+  },
+  selectedChildInlineChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+    maxWidth: 155,
+  },
+  selectedChildInlineText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#084835',
   },
   menuHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   menuHeaderTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
     color: '#0F172A',
+  },
+  seeAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   seeAllText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#084835',
-  },
-  menuGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 14,
+    color: '#18A165',
   },
   menuItem: {
-    width: (SCREEN_WIDTH - 40 - 24) / 4,
+    width: (SCREEN_WIDTH - 32) / 4,
     alignItems: 'center',
   },
-  iconSquircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
+  menuCardTile: {
+    width: Math.floor((SCREEN_WIDTH - 76) / 4),
+    maxWidth: Math.floor((SCREEN_WIDTH - 76) / 4),
+    minWidth: Math.floor((SCREEN_WIDTH - 76) / 4),
+    borderRadius: 18,
+    paddingTop: 10,
+    paddingBottom: 8,
+    paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.03,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 1,
+  },
+  menuCardTileSpacer: {
+    width: Math.floor((SCREEN_WIDTH - 76) / 4),
+    maxWidth: Math.floor((SCREEN_WIDTH - 76) / 4),
+    minWidth: Math.floor((SCREEN_WIDTH - 76) / 4),
+  },
+  menuIconCircleHalo: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  menuTileTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 6,
+    textAlign: 'center',
+    letterSpacing: -0.2,
+    minHeight: 16,
+  },
+  menuTileSubtitle: {
+    fontSize: 8.5,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 1.5,
+    textAlign: 'center',
+    letterSpacing: -0.1,
+    minHeight: 12,
+  },
+  iconSquircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   menuLabel: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '600',
     color: '#334155',
     marginTop: 6,
     textAlign: 'center',
+    paddingHorizontal: 2,
+  },
+  quoteBannerCard: {
+    marginHorizontal: 16,
+    marginTop: 18,
+    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+    overflow: 'hidden',
+  },
+  quoteSproutBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quoteText: {
+    fontSize: 11.5,
+    fontStyle: 'italic',
+    fontWeight: '600',
+    color: '#334155',
+    lineHeight: 16,
+    flex: 1,
+    marginHorizontal: 10,
+  },
+  quoteIllustration: {
+    width: 90,
+    height: 55,
   },
   inlineLoader: {
     marginTop: 20,
@@ -1894,34 +5054,131 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     textAlign: 'center',
   },
-  modalSafeArea: {
+  newsModalBackdrop: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
-  modalHeader: {
+  newsModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    maxHeight: '85%',
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  newsModalHeaderGradient: {
+    paddingTop: 16,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  newsHeaderDecorWave: {
+    position: 'absolute',
+    top: -30,
+    right: -10,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    transform: [{ scaleX: 1.3 }, { rotate: '-25deg' }],
+  },
+  newsHeaderDecorCircle: {
+    position: 'absolute',
+    bottom: -20,
+    left: 30,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  newsModalHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    zIndex: 1,
   },
-  modalBackButton: {
-    width: 40,
-    height: 40,
+  newsModalRoundcubeBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 3,
   },
-  modalTopTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
-    maxWidth: SCREEN_WIDTH * 0.7,
+  newsModalTitleCol: {
+    flex: 1,
+    marginHorizontal: 12,
+  },
+  newsModalEyebrow: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: '#D4F5E6',
+  },
+  newsModalTopTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  newsModalMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  carouselTagBadgeModal: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#084835',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  carouselTagTextModal: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  newsModalDateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalDateTextClean: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modalNewsCoverBox: {
+    width: '100%',
+    height: 180,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#F1F5F9',
+    marginBottom: 16,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  modalNewsCoverImage: {
+    width: '100%',
+    height: '100%',
   },
   modalContent: {
-    padding: 24,
-    paddingBottom: 40,
+    padding: 20,
+    paddingBottom: 36,
   },
   modalMainTitle: {
     fontSize: 20,
@@ -1963,7 +5220,7 @@ const styles = StyleSheet.create({
   // Student Card Styles (Horizontal Swipeable & No Top Tab)
   studentCardContainer: {
     marginTop: 2,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   studentCardHeaderRow: {
     flexDirection: 'row',
@@ -2057,8 +5314,9 @@ const styles = StyleSheet.create({
   },
   studentCardsTrack: {
     paddingHorizontal: 16,
-    gap: 12,
+    gap: STUDENT_CARD_GAP,
     paddingBottom: 4,
+    zIndex: 1,
   },
   studentMainCard: {
     overflow: 'hidden',
@@ -2089,23 +5347,23 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   studentAvatarBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 15,
+    width: 62,
+    height: 62,
+    borderRadius: 22,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.85)',
-    marginRight: 10,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
+    marginRight: 12,
     shadowColor: '#000000',
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
     overflow: 'hidden',
   },
   studentAvatarInitial: {
-    fontSize: 19,
+    fontSize: 26,
     fontWeight: '900',
     color: '#084835',
   },
@@ -2144,19 +5402,24 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
+  studentCardHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: 6,
+  },
   studentQrBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 11,
     backgroundColor: '#FFFFFF',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 3,
-    marginLeft: 6,
   },
   studentQrBtnText: {
     fontSize: 8,
@@ -2180,16 +5443,33 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
+  studentAttrLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
   studentAttrLabel: {
-    fontSize: 9,
+    fontSize: 9.5,
     color: '#A7F3D0',
     fontWeight: '700',
-    marginBottom: 2,
   },
   studentAttrValue: {
     fontSize: 11,
     fontWeight: '900',
     color: '#FFFFFF',
+  },
+  studentPresensiValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  presensiGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#34D399',
   },
   studentAttrDivider: {
     width: 1,
@@ -2241,7 +5521,7 @@ const styles = StyleSheet.create({
     color: '#064E3B',
   },
   studentActionBtnPrimary: {
-    flex: 0.8,
+    flex: 0.85,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2763,22 +6043,61 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   menuGridPage: {
+    paddingTop: 2,
+  },
+  menuExpandedGrid: {
+    paddingTop: 2,
+  },
+  menuRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'flex-start',
-    rowGap: 14,
-    columnGap: 8,
+    justifyContent: 'space-between',
+    alignItems: 'stretch',
+    paddingHorizontal: 8,
+    marginBottom: 10,
+  },
+  menuRowLast: {
+    marginBottom: 2,
+  },
+  menuExpandIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  menuCollapseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  menuCollapseButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0D6B42',
   },
   menuDotsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 8,
+    marginTop: 12,
   },
   menuDot: {
-    height: 4,
-    borderRadius: 2,
+    height: 5,
+    borderRadius: 2.5,
   },
   menuDotActive: {
     width: 16,
@@ -3166,5 +6485,362 @@ const styles = StyleSheet.create({
     fontSize: 7.5,
     color: '#D1FAE5',
     fontWeight: '700',
+  },
+  // ── Home Widget: Tugas Terbaru & Jadwal Hari Ini ──
+  homeWidgetRow: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 14,
+    gap: 12,
+  },
+  homeWidgetCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  homeWidgetCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 8,
+  },
+  homeWidgetIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeWidgetCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#1E293B',
+    flex: 1,
+  },
+  homeWidgetBody: {
+    flex: 1,
+    marginBottom: 8,
+  },
+  homeWidgetSubject: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7C3AED',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  homeWidgetMainText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 17,
+    marginBottom: 6,
+  },
+  homeWidgetDeadlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  homeWidgetDeadlineText: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '500',
+    flexShrink: 1,
+  },
+  homeWidgetBadgeRow: {
+    marginTop: 6,
+  },
+  homeWidgetBadge: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
+  },
+  homeWidgetBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  homeWidgetScheduleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+    gap: 6,
+  },
+  homeWidgetScheduleTime: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748B',
+    width: 36,
+    flexShrink: 0,
+  },
+  homeWidgetScheduleSubject: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1E293B',
+    flex: 1,
+  },
+  homeWidgetOngoingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DBEAFE',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+    gap: 4,
+  },
+  homeWidgetOngoingDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#2563EB',
+  },
+  homeWidgetOngoingText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  homeWidgetMoreText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  homeWidgetEmptyBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 4,
+  },
+  homeWidgetEmptyText: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  homeWidgetFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 8,
+    marginTop: 4,
+    gap: 2,
+  },
+  homeWidgetFooterText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#7C3AED',
+  },
+  homeWidgetLoadingBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+  },
+  // Milestone Schedule Styles
+  milestoneRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  milestoneTimeCol: {
+    width: 58,
+    alignItems: 'flex-end',
+    paddingTop: 2,
+    paddingRight: 10,
+  },
+  milestoneTimeStart: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  milestoneTimeEnd: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  milestoneSessionPill: {
+    marginTop: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  milestoneSessionText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  milestoneTrackCol: {
+    width: 24,
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    position: 'relative',
+  },
+  milestoneTrackLineTop: {
+    position: 'absolute',
+    top: 0,
+    bottom: '50%',
+    width: 2,
+    backgroundColor: '#E2E8F0',
+  },
+  milestoneTrackLineBottom: {
+    position: 'absolute',
+    top: '50%',
+    bottom: 0,
+    width: 2,
+    backgroundColor: '#E2E8F0',
+  },
+  milestoneTrackLineActive: {
+    backgroundColor: '#93C5FD',
+  },
+  milestoneTrackLinePast: {
+    backgroundColor: '#CBD5E1',
+  },
+  milestoneNodeWrap: {
+    marginTop: 2,
+    zIndex: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  milestoneNodeOngoing: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  milestoneNodeOngoingInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#2563EB',
+  },
+  milestoneNodePast: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  milestoneNodeUpcoming: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2.5,
+    borderColor: '#94A3B8',
+    backgroundColor: '#FFFFFF',
+  },
+  milestoneCardCol: {
+    flex: 1,
+    paddingLeft: 10,
+  },
+  milestoneCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  milestoneCardOngoing: {
+    borderColor: '#2563EB',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+  },
+  milestoneCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  milestoneSubjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  milestoneSubjectIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  milestoneSubjectTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+  },
+  milestoneStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+  },
+  milestoneLiveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#2563EB',
+    marginRight: 4,
+  },
+  milestoneStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  milestoneMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 4,
+  },
+  milestoneMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  milestoneMetaText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  milestoneAttendanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  milestoneAttendanceText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#059669',
+    marginLeft: 4,
   },
 });

@@ -180,7 +180,9 @@ export const canAccessScreen = (
         isTeacherRole(roles) ||
         isTuRole(roles) ||
         isOperatorRole(roles) ||
-        isPrincipalRole(roles);
+        isPrincipalRole(roles) ||
+        isParentRole(roles) ||
+        isStudentRole(roles);
 
       const hasAttendancePermission = can(
         user,

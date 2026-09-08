@@ -22,7 +22,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService } from '../services/mobileApiService';
 import { AuthUser, useAuthStore } from '../stores/authStore';
 import { roleLabel } from '../utils/roles';
-import { getProfileImageUrl } from '../utils/profile';
+import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../utils/profile';
 
 const displayValue = (value: unknown, fallback = '-') => (value ? String(value) : fallback);
 
@@ -113,7 +113,7 @@ export default function ProfilScreen() {
           {profileImageUrl ? (
             <Avatar.Image size={62} source={{ uri: String(profileImageUrl) }} style={styles.avatar} />
           ) : (
-            <Avatar.Text size={62} label={avatarLabel} style={styles.avatar} color="#FFFFFF" />
+            <Avatar.Image size={62} source={DEFAULT_PARENT_AVATAR} style={styles.avatar} />
           )}
           <Text style={styles.name}>{name}</Text>
           <Text style={styles.email}>{displayValue(user?.email)}</Text>

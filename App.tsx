@@ -15,6 +15,7 @@ import SplashScreen from './src/screens/SplashScreen';
 import MaintenanceScreen from './src/screens/MaintenanceScreen';
 import UpdateRequiredScreen from './src/screens/UpdateRequiredScreen';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import NetworkStatusBar from './src/components/NetworkStatusBar';
 import { useAuthStore } from './src/stores/authStore';
 import { useMobileConfigStore } from './src/stores/mobileConfigStore';
 import { isForceUpdateRequired } from './src/utils/semver';
@@ -147,6 +148,7 @@ export default function App() {
         ) : (
           <LoginScreen />
         )}
+        {!showingSplash && <NetworkStatusBar />}
         <StatusBar hidden={true} style={showingSplash ? 'light' : (!token || isMaintenance ? 'light' : 'dark')} />
       </PaperProvider>
     </ErrorBoundary>

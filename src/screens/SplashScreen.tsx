@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -10,8 +10,7 @@ import {
 import { Text } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { SafeRemoteImage } from '../components/SafeRemoteImage';
-import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -20,14 +19,12 @@ interface SplashScreenProps {
   duration?: number;
 }
 
-export default function SplashScreen({ onFinish, duration = 2200 }: SplashScreenProps) {
-  const config = useMobileConfigStore((state) => state.config);
-  const branding = config.branding || {};
-  const logoUrl = branding.logo_url || branding.logo_login_url;
-
+export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreenProps) {
+  const insets = useSafeAreaInsets();
   const progressAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.92)).current;
+  const scaleAnim = useRef(new Animated.Value(0.94)).current;
+  const [progressPercent, setProgressPercent] = useState(0);
 
   useEffect(() => {
     // Entrance animations
@@ -39,11 +36,16 @@ export default function SplashScreen({ onFinish, duration = 2200 }: SplashScreen
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
-        friction: 7,
+        friction: 8,
         tension: 40,
         useNativeDriver: true,
       }),
     ]).start();
+
+    // Track percentage in real-time
+    const listenerId = progressAnim.addListener(({ value }) => {
+      setProgressPercent(Math.round(value * 100));
+    });
 
     // Progress bar animation
     let didFinish = false;
@@ -66,81 +68,32 @@ export default function SplashScreen({ onFinish, duration = 2200 }: SplashScreen
     // Unconditional safety timer to guarantee transition
     const safetyTimer = setTimeout(() => {
       triggerFinish();
-    }, duration + 100);
+    }, duration + 150);
 
     return () => {
+      progressAnim.removeListener(listenerId);
       clearTimeout(safetyTimer);
     };
-  }, [duration, onFinish]);
+  }, [duration, onFinish, progressAnim]);
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0%', '100%'],
   });
 
-  const appName = branding.app_name || 'SDIT 2';
-  const schoolName = branding.school_name || 'DAR EL-IMAN';
-  const tagline = (branding as any).tagline || 'Unggul dalam Iman,\nIlmu dan Akhlak';
-
   return (
     <LinearGradient
-      colors={['#08382A', '#05291E', '#021610']}
+      colors={['#10A368', '#0B8A4D', '#087340']}
       style={styles.container}
       start={{ x: 0.5, y: 0 }}
       end={{ x: 0.5, y: 1 }}
     >
-      {/* Background Islamic Ambient Glow */}
-      <View style={styles.topAmbientGlow} />
-      <View style={styles.centerAmbientGlow} />
+      {/* Soft Decorative Ambient Circles (Exact match to reference design) */}
+      <View style={styles.topRightDecorCircle} pointerEvents="none" />
+      <View style={styles.bottomLeftDecorCircle} pointerEvents="none" />
+      <View style={styles.midRightDecorDot} pointerEvents="none" />
 
-      {/* Mosque Silhouette at bottom */}
-      <View style={styles.mosqueContainer} pointerEvents="none">
-        {/* Ambient warm light behind mosque */}
-        <View style={styles.mosqueGoldenGlow} />
-        
-        {/* Architectural minarets & domes silhouette */}
-        <View style={styles.mosqueSilhouetteRow}>
-          {/* Left minaret */}
-          <View style={[styles.minaretCol, { left: 24 }]}>
-            <View style={styles.crescentSmall} />
-            <View style={styles.minaretSpire} />
-            <View style={styles.minaretBalcony} />
-            <View style={styles.minaretPillar} />
-          </View>
-
-          {/* Left small dome */}
-          <View style={[styles.smallDome, { left: 74 }]} />
-
-          {/* Center grand dome with crescent */}
-          <View style={styles.grandDomeWrapper}>
-            <MaterialCommunityIcons
-              name="moon-waning-crescent"
-              size={18}
-              color="rgba(229, 192, 123, 0.85)"
-              style={styles.grandCrescent}
-            />
-            <View style={styles.grandDomeSpire} />
-            <View style={styles.grandDome} />
-            <View style={styles.grandDomeBase} />
-          </View>
-
-          {/* Right small dome */}
-          <View style={[styles.smallDome, { right: 74 }]} />
-
-          {/* Right minaret */}
-          <View style={[styles.minaretCol, { right: 24 }]}>
-            <View style={styles.crescentSmall} />
-            <View style={styles.minaretSpire} />
-            <View style={styles.minaretBalcony} />
-            <View style={styles.minaretPillar} />
-          </View>
-        </View>
-
-        {/* Base foundation line */}
-        <View style={styles.mosqueBaseLine} />
-      </View>
-
-      {/* Main Content */}
+      {/* Center Branding Content */}
       <Animated.View
         style={[
           styles.content,
@@ -150,42 +103,53 @@ export default function SplashScreen({ onFinish, duration = 2200 }: SplashScreen
           },
         ]}
       >
-        {/* Circular Logo with golden halo */}
-        <View style={styles.logoHalo}>
-          <View style={styles.logoRingGold}>
-            <View style={styles.logoCircleInner}>
-              {logoUrl ? (
-                <SafeRemoteImage
-                  url={logoUrl}
-                  style={styles.logoImage}
-                  resizeMode="contain"
-                  alt={appName}
-                />
-              ) : (
-                <Image
-                  source={require('../../assets/logo.png')}
-                  style={styles.logoImage}
-                  resizeMode="contain"
-                />
-              )}
-            </View>
-          </View>
+        {/* White Rounded Card with Yayasan Dar el-Iman Logo */}
+        <View style={styles.logoCardOuter}>
+          <Image
+            source={require('../../assets/launcher_source.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
 
-        {/* Title */}
-        <Text style={styles.appNameText}>{appName}</Text>
-        <Text style={styles.schoolNameText}>{schoolName}</Text>
+        {/* Title & Organization Name */}
+        <Text style={styles.appNameText}>SIMSIT</Text>
+        <Text style={styles.subTitleText}>Sistem Manajemen Sekolah Terpadu</Text>
+        <Text style={styles.orgNameText}>Yayasan Dar el-Iman</Text>
 
-        {/* Tagline */}
-        <Text style={styles.taglineText}>{tagline}</Text>
+        {/* Value Tagline Pill Badge */}
+        <View style={styles.taglineBadge}>
+          <MaterialCommunityIcons
+            name="creation"
+            size={16}
+            color="#FFFFFF"
+            style={styles.taglineBadgeIcon}
+          />
+          <Text style={styles.taglineBadgeText}>
+            Islami · Pendidikan · Berkarakter
+          </Text>
+        </View>
       </Animated.View>
 
-      {/* Bottom Loading Indicator */}
-      <View style={styles.bottomLoaderSection}>
-        <Text style={styles.loadingText}>Memuat aplikasi...</Text>
+      {/* Bottom Loading Progress Section */}
+      <View
+        style={[
+          styles.bottomSection,
+          { paddingBottom: Math.max(insets.bottom, 24) },
+        ]}
+      >
+        <View style={styles.progressHeaderRow}>
+          <Text style={styles.loadingStatusText}>Memuat aplikasi...</Text>
+          <Text style={styles.percentText}>{progressPercent}%</Text>
+        </View>
+
+        {/* Progress Bar Track & Fill */}
         <View style={styles.progressTrack}>
           <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
         </View>
+
+        {/* App Version Info */}
+        <Text style={styles.versionText}>Versi 1.0.0</Text>
       </View>
     </LinearGradient>
   );
@@ -194,219 +158,144 @@ export default function SplashScreen({ onFinish, duration = 2200 }: SplashScreen
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  topAmbientGlow: {
+  // Decorative ambient circles
+  topRightDecorCircle: {
     position: 'absolute',
-    top: -60,
-    width: SCREEN_WIDTH * 0.9,
-    height: SCREEN_WIDTH * 0.9,
-    borderRadius: SCREEN_WIDTH * 0.45,
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    top: 50,
+    right: -80,
+    width: 330,
+    height: 330,
+    borderRadius: 165,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
-  centerAmbientGlow: {
+  bottomLeftDecorCircle: {
     position: 'absolute',
-    top: '32%',
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: 'rgba(212, 175, 55, 0.06)',
+    bottom: 150,
+    left: -90,
+    width: 270,
+    height: 270,
+    borderRadius: 135,
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
   },
-  mosqueContainer: {
+  midRightDecorDot: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 240,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  mosqueGoldenGlow: {
-    position: 'absolute',
-    bottom: 30,
-    width: SCREEN_WIDTH * 0.85,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
-    opacity: 0.8,
-  },
-  mosqueSilhouetteRow: {
-    width: '100%',
-    height: 140,
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  minaretCol: {
-    position: 'absolute',
-    bottom: 20,
-    alignItems: 'center',
-  },
-  crescentSmall: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(229, 192, 123, 0.8)',
-    marginBottom: 2,
-  },
-  minaretSpire: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderBottomWidth: 20,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#031710',
-  },
-  minaretBalcony: {
-    width: 18,
-    height: 6,
-    backgroundColor: '#031710',
-    borderRadius: 2,
-    marginTop: -1,
-  },
-  minaretPillar: {
-    width: 12,
-    height: 70,
-    backgroundColor: '#031710',
-  },
-  smallDome: {
-    position: 'absolute',
-    bottom: 20,
+    top: '64%',
+    right: 42,
     width: 44,
     height: 44,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    backgroundColor: '#031710',
-  },
-  grandDomeWrapper: {
-    position: 'absolute',
-    bottom: 20,
-    alignItems: 'center',
-  },
-  grandCrescent: {
-    marginBottom: -2,
-  },
-  grandDomeSpire: {
-    width: 3,
-    height: 12,
-    backgroundColor: 'rgba(229, 192, 123, 0.8)',
-  },
-  grandDome: {
-    width: 96,
-    height: 64,
-    borderTopLeftRadius: 48,
-    borderTopRightRadius: 48,
-    backgroundColor: '#031710',
-  },
-  grandDomeBase: {
-    width: 104,
-    height: 18,
-    backgroundColor: '#031710',
-  },
-  mosqueBaseLine: {
-    width: '100%',
-    height: 30,
-    backgroundColor: '#031710',
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   content: {
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-    zIndex: 10,
-    marginTop: -40,
+    paddingHorizontal: 24,
+    marginTop: -30,
   },
-  logoHalo: {
-    width: 146,
-    height: 146,
-    borderRadius: 73,
-    backgroundColor: 'rgba(13, 72, 55, 0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    shadowColor: '#10B981',
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-  },
-  logoRingGold: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    borderWidth: 2.5,
-    borderColor: '#E5C07B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#073325',
-  },
-  logoCircleInner: {
-    width: 116,
-    height: 116,
-    borderRadius: 58,
+  logoCardOuter: {
+    width: 176,
+    height: 176,
+    borderRadius: 48,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
-    padding: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
   },
   logoImage: {
-    width: 96,
-    height: 96,
+    width: 148,
+    height: 148,
   },
   appNameText: {
-    fontSize: 26,
+    fontSize: 34,
     fontWeight: '900',
     color: '#FFFFFF',
-    letterSpacing: 2,
-    marginTop: 24,
+    letterSpacing: 1.5,
+    marginTop: 26,
     textAlign: 'center',
-    textTransform: 'uppercase',
   },
-  schoolNameText: {
-    fontSize: 22,
+  subTitleText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.95)',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  orgNameText: {
+    fontSize: 14.5,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.88)',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  taglineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginTop: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+  },
+  taglineBadgeIcon: {
+    marginRight: 8,
+  },
+  taglineBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  // Bottom Progress Section
+  bottomSection: {
+    position: 'absolute',
+    bottom: 24,
+    left: 28,
+    right: 28,
+  },
+  progressHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    marginBottom: 8,
+  },
+  loadingStatusText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.92)',
+  },
+  percentText: {
+    fontSize: 16,
     fontWeight: '800',
     color: '#FFFFFF',
-    letterSpacing: 2.5,
-    marginTop: 2,
-    textAlign: 'center',
-    textTransform: 'uppercase',
-  },
-  taglineText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#9FE1CE',
-    lineHeight: 22,
-    marginTop: 14,
-    textAlign: 'center',
-    maxWidth: 260,
-  },
-  bottomLoaderSection: {
-    position: 'absolute',
-    bottom: 50,
-    alignItems: 'center',
-    zIndex: 20,
-  },
-  loadingText: {
-    fontSize: 12,
-    color: '#D1EAE2',
-    fontWeight: '600',
-    letterSpacing: 0.5,
-    marginBottom: 10,
   },
   progressTrack: {
-    width: 150,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    width: '100%',
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.26)',
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    borderRadius: 3,
-    backgroundColor: '#F59E0B',
+    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+  },
+  versionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.75)',
+    textAlign: 'center',
+    marginTop: 28,
   },
 });

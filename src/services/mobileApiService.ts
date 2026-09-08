@@ -67,6 +67,9 @@ export const mobileApiService = {
   markNotificationRead: async (id: string) => (
     await api.post(`/notifications/${id}/read`)
   ).data,
+  markAllNotificationsRead: async () => (
+    await api.post('/notifications/mark-all-read')
+  ).data,
 
   getProfile: async () => (await api.get('/auth/profile')).data,
   getManagedProfile: async () => (await api.get('/profile')).data,
@@ -217,6 +220,14 @@ export const mobileApiService = {
   getPortalDashboard: async (childId?: string) => (
     await api.get('/portal/dashboard', childRequest(childId))
   ).data,
+  getTodayLiveTimeline: async (childId?: string, date?: string) => {
+    const params: Record<string, string> = {};
+    if (childId) params.child_id = childId;
+    if (date) params.date = date;
+    const headers: Record<string, string> = {};
+    if (childId) headers['X-Child-Id'] = childId;
+    return (await api.get('/portal/today-live-timeline', { params, headers })).data;
+  },
   getPortalProfile: async (childId?: string) => (
     await api.get('/portal/profile', childRequest(childId))
   ).data,
@@ -226,14 +237,120 @@ export const mobileApiService = {
   getPortalAttendance: async (childId?: string) => (
     await api.get('/portal/attendance', childRequest(childId))
   ).data,
+  getPortalAttendanceQr: async (childId?: string) => (
+    await api.get('/portal/attendance-qr', childRequest(childId))
+  ).data,
+  getPortalPermissions: async (childId?: string) => (
+    await api.get('/portal/permissions', childRequest(childId))
+  ).data,
   getAcademicCalendar: async (params?: { range?: string; date?: string; child_id?: string }) => (
     await api.get('/portal/academic-calendar', { params })
   ).data,
   getPortalSchedules: async (params: { child_id?: string; date?: string; month?: string; academic_year?: string } = {}) => (
     await api.get('/portal/schedules', { params })
   ).data,
+  getPortalGrades: async (childId?: string) => (
+    await api.get('/portal/grades', childRequest(childId))
+  ).data,
+  getPortalStudentNotes: async (childId?: string, page = 1) => {
+    const childConfig = childRequest(childId);
+    return (await api.get('/portal/student-notes', {
+      ...(childConfig || {}),
+      params: { ...(childConfig?.params || {}), page },
+    })).data;
+  },
+  signPortalStudentNote: async (noteId: string, childId: string, followUp?: string) => (
+    await api.post(`/portal/student-notes/${noteId}/sign`, {
+      child_id: childId,
+      ...(followUp?.trim() ? { follow_up: followUp.trim() } : {}),
+    }, childRequest(childId))
+  ).data,
+  getPortalTahfizhAchievement: async (studentId: string) => (
+    await api.get(`/portal/children/${studentId}/tahfizh-achievement`)
+  ).data,
+  getPortalMutabaah: async (childId?: string, date?: string) => {
+    const childConfig = childRequest(childId);
+
+    return (await api.get('/portal/mutabaah', {
+      ...(childConfig || {}),
+      params: { ...(childConfig?.params || {}), ...(date ? { date } : {}) },
+    })).data;
+  },
+  getParentMutabaahOverview: async (studentId: string, date?: string) => (
+    await api.get(`/parent/mutabaah/${studentId}`, { params: date ? { date } : {} })
+  ).data,
+  getParentMutabaahHistory: async (studentId: string, params: Record<string, any> = {}) => (
+    await api.get(`/parent/mutabaah/${studentId}/history`, { params })
+  ).data,
+  submitParentMutabaahSignature: async (dailyHeaderId: string, payload: { signature_status: string; comment?: string; pin?: string }) => (
+    await api.post(`/parent/mutabaah/${dailyHeaderId}/signature`, payload)
+  ).data,
+  getParentWorshipInputContext: async (studentId: string, date?: string) => (
+    await api.get(`/portal/children/${studentId}/worship-input`, { params: date ? { date } : {} })
+  ).data,
+  submitParentWorshipInput: async (studentId: string, payload: { date: string; items: any[] }) => (
+    await api.post(`/portal/children/${studentId}/worship-input`, payload)
+  ).data,
   getPortalMaterials: async (params: Record<string, any> = {}) => (
     await api.get('/portal/materials', { params })
+  ).data,
+  getPortalTahfizh: async (params: Record<string, any> = {}) => (
+    await api.get('/portal/tahfizh', { params })
+  ).data,
+  getPortalExamGrids: async (childId?: string, params: Record<string, any> = {}) => {
+    const childConfig = childRequest(childId);
+    return (
+      await api.get('/portal/exam-grids', {
+        ...(childConfig || {}),
+        params: { ...(childConfig?.params || {}), ...params },
+      })
+    ).data;
+  },
+  getPortalCbtExams: async (childId?: string) => {
+    const childConfig = childRequest(childId);
+    return (
+      await api.get('/portal/lms/exams', {
+        ...(childConfig || {}),
+      })
+    ).data;
+  },
+  startPortalCbtExam: async (examId: string) => (
+    await api.post(`/portal/lms/exams/${examId}/start`)
+  ).data,
+  savePortalCbtAnswers: async (sessionId: string, answers: any[]) => (
+    await api.post(`/portal/lms/exam-sessions/${sessionId}/answers`, { jawaban: answers })
+  ).data,
+  finishPortalCbtExam: async (sessionId: string, answers?: any[]) => (
+    await api.post(`/portal/lms/exam-sessions/${sessionId}/finish`, { ...(answers ? { jawaban: answers } : {}) })
+  ).data,
+  submitPortalMurajaah: async (payload: {
+    student_id: string;
+    surah_number: number;
+    ayat_start: number;
+    ayat_end: number;
+    record_date: string;
+    record_time?: string;
+    murajaah_lembar?: number;
+    notes_parent?: string;
+  }) => (
+    await api.post('/portal/tahfizh/murajaah', payload)
+  ).data,
+  getQuranSurahs: async (search?: string, tempatTurun?: string) => (
+    await api.get('/equran/surah', {
+      params: {
+        ...(search ? { search } : {}),
+        ...(tempatTurun ? { tempat_turun: tempatTurun } : {}),
+      },
+    })
+  ).data,
+  getQuranSurahDetail: async (surahNumber: number | string) => (
+    await api.get(`/equran/surah/${surahNumber}`)
+  ).data,
+  getDoaList: async (params: { search?: string; grup?: string; tag?: string } = {}) => (
+    await api.get('/doa', { params })
+  ).data,
+  getDoaDetail: async (id: number | string) => (
+    await api.get(`/doa/${id}`)
   ).data,
   getPortalSchoolInformation: async (params: Record<string, any> = {}) => (
     await api.get('/portal/school-information', { params })
@@ -257,8 +374,8 @@ export const mobileApiService = {
   getPortalAssignments: async (params: Record<string, any> = {}) => (
     await api.get('/portal/assignments', { params })
   ).data,
-  submitPortalAssignment: async (assignmentId: string, jawaban_teks: string) => (
-    await api.post(`/portal/assignments/${assignmentId}/submit`, { jawaban_teks })
+  submitPortalAssignment: async (assignmentId: string, jawaban_teks: string, childId?: string) => (
+    await api.post(`/portal/assignments/${assignmentId}/submit`, { jawaban_teks, child_id: childId })
   ).data,
 
   // Communication
@@ -268,9 +385,31 @@ export const mobileApiService = {
   getChatMessages: async (teacherId: string, childId?: string) => (
     await api.get(`/portal/chat/${teacherId}`, childRequest(childId))
   ).data,
-  sendChatMessage: async (teacherId: string, childId: string, message: string) => (
-    await api.post(`/portal/chat/${teacherId}`, { child_id: childId, message })
-  ).data,
+  sendChatMessage: async (
+    teacherId: string,
+    childId: string,
+    message: string,
+    attachment?: { uri: string; name: string; type: string } | null
+  ) => {
+    if (attachment) {
+      const formData = new FormData();
+      formData.append('child_id', childId);
+      if (message) formData.append('message', message);
+      formData.append('attachment', {
+        uri: attachment.uri,
+        name: attachment.name,
+        type: attachment.type,
+      } as any);
+      return (
+        await api.post(`/portal/chat/${teacherId}`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (
+      await api.post(`/portal/chat/${teacherId}`, { child_id: childId, message })
+    ).data;
+  },
 
   // Existing curriculum and tahfizh integrations
   submitTahfizh: async (payload: TahfizhPayload) => (
@@ -299,5 +438,10 @@ export const mobileApiService = {
   ).data,
   submitLmsTugas: async (penugasanId: string, payload: Record<string, unknown>) => (
     await api.post(`/lms/penugasan/${penugasanId}/submit`, payload)
+  ).data,
+
+  // Prayer assessment (62 Daily Prayers)
+  getParentPrayerAssessment: async (studentId: string) => (
+    await api.get(`/parent/children/${studentId}/prayer-assessment`)
   ).data,
 };

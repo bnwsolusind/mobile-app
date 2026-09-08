@@ -3,12 +3,12 @@ import {
   ActivityIndicator,
   Dimensions,
   Image,
+  Modal,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -18,20 +18,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { isParentRole } from '../utils/roles';
-import { getProfileImageUrl } from '../utils/profile';
+import {
+  getProfileImageUrl,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+} from '../utils/profile';
+import { offlineCache } from '../utils/offlineCache';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type Child = Record<string, any>;
 type ScheduleItem = Record<string, any>;
-
-const RANGES = [
-  { id: 'today', label: 'Hari Ini', icon: 'calendar-today' },
-  { id: 'weekly', label: 'Jadwal Mingguan', icon: 'calendar-week' },
-  { id: 'monthly', label: 'Bulanan', icon: 'calendar-month' },
-  { id: 'semester', label: 'Semester', icon: 'school' },
-  { id: 'academic_year', label: 'Tahun Ajaran', icon: 'calendar-range' },
-];
 
 const MONTH_NAMES = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -53,7 +50,80 @@ const formatIndonesianDate = (d: Date): string => {
   return `${dayName}, ${dayNum} ${monthName} ${year}`;
 };
 
-export default function ScheduleScreen({ route, navigation }: any) {
+// Helper: Dapatkan tanggal Senin dari minggu yang mengandung tanggal d
+const getMonday = (d: Date): Date => {
+  const date = new Date(d);
+  const day = date.getDay();
+  // Jika Minggu (0), maju ke Senin berikutnya; jika Sabtu (6), mundur ke Senin sebelumnya
+  const diff = day === 0 ? 1 : day === 6 ? -5 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date;
+};
+
+const getSubjectStyle = (name: string = '', index: number) => {
+  const n = name.toLowerCase();
+  if (n.includes('apel') || n.includes('upacara') || n.includes('senam')) {
+    return {
+      bg: '#E6FFFA',
+      color: '#0D9488',
+      icon: 'bullhorn-outline',
+    };
+  }
+  if (n.includes('matematika') || n.includes('hitung') || n.includes('aljabar')) {
+    return {
+      bg: '#EFF6FF',
+      color: '#2563EB',
+      icon: 'file-document-outline',
+    };
+  }
+  if (n.includes('bahasa') || n.includes('indonesia') || n.includes('inggris') || n.includes('arab') || n.includes('literasi')) {
+    return {
+      bg: '#FFE4E6',
+      color: '#E11D48',
+      icon: 'book-open-variant',
+    };
+  }
+  if (n.includes('ipa') || n.includes('sains') || n.includes('biologi') || n.includes('fisika') || n.includes('kimia')) {
+    return {
+      bg: '#E0F2FE',
+      color: '#0284C7',
+      icon: 'flask-outline',
+    };
+  }
+  if (n.includes('ips') || n.includes('sosial') || n.includes('sejarah') || n.includes('geografi')) {
+    return {
+      bg: '#EFF6FF',
+      color: '#2563EB',
+      icon: 'file-document-outline',
+    };
+  }
+  if (n.includes('agama') || n.includes('islam') || n.includes('pai') || n.includes('fiqih') || n.includes('akidah')) {
+    return {
+      bg: '#E8F5E9',
+      color: '#16A34A',
+      icon: 'home-roof',
+    };
+  }
+  if (n.includes('tahfizh') || n.includes('quran') || n.includes('hadits')) {
+    return {
+      bg: '#E8F5E9',
+      color: '#16A34A',
+      icon: 'book-open-page-variant',
+    };
+  }
+  const palettes = [
+    { bg: '#E6FFFA', color: '#0D9488', icon: 'bullhorn-outline' },
+    { bg: '#EFF6FF', color: '#2563EB', icon: 'file-document-outline' },
+    { bg: '#FFE4E6', color: '#E11D48', icon: 'book-open-variant' },
+    { bg: '#E0F2FE', color: '#0284C7', icon: 'flask-outline' },
+    { bg: '#E8F5E9', color: '#16A34A', icon: 'home-roof' },
+    { bg: '#FEF3C7', color: '#D97706', icon: 'school-outline' },
+    { bg: '#F3E8FF', color: '#9333EA', icon: 'palette-outline' },
+  ];
+  return palettes[index % palettes.length];
+};
+
+export default function ScheduleScreen({ route }: any) {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 16);
 
@@ -66,7 +136,7 @@ export default function ScheduleScreen({ route, navigation }: any) {
 
   const handleStudentScrollEnd = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 32 + 12;
+    const cardWidth = SCREEN_WIDTH - 50 + 12;
     const index = Math.round(offsetX / cardWidth);
     if (index >= 0 && index < children.length) {
       const targetChild = children[index];
@@ -79,39 +149,46 @@ export default function ScheduleScreen({ route, navigation }: any) {
   const selectChildWithScroll = (childId: string, index: number) => {
     setSelectedChildId(childId);
     studentScrollRef.current?.scrollTo({
-      x: index * (SCREEN_WIDTH - 32 + 12),
+      x: index * (SCREEN_WIDTH - 50 + 12),
       animated: true,
     });
   };
 
-  // Date selection states
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date('2026-09-03'));
-  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
-  const [selectedMonthIndex, setSelectedMonthIndex] = useState<number>(8); // September (0-indexed = 8)
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
-  const [selectedSemester, setSelectedSemester] = useState<'ganjil' | 'genap'>('ganjil');
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('2026/2027');
+  // Date selection state: dimulai dari hari ini
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedScheduleDetail, setSelectedScheduleDetail] = useState<ScheduleItem | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [scheduleData, setScheduleData] = useState<any>(null);
 
-  const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'monthly' | 'semester' | 'academic_year'>('today');
-  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay() || 4);
-  const [searchQuery, setSearchQuery] = useState<string>('');
-
   // 1. Load Children if parent
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
+      const targetChildId = route?.params?.child_id;
+      const childCacheKey = offlineCache.buildKey('schedule_children', user?.id);
+      void (async () => {
+        const cached = await offlineCache.get<Child[]>(childCacheKey);
+        if (cached && isMounted && cached.length > 0) {
+          const filteredCached = targetChildId
+            ? cached.filter((c) => String(c.id) === String(targetChildId))
+            : cached;
+          setChildren(filteredCached.length > 0 ? filteredCached : cached);
+          setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => (!prev ? String(cached[0].id) : prev)));
+        }
+      })();
+
       mobileApiService.getPortalChildren()
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
-          if (isMounted) {
-            setChildren(arr);
-            if (!selectedChildId && arr.length > 0) {
-              setSelectedChildId(String(arr[0].id));
-            }
+          if (isMounted && arr.length > 0) {
+            const filteredArr = targetChildId
+              ? arr.filter((c) => String(c.id) === String(targetChildId))
+              : arr;
+            setChildren(filteredArr.length > 0 ? filteredArr : arr);
+            setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => (!prev ? String(arr[0].id) : prev)));
+            void offlineCache.set(childCacheKey, arr);
           }
         })
         .catch(() => {});
@@ -119,146 +196,105 @@ export default function ScheduleScreen({ route, navigation }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent]);
+  }, [isParent, user?.id, route?.params?.child_id]);
 
-  // 2. Load schedules from backend API with date parameter
-  const loadSchedules = useCallback(async () => {
+  const hasLoadedRef = useRef<boolean>(false);
+
+  // 2. Load schedules from backend API with date parameter & offline cache
+  const loadSchedules = useCallback(async (showSpinner = false) => {
+    const dateStr = formatDateISO(selectedDate);
+    const cacheKey = offlineCache.buildKey('schedule', user?.id, `${selectedChildId || 'self'}_${dateStr}`);
+
+    // Baca cache dulu agar tampil instan
+    const cached = await offlineCache.get<any>(cacheKey);
+    if (cached) {
+      setScheduleData(cached);
+      if (!hasLoadedRef.current) setLoading(false);
+    } else if (showSpinner) {
+      setLoading(true);
+    }
+
     try {
-      const dateStr = formatDateISO(selectedDate);
       const res = await mobileApiService.getPortalSchedules({
         child_id: selectedChildId,
         date: dateStr,
       });
       const data = unwrapApiData<any>(res) || {};
       setScheduleData(data);
+      void offlineCache.set(cacheKey, data);
     } catch {
-      setScheduleData(null);
+      // Jika offline dan belum ada cache, set empty object bukan crash
+      if (!cached) {
+        setScheduleData(null);
+      }
+    } finally {
+      setLoading(false);
+      hasLoadedRef.current = true;
     }
-  }, [selectedChildId, selectedDate]);
-
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    await loadSchedules();
-    setLoading(false);
-  }, [loadSchedules]);
+  }, [selectedChildId, selectedDate, user?.id]);
 
   useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+    void loadSchedules(!hasLoadedRef.current);
+  }, [loadSchedules]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadSchedules();
+    await loadSchedules(false);
     setRefreshing(false);
   };
 
-  // Quick date change helper
-  const changeDateByDays = (deltaDays: number) => {
-    const newDate = new Date(selectedDate);
-    newDate.setDate(newDate.getDate() + deltaDays);
-    setSelectedDate(newDate);
-  };
-
-  const resetToToday = () => {
-    setSelectedDate(new Date('2026-09-03'));
-  };
-
-  // Recent 7 dates strip for fast date switching
-  const dateStrip = useMemo(() => {
-    const dates = [];
-    const base = new Date('2026-09-03');
-    for (let i = -4; i <= 2; i++) {
-      const d = new Date(base);
-      d.setDate(base.getDate() + i);
-      const isSel = formatDateISO(d) === formatDateISO(selectedDate);
-      const isTod = formatDateISO(d) === '2026-09-03';
-      const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-      dates.push({
-        dateObj: d,
-        iso: formatDateISO(d),
-        dayName: days[d.getDay()],
+  // 5 day pill strip — dinamis berdasarkan minggu yang mengandung selectedDate
+  const weekDays = useMemo(() => {
+    const selISO = formatDateISO(selectedDate);
+    const DAY_NAMES_SHORT = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+    const DAY_NAMES_FULL  = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const MONTH_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    // Senin minggu ini
+    const monday = getMonday(selectedDate);
+    // Buat array 5 hari kerja (Senin–Jumat)
+    return Array.from({ length: 5 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const iso = formatDateISO(d);
+      const dotw = d.getDay(); // 1=Sen, 2=Sel, ..., 5=Jum
+      return {
+        dayName: DAY_NAMES_SHORT[dotw],
         dayNum: d.getDate(),
-        monthShort: MONTH_NAMES[d.getMonth()].slice(0, 3),
-        isSelected: isSel,
-        isToday: isTod,
-      });
-    }
-    return dates;
+        monthShort: MONTH_SHORT[d.getMonth()],
+        iso,
+        fullDay: DAY_NAMES_FULL[dotw],
+        dayOfWeek: dotw,
+        dateStr: `${d.getDate()} ${MONTH_SHORT[d.getMonth()]}`,
+        isSelected: iso === selISO,
+        dateObj: d,
+      };
+    });
   }, [selectedDate]);
 
-  const kpi = scheduleData?.kpi || {
-    today_count: 8,
-    weekly_count: 41,
-    subject_count: 18,
-    teacher_count: 21,
-  };
+  const formattedSelectedDate = useMemo(() => formatIndonesianDate(selectedDate), [selectedDate]);
 
-  const todaySchedules: ScheduleItem[] = useMemo(() => {
-    return Array.isArray(scheduleData?.today_schedules) ? scheduleData.today_schedules : [];
-  }, [scheduleData]);
+  // Jadwal dari backend saja — tidak ada fallback ke data dummy
+  const displaySchedules: ScheduleItem[] = useMemo(() => {
+    const targetDayOfWeek = selectedDate.getDay(); // 1=Sen, 2=Sel, ..., 5=Jum
 
-  const weeklySchedules: ScheduleItem[] = useMemo(() => {
-    return Array.isArray(scheduleData?.weekly_schedules)
-      ? scheduleData.weekly_schedules
-      : Array.isArray(scheduleData?.all_schedules)
-      ? scheduleData.all_schedules
-      : [];
-  }, [scheduleData]);
-
-  const weekDates = useMemo(() => {
-    if (Array.isArray(scheduleData?.week_dates) && scheduleData.week_dates.length > 0) {
-      return scheduleData.week_dates;
+    if (Array.isArray(scheduleData?.all_schedules) && scheduleData.all_schedules.length > 0) {
+      const dayItems = scheduleData.all_schedules.filter(
+        (s: any) => Number(s.day_of_week) === targetDayOfWeek
+      );
+      if (dayItems.length > 0) return dayItems;
     }
-    // Fallback static week dates
-    return [
-      { day_id: 1, day_name: 'Senin', date: '2026-08-31', date_short: '31 Agu' },
-      { day_id: 2, day_name: 'Selasa', date: '2026-09-01', date_short: '1 Sep' },
-      { day_id: 3, day_name: 'Rabu', date: '2026-09-02', date_short: '2 Sep' },
-      { day_id: 4, day_name: 'Kamis', date: '2026-09-03', date_short: '3 Sep' },
-      { day_id: 5, day_name: 'Jumat', date: '2026-09-04', date_short: '4 Sep' },
-      { day_id: 6, day_name: 'Sabtu', date: '2026-09-05', date_short: '5 Sep' },
-    ];
-  }, [scheduleData]);
-
-  const filteredWeeklySchedules = useMemo(() => {
-    return weeklySchedules.filter((item) => {
-      const dayMatch = item.day_of_week === selectedDay;
-      const q = searchQuery.toLowerCase().trim();
-      const subjectName = (item.subject?.name || '').toLowerCase();
-      const teacherName = (item.teacher?.name || '').toLowerCase();
-      const searchMatch = !q || subjectName.includes(q) || teacherName.includes(q);
-      return dayMatch && searchMatch;
-    });
-  }, [weeklySchedules, selectedDay, searchQuery]);
-
-  // Subject distribution
-  const subjectDistribution = useMemo(() => {
-    const counts: Record<string, number> = {};
-    weeklySchedules.forEach((s) => {
-      const name = s.subject?.name || 'Mata Pelajaran';
-      counts[name] = (counts[name] || 0) + 1;
-    });
-    return Object.entries(counts).map(([name, count]) => ({
-      name,
-      weekly: count,
-      monthly: count * 4,
-      semester: count * 20,
-      year: count * 40,
-    }));
-  }, [weeklySchedules]);
-
-  const formattedSelectedDate = useMemo(() => {
-    return formatIndonesianDate(selectedDate);
-  }, [selectedDate]);
-
-  const isSelectedDateToday = formatDateISO(selectedDate) === '2026-09-03';
-  const isSelectedDatePast = formatDateISO(selectedDate) < '2026-09-03';
+    if (Array.isArray(scheduleData?.today_schedules) && scheduleData.today_schedules.length > 0) {
+      return scheduleData.today_schedules;
+    }
+    // Tidak ada data dari backend → kembalikan array kosong (tampilkan empty state)
+    return [];
+  }, [scheduleData, selectedDate]);
 
   return (
     <View style={styles.rootContainer}>
       <View style={styles.sheetContainer}>
         <LinearGradient
-          colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
+          colors={['#FFFFFF', '#F4FAF7', '#EAF7F0']}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFill}
@@ -271,96 +307,151 @@ export default function ScheduleScreen({ route, navigation }: any) {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
           }
         >
-          {/* 1. CONTAINER DATA SISWA & UNIT PENDIDIKAN */}
+          {/* 1. CONTAINER DATA SISWA & UNIT PENDIDIKAN (PRESERVED AS-IS) */}
           {children.length > 0 ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Siswa & Unit Pendidikan</Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>Data Ananda</Text>
+                </View>
+                {children.length > 1 && (
+                  <View style={styles.studentCardCountBadge}>
+                    <Text style={styles.studentCardCountBadgeText}>
+                      {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
+                    </Text>
+                  </View>
+                )}
               </View>
 
               <ScrollView
                 ref={studentScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 32 + 12}
+                snapToInterval={SCREEN_WIDTH - 50 + 12}
                 decelerationRate="fast"
                 onMomentumScrollEnd={handleStudentScrollEnd}
-                onScrollEndDrag={handleStudentScrollEnd}
+                style={styles.heroCardScrollContainer}
                 contentContainerStyle={styles.heroCardScroll}
               >
                 {children.map((child, idx) => {
                   const isSelected = String(child.id) === selectedChildId;
                   const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
                   const unitTitle = child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || '';
-                  const avatarUri =
-                    getProfileImageUrl(child) ||
-                    `https://ui-avatars.com/api/?name=${encodeURIComponent(childFullName)}&background=${isSelected ? 'FFFFFF' : '18A165'}&color=${isSelected ? '18A165' : 'FFFFFF'}&bold=true&size=128`;
+                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
+                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
+                  const avatarUri = getProfileImageUrl(child);
 
                   return (
                     <TouchableOpacity
                       key={String(child.id)}
                       activeOpacity={0.88}
                       onPress={() => selectChildWithScroll(String(child.id), idx)}
-                      style={[styles.childCardHeroSize, isSelected && styles.childCardHeroSizeActive]}
                     >
-                      <View style={styles.childHeroTopRow}>
-                        <View style={[styles.avatarBorderWrapHero, isSelected && styles.avatarBorderWrapHeroActive]}>
-                          <Image
-                            source={{ uri: avatarUri }}
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        </View>
-                        <View style={{ flex: 1, marginLeft: 14 }}>
-                          <View style={styles.childHeroTitleRow}>
-                            <Text numberOfLines={1} style={[styles.childNameHero, isSelected && styles.childTextActive]}>
-                              {childFullName}
-                            </Text>
-                            <View style={[styles.childStatusBadgeHero, isSelected && styles.childStatusBadgeHeroActive]}>
-                              <MaterialCommunityIcons
-                                name={isSelected ? 'check-circle' : 'gesture-tap'}
-                                size={12}
-                                color={isSelected ? '#FFFFFF' : '#059669'}
+                      <LinearGradient
+                        colors={['#0D6B42', '#18A165', '#2BD988']}
+                        locations={[0, 0.55, 1]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
+                      >
+                        <View style={styles.cardDecorCircle} />
+
+                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Selection Button */}
+                        <View style={styles.childHeroTopRow}>
+                          <View style={styles.avatarBorderWrapHero}>
+                            {avatarUri ? (
+                              <Image
+                                source={{ uri: avatarUri }}
+                                style={styles.childAvatarImgHero}
+                                resizeMode="cover"
                               />
-                              <Text style={[styles.childStatusBadgeTextHero, isSelected && styles.childStatusBadgeTextHeroActive]}>
-                                {isSelected ? 'Terpilih' : 'Pilih'}
+                            ) : (
+                              <Image
+                                source={
+                                  child?.gender === 'female' ||
+                                  child?.jenis_kelamin === 'P' ||
+                                  child?.jenis_kelamin === 'female' ||
+                                  child?.gender === 'P'
+                                    ? DEFAULT_STUDENT_GIRL_AVATAR
+                                    : DEFAULT_STUDENT_BOY_AVATAR
+                                }
+                                style={styles.childAvatarImgHero}
+                                resizeMode="cover"
+                              />
+                            )}
+                          </View>
+                          <View style={styles.childInfoCol}>
+                            <View style={styles.studentNameBadgeRow}>
+                              <Text numberOfLines={1} style={styles.studentFullName}>
+                                {childFullName}
+                              </Text>
+                            </View>
+                            <Text style={styles.studentNisText}>
+                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
+                            </Text>
+                            <View style={styles.studentUnitBadge}>
+                              <MaterialCommunityIcons
+                                name="school"
+                                size={11}
+                                color="#FFFFFF"
+                                style={{ marginRight: 4 }}
+                              />
+                              <Text numberOfLines={1} style={styles.studentUnitText}>
+                                {unitTitle}
                               </Text>
                             </View>
                           </View>
-                          <Text numberOfLines={1} style={[styles.childClassHero, isSelected && styles.childTextActive]}>
-                            {className ? `${className} · ${unitTitle}` : unitTitle}
-                          </Text>
-                          <Text style={[styles.childSubInfoHero, isSelected && styles.childSubInfoHeroActive]}>
-                            {child.nis ? `NIS: ${child.nis} · ` : ''}Siswa Aktif Terdaftar
-                          </Text>
-                        </View>
-                      </View>
 
-                      <View style={[styles.childCardBottomBar, isSelected && styles.childCardBottomBarActive]}>
-                        <View style={[styles.childInfoPill, isSelected && styles.childInfoPillActive]}>
-                          <MaterialCommunityIcons
-                            name="school-outline"
-                            size={12}
-                            color={isSelected ? '#FFFFFF' : '#18A165'}
-                          />
-                          <Text numberOfLines={1} style={[styles.childInfoPillText, isSelected && styles.childTextActive]}>
-                            {unitTitle}
-                          </Text>
+                          {/* Right Action Button */}
+                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
+                            <MaterialCommunityIcons
+                              name={isSelected ? 'check-circle' : 'gesture-tap'}
+                              size={16}
+                              color={isSelected ? '#18A165' : '#FFFFFF'}
+                            />
+                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
+                              {isSelected ? 'Terpilih' : 'Pilih'}
+                            </Text>
+                          </View>
                         </View>
 
-                        <View style={[styles.childInfoPill, isSelected && styles.childInfoPillActive]}>
-                          <MaterialCommunityIcons
-                            name="badge-account-outline"
-                            size={12}
-                            color={isSelected ? '#FFFFFF' : '#18A165'}
-                          />
-                          <Text numberOfLines={1} style={[styles.childInfoPillText, isSelected && styles.childTextActive]}>
-                            {child.nis ? `NIS: ${child.nis}` : 'Terdaftar Aktif'}
-                          </Text>
+                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
+                        <View style={styles.studentAttributesGrid}>
+                          <View style={styles.studentAttrBox}>
+                            <View style={styles.studentAttrLabelRow}>
+                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                              <Text style={styles.studentAttrLabel}>Kelas</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.studentAttrValue}>
+                              {className}
+                            </Text>
+                          </View>
+                          <View style={styles.studentAttrDivider} />
+                          <View style={styles.studentAttrBox}>
+                            <View style={styles.studentAttrLabelRow}>
+                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.studentAttrValue}>
+                              {jenjang}
+                            </Text>
+                          </View>
+                          <View style={styles.studentAttrDivider} />
+                          <View style={styles.studentAttrBox}>
+                            <View style={styles.studentAttrLabelRow}>
+                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                              <Text style={styles.studentAttrLabel}>Presensi</Text>
+                            </View>
+                            <View style={styles.studentPresensiValueRow}>
+                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
+                                Hadir
+                              </Text>
+                              <View style={styles.presensiGreenDot} />
+                            </View>
+                          </View>
                         </View>
-                      </View>
+                      </LinearGradient>
                     </TouchableOpacity>
                   );
                 })}
@@ -388,835 +479,382 @@ export default function ScheduleScreen({ route, navigation }: any) {
           ) : scheduleData?.student ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Siswa & Unit Pendidikan</Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>Data Ananda</Text>
+                </View>
               </View>
 
               {(() => {
                 const s = scheduleData.student;
-                const studentName = s.name || 'Siswa Aktif';
-                const studentClass = s.class || '';
-                const studentUnit = s.unit || '';
-                const avatarUri =
-                  getProfileImageUrl(s) ||
-                  `https://ui-avatars.com/api/?name=${encodeURIComponent(studentName)}&background=FFFFFF&color=18A165&bold=true&size=128`;
+                const studentName = s.name || s.full_name || s.nama_lengkap || 'Siswa Aktif';
+                const studentClass = s.class || s.class_name || s.kelas?.nama_kelas || 'Kelas Belum Ditentukan';
+                const studentUnit = s.unit || s.unit_name || s.education_unit?.name || 'Unit Pendidikan';
+                const jenjang = s.kelas?.jenjang || s.education_unit?.level || 'Terpadu';
+                const avatarUri = getProfileImageUrl(s);
 
                 return (
-                  <View style={[styles.childCardHeroSize, styles.childCardHeroSizeActive]}>
+                  <LinearGradient
+                    colors={['#0D6B42', '#18A165', '#2BD988']}
+                    locations={[0, 0.55, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.childCardHeroSizeSingle}
+                  >
+                    <View style={styles.cardDecorCircle} />
+
                     <View style={styles.childHeroTopRow}>
-                      <View style={[styles.avatarBorderWrapHero, styles.avatarBorderWrapHeroActive]}>
-                        <Image
-                          source={{ uri: avatarUri }}
-                          style={styles.childAvatarImgHero}
-                          resizeMode="cover"
-                        />
+                      <View style={styles.avatarBorderWrapHero}>
+                        {avatarUri ? (
+                          <Image
+                            source={{ uri: avatarUri }}
+                            style={styles.childAvatarImgHero}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <Image
+                            source={
+                              s?.gender === 'female' ||
+                              s?.jenis_kelamin === 'P' ||
+                              s?.jenis_kelamin === 'female' ||
+                              s?.gender === 'P'
+                                ? DEFAULT_STUDENT_GIRL_AVATAR
+                                : DEFAULT_STUDENT_BOY_AVATAR
+                            }
+                            style={styles.childAvatarImgHero}
+                            resizeMode="cover"
+                          />
+                        )}
                       </View>
-                      <View style={{ flex: 1, marginLeft: 14 }}>
-                        <View style={styles.childHeroTitleRow}>
-                          <Text numberOfLines={1} style={[styles.childNameHero, styles.childTextActive]}>
+                      <View style={styles.childInfoCol}>
+                        <View style={styles.studentNameBadgeRow}>
+                          <Text numberOfLines={1} style={styles.studentFullName}>
                             {studentName}
                           </Text>
-                          <View style={[styles.childStatusBadgeHero, styles.childStatusBadgeHeroActive]}>
-                            <MaterialCommunityIcons name="check-circle" size={12} color="#FFFFFF" />
-                            <Text style={[styles.childStatusBadgeTextHero, styles.childStatusBadgeTextHeroActive]}>
-                              Siswa
-                            </Text>
-                          </View>
                         </View>
-                        <Text numberOfLines={1} style={[styles.childClassHero, styles.childTextActive]}>
-                          {studentClass ? `${studentClass} · ${studentUnit}` : (studentUnit || 'Siswa Terdaftar')}
+                        <Text style={styles.studentNisText}>
+                          NIS: {s.nis || '-'} {s.nisn ? `· NISN: ${s.nisn}` : ''}
                         </Text>
-                        <Text style={[styles.childSubInfoHero, styles.childSubInfoHeroActive]}>
-                          {s.nis ? `NIS: ${s.nis} · ` : ''}Jadwal Pelajaran Aktif
-                        </Text>
+                        <View style={styles.studentUnitBadge}>
+                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text numberOfLines={1} style={styles.studentUnitText}>
+                            {studentUnit}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.selectedActionBtnRight}>
+                        <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
+                        <Text style={styles.selectedActionBtnText}>Siswa</Text>
                       </View>
                     </View>
 
-                    <View style={[styles.childCardBottomBar, styles.childCardBottomBarActive]}>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="school-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          {studentUnit || 'Unit Sekolah'}
-                        </Text>
+                    <View style={styles.studentAttributesGrid}>
+                      <View style={styles.studentAttrBox}>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Kelas</Text>
+                        </View>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>{studentClass}</Text>
                       </View>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="badge-account-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          {s.nis ? `NIS: ${s.nis}` : 'Terdaftar Aktif'}
-                        </Text>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
+                        </View>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>{jenjang}</Text>
+                      </View>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <View style={styles.studentAttrLabelRow}>
+                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                          <Text style={styles.studentAttrLabel}>Presensi</Text>
+                        </View>
+                        <View style={styles.studentPresensiValueRow}>
+                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
+                          <View style={styles.presensiGreenDot} />
+                        </View>
                       </View>
                     </View>
-                  </View>
+                  </LinearGradient>
                 );
               })()}
             </View>
           ) : user ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Pengguna & Unit Pendidikan</Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>Data Pengguna & Unit</Text>
+                </View>
               </View>
 
               {(() => {
-                const u = user as any;
-                const userName = String(u?.name || u?.full_name || u?.nama_lengkap || 'Pengguna');
-                const userRole = typeof u?.role === 'string' ? u.role : (Array.isArray(u?.roles) && u.roles[0] ? String(u.roles[0]) : 'Siswa');
-                const unitTitle = String(u?.unit_name || u?.education_unit?.name || 'Sistem Sekolah Terpadu');
-                const idLabel = String(u?.nis || u?.username || 'Pengguna Aktif');
-                const avatarUri =
-                  getProfileImageUrl(u) ||
-                  `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=FFFFFF&color=18A165&bold=true&size=128`;
+                const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
+                const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
+                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || "Mahad Abu Ja'far");
+                const avatarUri = getProfileImageUrl(user);
 
                 return (
-                  <View style={[styles.childCardHeroSize, styles.childCardHeroSizeActive]}>
+                  <LinearGradient
+                    colors={['#0D6B42', '#18A165', '#2BD988']}
+                    locations={[0, 0.55, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.childCardHeroSizeSingle}
+                  >
+                    <View style={styles.cardDecorCircle} />
+
                     <View style={styles.childHeroTopRow}>
-                      <View style={[styles.avatarBorderWrapHero, styles.avatarBorderWrapHeroActive]}>
-                        <Image
-                          source={{ uri: avatarUri }}
-                          style={styles.childAvatarImgHero}
-                          resizeMode="cover"
-                        />
+                      <View style={styles.avatarBorderWrapHero}>
+                        {avatarUri ? (
+                          <Image
+                            source={{ uri: avatarUri }}
+                            style={styles.childAvatarImgHero}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
+                        )}
                       </View>
-                      <View style={{ flex: 1, marginLeft: 14 }}>
-                        <View style={styles.childHeroTitleRow}>
-                          <Text numberOfLines={1} style={[styles.childNameHero, styles.childTextActive]}>
-                            {userName}
+                      <View style={styles.childInfoCol}>
+                        <Text numberOfLines={1} style={styles.childNameHero}>
+                          {userName}
+                        </Text>
+                        <Text style={styles.childSubInfoHero}>
+                          Status: {userRole}
+                        </Text>
+                        <View style={styles.studentUnitBadge}>
+                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text numberOfLines={1} style={styles.studentUnitText}>
+                            {userUnit}
                           </Text>
-                          <View style={[styles.childStatusBadgeHero, styles.childStatusBadgeHeroActive]}>
-                            <MaterialCommunityIcons name="check-circle" size={12} color="#FFFFFF" />
-                            <Text style={[styles.childStatusBadgeTextHero, styles.childStatusBadgeTextHeroActive]}>
-                              {userRole}
-                            </Text>
-                          </View>
                         </View>
-                        <Text numberOfLines={1} style={[styles.childClassHero, styles.childTextActive]}>
-                          {unitTitle}
-                        </Text>
-                        <Text style={[styles.childSubInfoHero, styles.childSubInfoHeroActive]}>
-                          Jadwal Pelajaran Terpadu
-                        </Text>
+                      </View>
+
+                      <View style={styles.selectedActionBtnRight}>
+                        <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
+                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
                       </View>
                     </View>
 
-                    <View style={[styles.childCardBottomBar, styles.childCardBottomBarActive]}>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="school-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          {unitTitle}
-                        </Text>
+                    <View style={styles.studentAttributesGrid}>
+                      <View style={styles.studentAttrBox}>
+                        <Text style={styles.studentAttrLabel}>Peran</Text>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>{userRole}</Text>
                       </View>
-                      <View style={[styles.childInfoPill, styles.childInfoPillActive]}>
-                        <MaterialCommunityIcons name="badge-account-outline" size={12} color="#FFFFFF" />
-                        <Text style={[styles.childInfoPillText, styles.childTextActive]}>
-                          {idLabel}
-                        </Text>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <Text style={styles.studentAttrLabel}>Akses</Text>
+                        <Text numberOfLines={1} style={styles.studentAttrValue}>Resmi</Text>
+                      </View>
+                      <View style={styles.studentAttrDivider} />
+                      <View style={styles.studentAttrBox}>
+                        <Text style={styles.studentAttrLabel}>Presensi</Text>
+                        <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
                       </View>
                     </View>
-                  </View>
+                  </LinearGradient>
                 );
               })()}
             </View>
           ) : null}
 
-          {/* 2. 4 KPI SUMMARY CARDS */}
-          <View style={styles.containerBlock}>
-            <View style={styles.sectionHeaderRow}>
-              <MaterialCommunityIcons name="chart-box-outline" size={18} color="#18A165" />
-              <Text style={styles.sectionTitle}>Ringkasan Jadwal Pelajaran</Text>
-            </View>
-
-            <View style={styles.kpiGrid}>
-              <View style={styles.kpiCard}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconBox, { backgroundColor: '#ECFDF5' }]}>
-                    <MaterialCommunityIcons name="calendar-clock" size={20} color="#18A165" />
-                  </View>
-                  <Text style={styles.kpiNumber}>{kpi.today_count}</Text>
-                </View>
-                <Text style={styles.kpiTitle}>Pelajaran Hari Ini</Text>
-                <Text style={styles.kpiSubtitle}>Jadwal aktif hari ini</Text>
-              </View>
-
-              <View style={styles.kpiCard}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconBox, { backgroundColor: '#EFF6FF' }]}>
-                    <MaterialCommunityIcons name="clock-outline" size={20} color="#2563EB" />
-                  </View>
-                  <Text style={styles.kpiNumber}>{kpi.weekly_count}</Text>
-                </View>
-                <Text style={styles.kpiTitle}>Total Sesi Mingguan</Text>
-                <Text style={styles.kpiSubtitle}>Alokasi jam pelajaran</Text>
-              </View>
-
-              <View style={styles.kpiCard}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconBox, { backgroundColor: '#FEF3C7' }]}>
-                    <MaterialCommunityIcons name="book-open-page-variant" size={20} color="#D97706" />
-                  </View>
-                  <Text style={styles.kpiNumber}>{kpi.subject_count}</Text>
-                </View>
-                <Text style={styles.kpiTitle}>Mata Pelajaran</Text>
-                <Text style={styles.kpiSubtitle}>Pelajaran semester ini</Text>
-              </View>
-
-              <View style={styles.kpiCard}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconBox, { backgroundColor: '#F3E8FF' }]}>
-                    <MaterialCommunityIcons name="account-tie" size={20} color="#7C3AED" />
-                  </View>
-                  <Text style={styles.kpiNumber}>{kpi.teacher_count}</Text>
-                </View>
-                <Text style={styles.kpiTitle}>Guru Pengampu</Text>
-                <Text style={styles.kpiSubtitle}>Tim tenaga pendidik</Text>
-              </View>
-            </View>
+          {/* 2. DAY SELECTOR ROW (5 PILLS: SEN, SEL, RAB, KAM, JUM) */}
+          <View style={styles.dayStripRow}>
+            {weekDays.map((item) => {
+              const isSel = item.isSelected;
+              return (
+                <TouchableOpacity
+                  key={item.iso}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedDate(item.dateObj)}
+                  style={[styles.dayPillBtn, isSel && styles.dayPillBtnActive]}
+                >
+                  {isSel && (
+                    <LinearGradient
+                      colors={['#0D6B42', '#18A165']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  )}
+                  <Text style={[styles.dayPillName, isSel && styles.dayPillNameActive]}>
+                    {item.dayName}
+                  </Text>
+                  <Text style={[styles.dayPillDate, isSel && styles.dayPillDateActive]}>
+                    {item.dateStr}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
-          {/* 3. WORKSPACE CONTAINER WITH 5 RANGES */}
-          <View style={styles.containerBlock}>
-            <View style={styles.sectionHeaderRow}>
-              <MaterialCommunityIcons name="calendar-clock-outline" size={18} color="#18A165" />
-              <Text style={styles.sectionTitle}>Jadwal Pelajaran & Sesi Belajar</Text>
-            </View>
+          {/* 3. DATE TITLE HEADER ROW */}
+          <View style={styles.dateHeaderRow}>
+            <MaterialCommunityIcons name="calendar-month" size={24} color="#18A165" />
+            <Text style={styles.dateHeaderTitle}>{formattedSelectedDate}</Text>
+          </View>
 
-            <View style={styles.workspaceCard}>
-            {/* 5 RANGES SELECTOR TABS */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.rangeScroll}
-            >
-              {RANGES.map((rng) => {
-                const isActive = activeTab === rng.id;
+          {/* 4. CLEAN SCHEDULE CARDS LIST */}
+          {loading ? (
+            <ActivityIndicator color="#18A165" style={{ marginVertical: 32 }} />
+          ) : displaySchedules.length > 0 ? (
+            <View style={styles.scheduleListCol}>
+              {displaySchedules.map((item, idx) => {
+                const styleMeta = getSubjectStyle(item.subject?.name, idx);
+                const rawTime = item.time_display || (item.time_start && item.time_end ? `${item.time_start.slice(0, 5)} - ${item.time_end.slice(0, 5)}` : '08.00 - 09.00');
+                const timeText = rawTime.replace(/:/g, '.');
+                const teacherName = item.teacher?.name;
+                const roomName = item.room;
+
                 return (
                   <TouchableOpacity
-                    key={rng.id}
-                    activeOpacity={0.8}
-                    onPress={() => setActiveTab(rng.id as any)}
-                    style={[styles.rangeBtn, isActive && styles.rangeBtnActive]}
+                    key={item.id || idx}
+                    activeOpacity={0.85}
+                    onPress={() => setSelectedScheduleDetail(item)}
+                    style={styles.cleanScheduleCard}
                   >
-                    <MaterialCommunityIcons
-                      name={rng.icon as any}
-                      size={15}
-                      color={isActive ? '#FFFFFF' : '#475569'}
-                    />
-                    <Text style={[styles.rangeBtnText, isActive && styles.rangeBtnTextActive]}>
-                      {rng.label}
-                    </Text>
+                    {/* Left Column: Time Range */}
+                    <View style={styles.cardTimeCol}>
+                      <Text style={styles.cardTimeText}>{timeText}</Text>
+                    </View>
+
+                    {/* Middle: Pastel Squircle Icon */}
+                    <View style={[styles.cardIconBox, { backgroundColor: styleMeta.bg }]}>
+                      <MaterialCommunityIcons name={styleMeta.icon as any} size={22} color={styleMeta.color} />
+                    </View>
+
+                    {/* Middle-Right: Subject Title & Teacher/Room */}
+                    <View style={styles.cardInfoCol}>
+                      <Text numberOfLines={1} style={styles.cardSubjectTitle}>
+                        {item.subject?.name || 'Mata Pelajaran'}
+                      </Text>
+                      {teacherName ? (
+                        <Text numberOfLines={1} style={styles.cardTeacherText}>
+                          {teacherName}
+                        </Text>
+                      ) : null}
+                      {roomName ? (
+                        <Text numberOfLines={1} style={styles.cardRoomText}>
+                          {roomName}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {/* Right: Chevron */}
+                    <MaterialCommunityIcons name="chevron-right" size={20} color="#94A3B8" />
                   </TouchableOpacity>
                 );
               })}
-            </ScrollView>
-
-            {/* RANGE 1: HARI INI DENGAN NAVIGATOR TANGGAL & RIWAYAT SEBELUMNYA */}
-            {activeTab === 'today' && (
-              <View style={styles.tabContentArea}>
-                {/* DATE NAVIGATOR HEADER */}
-                <View style={styles.dateNavigatorCard}>
-                  <View style={styles.dateNavRow}>
-                    <TouchableOpacity
-                      onPress={() => changeDateByDays(-1)}
-                      style={styles.navArrowBtn}
-                      accessibilityLabel="Tanggal sebelumnya"
-                    >
-                      <MaterialCommunityIcons name="chevron-left" size={24} color="#0F172A" />
-                    </TouchableOpacity>
-
-                    <View style={styles.dateInfoCenter}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <MaterialCommunityIcons name="calendar-month" size={16} color="#18A165" />
-                        <Text style={styles.dateNavTitle}>{formattedSelectedDate}</Text>
-                      </View>
-                      <View style={styles.dateBadgeRow}>
-                        {isSelectedDateToday ? (
-                          <View style={styles.todayBadge}>
-                            <Text style={styles.todayBadgeText}>HARI INI</Text>
-                          </View>
-                        ) : isSelectedDatePast ? (
-                          <View style={styles.historyBadge}>
-                            <Text style={styles.historyBadgeText}>RIWAYAT TANGGAL</Text>
-                          </View>
-                        ) : (
-                          <View style={styles.futureBadge}>
-                            <Text style={styles.futureBadgeText}>MENDATANG</Text>
-                          </View>
-                        )}
-                        <Text style={styles.dateSubMeta}>
-                          {todaySchedules.length} Sesi Terjadwal
-                        </Text>
-                      </View>
-                    </View>
-
-                    <TouchableOpacity
-                      onPress={() => changeDateByDays(1)}
-                      style={styles.navArrowBtn}
-                      accessibilityLabel="Tanggal berikutnya"
-                    >
-                      <MaterialCommunityIcons name="chevron-right" size={24} color="#0F172A" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* FAST DATE SWITCH STRIP (RIWAYAT CEPAT TANGGAL) */}
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.dateStripScroll}
-                  >
-                    {dateStrip.map((item) => (
-                      <TouchableOpacity
-                        key={item.iso}
-                        onPress={() => setSelectedDate(item.dateObj)}
-                        style={[
-                          styles.dateStripItem,
-                          item.isSelected && styles.dateStripItemActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.dateStripDayText,
-                            item.isSelected && styles.dateStripTextActive,
-                          ]}
-                        >
-                          {item.dayName}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dateStripNumText,
-                            item.isSelected && styles.dateStripTextActive,
-                          ]}
-                        >
-                          {item.dayNum}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dateStripMonthText,
-                            item.isSelected && styles.dateStripTextActive,
-                          ]}
-                        >
-                          {item.monthShort}
-                        </Text>
-                        {item.isToday && !item.isSelected && (
-                          <View style={styles.todayDot} />
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-
-                  {!isSelectedDateToday && (
-                    <TouchableOpacity
-                      onPress={resetToToday}
-                      style={styles.resetTodayBtn}
-                    >
-                      <MaterialCommunityIcons name="calendar-arrow-right" size={14} color="#18A165" />
-                      <Text style={styles.resetTodayBtnText}>Kembali ke Hari Ini (3 Sep 2026)</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {loading ? (
-                  <ActivityIndicator color="#18A165" style={{ marginVertical: 32 }} />
-                ) : todaySchedules.length > 0 ? (
-                  <View style={styles.timelineContainer}>
-                    <View style={styles.timelineVerticalLine} />
-
-                    {todaySchedules.map((item, idx) => {
-                      const isPast = item.is_past;
-                      const isOngoing = item.is_ongoing;
-
-                      const nodeColor = isPast ? '#EF4444' : isOngoing ? '#10B981' : '#64748B';
-                      const nodeBg = isPast ? '#FEE2E2' : isOngoing ? '#D1FAE5' : '#F1F5F9';
-                      const nodeIcon = isPast ? 'check-bold' : isOngoing ? 'play' : 'clock-outline';
-
-                      return (
-                        <View key={item.id || idx} style={styles.timelineNodeWrapper}>
-                          <View style={[styles.milestoneNode, { backgroundColor: nodeBg, borderColor: nodeColor }]}>
-                            <MaterialCommunityIcons name={nodeIcon} size={12} color={nodeColor} />
-                          </View>
-
-                          <View
-                            style={[
-                              styles.scheduleItemCard,
-                              isPast && styles.scheduleItemCardPast,
-                              isOngoing && styles.scheduleItemCardOngoing,
-                            ]}
-                          >
-                            {/* LESSON DATE & TIME ROW */}
-                            <View style={styles.lessonDateRow}>
-                              <View style={styles.lessonDateBadge}>
-                                <MaterialCommunityIcons name="calendar-range" size={11} color="#065F46" />
-                                <Text style={styles.lessonDateText}>
-                                  {item.date_formatted || formattedSelectedDate}
-                                </Text>
-                              </View>
-
-                              {isPast ? (
-                                <View style={styles.pastBadge}>
-                                  <MaterialCommunityIcons name="check-circle" size={11} color="#DC2626" />
-                                  <Text style={styles.pastBadgeText}>Selesai</Text>
-                                </View>
-                              ) : isOngoing ? (
-                                <View style={styles.ongoingBadge}>
-                                  <MaterialCommunityIcons name="broadcast" size={11} color="#15803D" />
-                                  <Text style={styles.ongoingBadgeText}>Sedang Berlangsung</Text>
-                                </View>
-                              ) : (
-                                <View style={styles.upcomingBadge}>
-                                  <Text style={styles.upcomingBadgeText}>Akan Datang</Text>
-                                </View>
-                              )}
-                            </View>
-
-                            <View style={styles.itemTopRow}>
-                              <View style={styles.timeTag}>
-                                <MaterialCommunityIcons name="clock-outline" size={13} color="#18A165" />
-                                <Text style={styles.timeTagText}>
-                                  {item.time_start} - {item.time_end}
-                                </Text>
-                              </View>
-
-                              <View style={styles.roomTag}>
-                                <Text style={styles.roomTagText}>{item.room || 'Ruang Kelas'}</Text>
-                              </View>
-                            </View>
-
-                            <Text style={styles.itemSubjectName}>
-                              {item.subject?.name || 'Mata Pelajaran'}
-                            </Text>
-
-                            <View style={styles.teacherRow}>
-                              <MaterialCommunityIcons name="account-tie" size={14} color="#18A165" />
-                              <Text style={styles.teacherText}>
-                                Guru: <Text style={styles.teacherBold}>{item.teacher?.name || 'Guru Pengampu'}</Text>
-                              </Text>
-                            </View>
-
-                            {/* ATTENDANCE RECORD ON THIS LESSON */}
-                            <View style={styles.attendanceBox}>
-                              <View style={styles.attendanceLeft}>
-                                <Text style={styles.attendanceTitle}>Presensi Siswa ({formattedSelectedDate.split(',')[0]}):</Text>
-                                {item.attendance ? (
-                                  <View style={styles.attendanceStatusRow}>
-                                    <View
-                                      style={[
-                                        styles.attendancePill,
-                                        item.attendance.status === 'hadir'
-                                          ? styles.attHadir
-                                          : item.attendance.status === 'izin'
-                                          ? styles.attIzin
-                                          : item.attendance.status === 'sakit'
-                                          ? styles.attSakit
-                                          : styles.attAlpa,
-                                      ]}
-                                    >
-                                      <MaterialCommunityIcons
-                                        name={
-                                          item.attendance.status === 'hadir'
-                                            ? 'check-decagram'
-                                            : item.attendance.status === 'izin'
-                                            ? 'file-document'
-                                            : 'alert-circle'
-                                        }
-                                        size={12}
-                                        color={
-                                          item.attendance.status === 'hadir'
-                                            ? '#059669'
-                                            : item.attendance.status === 'izin'
-                                            ? '#2563EB'
-                                            : '#D97706'
-                                        }
-                                      />
-                                      <Text
-                                        style={[
-                                          styles.attendancePillText,
-                                          item.attendance.status === 'hadir'
-                                            ? styles.attHadirText
-                                            : item.attendance.status === 'izin'
-                                            ? styles.attIzinText
-                                            : styles.attSakitText,
-                                        ]}
-                                      >
-                                        {item.attendance.status_label || 'Hadir'}
-                                      </Text>
-                                    </View>
-                                    {item.attendance.recorded_at && (
-                                      <Text style={styles.attendanceTimeText}>
-                                        {item.attendance.recorded_at} WIB
-                                      </Text>
-                                    )}
-                                  </View>
-                                ) : (
-                                  <View style={styles.attendanceStatusRow}>
-                                    <View style={styles.attNonePill}>
-                                      <Text style={styles.attNoneText}>
-                                        {isPast ? 'Tidak Tercatat' : 'Menunggu Presensi Guru'}
-                                      </Text>
-                                    </View>
-                                  </View>
-                                )}
-                              </View>
-
-                              {item.attendance?.keterangan && (
-                                <Text numberOfLines={1} style={styles.attendanceNotes}>
-                                  Catatan: {item.attendance.keterangan}
-                                </Text>
-                              )}
-                            </View>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : (
-                  <View style={styles.emptyContainer}>
-                    <MaterialCommunityIcons name="calendar-blank-outline" size={44} color="#94A3B8" />
-                    <Text style={styles.emptyTitle}>Tidak Ada Jadwal pada Tanggal Ini</Text>
-                    <Text style={styles.emptyText}>Tidak ada mata pelajaran yang terjadwal untuk {formattedSelectedDate}.</Text>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* RANGE 2: JADWAL MINGGUAN (DENGAN TANGGAL PEKAN SENIN S/D SABTU) */}
-            {activeTab === 'weekly' && (
-              <View style={styles.tabContentArea}>
-                <View style={styles.rangeBanner}>
-                  <MaterialCommunityIcons name="calendar-week" size={22} color="#18A165" />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.rangeBannerTitle}>Pekan 1 September 2026</Text>
-                    <Text style={styles.rangeBannerDesc}>
-                      Rentang tanggal 31 Agu s/d 05 Sep 2026 · Total 41 Sesi Pelajaran
-                    </Text>
-                  </View>
-                </View>
-
-                {/* DAY FILTER WITH DATE TAGS */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.dayFilterScroll}
-                >
-                  {weekDates.map((dayItem: any) => {
-                    const isSelected = selectedDay === dayItem.day_id;
-                    return (
-                      <TouchableOpacity
-                        key={dayItem.day_id}
-                        activeOpacity={0.8}
-                        onPress={() => setSelectedDay(dayItem.day_id)}
-                        style={[styles.dayFilterBtnWithDate, isSelected && styles.dayFilterBtnActive]}
-                      >
-                        <Text style={[styles.dayFilterBtnText, isSelected && styles.dayFilterBtnTextActive]}>
-                          {dayItem.day_name}
-                        </Text>
-                        <Text style={[styles.dayFilterBtnDateSub, isSelected && styles.dayFilterBtnDateSubActive]}>
-                          {dayItem.date_short}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                <View style={styles.searchBox}>
-                  <MaterialCommunityIcons name="magnify" size={18} color="#94A3B8" />
-                  <TextInput
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    placeholder="Cari pelajaran / guru..."
-                    placeholderTextColor="#94A3B8"
-                    style={styles.searchInput}
-                  />
-                  {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchQuery('')}>
-                      <MaterialCommunityIcons name="close-circle" size={16} color="#94A3B8" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                <View style={{ marginTop: 12, gap: 10 }}>
-                  {filteredWeeklySchedules.length > 0 ? (
-                    filteredWeeklySchedules.map((item, idx) => {
-                      const curDayInfo = weekDates.find((w: any) => w.day_id === item.day_of_week);
-                      return (
-                        <View key={item.id || idx} style={styles.weeklyCard}>
-                          <View style={styles.lessonDateRow}>
-                            <View style={styles.lessonDateBadge}>
-                              <MaterialCommunityIcons name="calendar" size={11} color="#065F46" />
-                              <Text style={styles.lessonDateText}>
-                                {curDayInfo?.date_formatted || curDayInfo?.day_name || 'Jadwal Mingguan'}
-                              </Text>
-                            </View>
-                            <View style={styles.roomTag}>
-                              <Text style={styles.roomTagText}>{item.room || 'Ruang Kelas'}</Text>
-                            </View>
-                          </View>
-
-                          <View style={styles.itemTopRow}>
-                            <View style={styles.timeTag}>
-                              <MaterialCommunityIcons name="clock-outline" size={12} color="#18A165" />
-                              <Text style={styles.timeTagText}>
-                                {item.time_start} - {item.time_end}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <Text style={styles.itemSubjectName}>
-                            {item.subject?.name || 'Mata Pelajaran'}
-                          </Text>
-
-                          <View style={styles.teacherRow}>
-                            <MaterialCommunityIcons name="account-tie" size={13} color="#18A165" />
-                            <Text style={styles.teacherText}>
-                              Guru: <Text style={styles.teacherBold}>{item.teacher?.name || 'Guru Pengampu'}</Text>
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })
-                  ) : (
-                    <View style={styles.emptyContainer}>
-                      <MaterialCommunityIcons name="calendar-search" size={40} color="#94A3B8" />
-                      <Text style={styles.emptyTitle}>Tidak Ditemukan Jadwal</Text>
-                      <Text style={styles.emptyText}>Tidak ada jadwal pada hari ini yang cocok.</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            )}
-
-            {/* RANGE 3: BULANAN DENGAN NAVIGASI BULAN */}
-            {activeTab === 'monthly' && (
-              <View style={styles.tabContentArea}>
-                <View style={styles.periodSelectorBar}>
-                  <TouchableOpacity
-                    onPress={() => setSelectedMonthIndex((prev) => (prev > 0 ? prev - 1 : 11))}
-                    style={styles.periodNavBtn}
-                  >
-                    <MaterialCommunityIcons name="chevron-left" size={20} color="#0F172A" />
-                  </TouchableOpacity>
-
-                  <View style={{ alignItems: 'center' }}>
-                    <Text style={styles.periodSelectorTitle}>
-                      {MONTH_NAMES[selectedMonthIndex]} {selectedYear}
-                    </Text>
-                    <Text style={styles.periodSelectorSub}>
-                      1 - {new Date(selectedYear, selectedMonthIndex + 1, 0).getDate()} {MONTH_NAMES[selectedMonthIndex]} {selectedYear}
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity
-                    onPress={() => setSelectedMonthIndex((prev) => (prev < 11 ? prev + 1 : 0))}
-                    style={styles.periodNavBtn}
-                  >
-                    <MaterialCommunityIcons name="chevron-right" size={20} color="#0F172A" />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.rangeBanner}>
-                  <MaterialCommunityIcons name="calendar-month-outline" size={22} color="#18A165" />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.rangeBannerTitle}>Alokasi Jadwal Bulan {MONTH_NAMES[selectedMonthIndex]}</Text>
-                    <Text style={styles.rangeBannerDesc}>
-                      Estimasi 4 pekan efektif pembelajaran (164 jam pelajaran)
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={{ gap: 10 }}>
-                  {subjectDistribution.map((item, idx) => (
-                    <View key={idx} style={styles.distributionCard}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.distributionTitle}>{item.name}</Text>
-                        <Text style={styles.distributionSub}>
-                          {item.weekly} JP / minggu · Total {item.monthly} JP / bulan
-                        </Text>
-                      </View>
-                      <View style={styles.jpBadge}>
-                        <Text style={styles.jpBadgeText}>{item.monthly} JP</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* RANGE 4: SEMESTER DENGAN PILIHAN SEMESTER & RENTANG TANGGAL */}
-            {activeTab === 'semester' && (
-              <View style={styles.tabContentArea}>
-                <View style={styles.semesterToggleRow}>
-                  <TouchableOpacity
-                    onPress={() => setSelectedSemester('ganjil')}
-                    style={[
-                      styles.semesterToggleBtn,
-                      selectedSemester === 'ganjil' && styles.semesterToggleBtnActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.semesterToggleText,
-                        selectedSemester === 'ganjil' && styles.semesterToggleTextActive,
-                      ]}
-                    >
-                      Semester Ganjil
-                    </Text>
-                    <Text
-                      style={[
-                        styles.semesterToggleSub,
-                        selectedSemester === 'ganjil' && styles.semesterToggleTextActive,
-                      ]}
-                    >
-                      Juli - Des 2026
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setSelectedSemester('genap')}
-                    style={[
-                      styles.semesterToggleBtn,
-                      selectedSemester === 'genap' && styles.semesterToggleBtnActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.semesterToggleText,
-                        selectedSemester === 'genap' && styles.semesterToggleTextActive,
-                      ]}
-                    >
-                      Semester Genap
-                    </Text>
-                    <Text
-                      style={[
-                        styles.semesterToggleSub,
-                        selectedSemester === 'genap' && styles.semesterToggleTextActive,
-                      ]}
-                    >
-                      Jan - Jun 2027
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={[styles.rangeBanner, { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' }]}>
-                  <MaterialCommunityIcons name="school" size={22} color="#2563EB" />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={[styles.rangeBannerTitle, { color: '#1E3A8A' }]}>
-                      Beban Belajar {selectedSemester === 'ganjil' ? 'Semester Ganjil' : 'Semester Genap'}
-                    </Text>
-                    <Text style={styles.rangeBannerDesc}>
-                      {selectedSemester === 'ganjil' ? '14 Juli 2026 - 19 Des 2026' : '05 Jan 2027 - 18 Jun 2027'} · 20 Pekan (820 JP)
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={{ gap: 10 }}>
-                  {subjectDistribution.map((item, idx) => (
-                    <View key={idx} style={styles.distributionCard}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.distributionTitle}>{item.name}</Text>
-                        <Text style={styles.distributionSub}>
-                          Beban semester: {item.semester} Jam Pelajaran ({item.weekly} JP/pekan)
-                        </Text>
-                      </View>
-                      <View style={[styles.jpBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                        <Text style={[styles.jpBadgeText, { color: '#2563EB' }]}>{item.semester} JP</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* RANGE 5: TAHUN AJARAN DENGAN PILIHAN TAHUN & RENTANG TANGGAL */}
-            {activeTab === 'academic_year' && (
-              <View style={styles.tabContentArea}>
-                <View style={styles.periodSelectorBar}>
-                  <TouchableOpacity
-                    onPress={() => setSelectedAcademicYear('2025/2026')}
-                    style={[
-                      styles.academicYearChip,
-                      selectedAcademicYear === '2025/2026' && styles.academicYearChipActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.academicYearChipText,
-                        selectedAcademicYear === '2025/2026' && styles.academicYearChipTextActive,
-                      ]}
-                    >
-                      T.A. 2025/2026 (Arsip)
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setSelectedAcademicYear('2026/2027')}
-                    style={[
-                      styles.academicYearChip,
-                      selectedAcademicYear === '2026/2027' && styles.academicYearChipActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.academicYearChipText,
-                        selectedAcademicYear === '2026/2027' && styles.academicYearChipTextActive,
-                      ]}
-                    >
-                      T.A. 2026/2027 (Aktif)
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={[styles.rangeBanner, { borderColor: '#FDE68A', backgroundColor: '#FFFBEB' }]}>
-                  <MaterialCommunityIcons name="calendar-range" size={22} color="#D97706" />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={[styles.rangeBannerTitle, { color: '#92400E' }]}>
-                      Tahun Ajaran {selectedAcademicYear}
-                    </Text>
-                    <Text style={styles.rangeBannerDesc}>
-                      Rentang: Juli {selectedAcademicYear.split('/')[0]} s/d Juni {selectedAcademicYear.split('/')[1]} · Total 1.640 JP
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={{ gap: 12 }}>
-                  <View style={styles.semesterBlock}>
-                    <View style={styles.semesterBlockHeader}>
-                      <Text style={styles.semesterBlockTitle}>Semester Ganjil</Text>
-                      <Text style={styles.semesterBlockBadge}>14 Jul - 19 Des {selectedAcademicYear.split('/')[0]}</Text>
-                    </View>
-                    <Text style={styles.semesterBlockText}>
-                      20 Pekan Efektif Pembelajaran · Total 820 JP & Asesmen Sumatif
-                    </Text>
-                  </View>
-
-                  <View style={styles.semesterBlock}>
-                    <View style={styles.semesterBlockHeader}>
-                      <Text style={styles.semesterBlockTitle}>Semester Genap</Text>
-                      <Text style={styles.semesterBlockBadge}>05 Jan - 18 Jun {selectedAcademicYear.split('/')[1]}</Text>
-                    </View>
-                    <Text style={styles.semesterBlockText}>
-                      20 Pekan Efektif Pembelajaran · Total 820 JP & Ujian Kenaikan Kelas
-                    </Text>
-                  </View>
-
-                  <View style={styles.annualSummaryCard}>
-                    <Text style={styles.annualSummaryTitle}>Struktur Kurikulum Terpadu:</Text>
-                    <View style={styles.annualRow}>
-                      <Text style={styles.annualLabel}>Total Pekan Efektif:</Text>
-                      <Text style={styles.annualVal}>40 Pekan</Text>
-                    </View>
-                    <View style={styles.annualRow}>
-                      <Text style={styles.annualLabel}>Total Hari Efektif Belajar:</Text>
-                      <Text style={styles.annualVal}>240 Hari</Text>
-                    </View>
-                    <View style={styles.annualRow}>
-                      <Text style={styles.annualLabel}>Total Alokasi Jam Belajar:</Text>
-                      <Text style={[styles.annualVal, { color: '#18A165' }]}>1.640 JP</Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            )}
             </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <MaterialCommunityIcons name="calendar-blank-outline" size={44} color="#94A3B8" />
+              <Text style={styles.emptyTitle}>Tidak Ada Jadwal pada Tanggal Ini</Text>
+              <Text style={styles.emptyText}>Tidak ada mata pelajaran yang terjadwal untuk {formattedSelectedDate}.</Text>
+            </View>
+          )}
+
+          {/* 5. BOTTOM NOTICE BANNER */}
+          <View style={styles.bottomNoticeBanner}>
+            <MaterialCommunityIcons name="shield-check" size={18} color="#18A165" />
+            <Text style={styles.bottomNoticeText}>Jadwal dapat berubah sewaktu-waktu.</Text>
           </View>
         </ScrollView>
       </View>
+
+      {/* SCHEDULE DETAIL MODAL */}
+      <Modal
+        visible={!!selectedScheduleDetail}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedScheduleDetail(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setSelectedScheduleDetail(null)}
+          />
+          <View style={styles.modalCard}>
+            {selectedScheduleDetail && (
+              <>
+                <View style={styles.modalHeaderRow}>
+                  <View style={[styles.modalIconBox, { backgroundColor: getSubjectStyle(selectedScheduleDetail.subject?.name, 0).bg }]}>
+                    <MaterialCommunityIcons
+                      name={getSubjectStyle(selectedScheduleDetail.subject?.name, 0).icon as any}
+                      size={24}
+                      color={getSubjectStyle(selectedScheduleDetail.subject?.name, 0).color}
+                    />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.modalSubjectTitle}>
+                      {selectedScheduleDetail.subject?.name || 'Mata Pelajaran'}
+                    </Text>
+                    <Text style={styles.modalSubjectCode}>
+                      {selectedScheduleDetail.subject?.code ? `Kode: ${selectedScheduleDetail.subject.code}` : 'Kurikulum Terpadu'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setSelectedScheduleDetail(null)}
+                    style={styles.modalCloseBtn}
+                  >
+                    <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.modalDivider} />
+
+                <View style={styles.modalBodyRows}>
+                  <View style={styles.modalDetailRow}>
+                    <MaterialCommunityIcons name="clock-outline" size={18} color="#18A165" />
+                    <Text style={styles.modalDetailLabel}>Waktu:</Text>
+                    <Text style={styles.modalDetailValue}>
+                      {selectedScheduleDetail.time_display?.replace(/:/g, '.') || '08.00 - 09.00'} WIB
+                    </Text>
+                  </View>
+
+                  {selectedScheduleDetail.teacher?.name ? (
+                    <View style={styles.modalDetailRow}>
+                      <MaterialCommunityIcons name="account-tie-outline" size={18} color="#18A165" />
+                      <Text style={styles.modalDetailLabel}>Guru:</Text>
+                      <Text style={styles.modalDetailValue}>{selectedScheduleDetail.teacher.name}</Text>
+                    </View>
+                  ) : null}
+
+                  {selectedScheduleDetail.room ? (
+                    <View style={styles.modalDetailRow}>
+                      <MaterialCommunityIcons name="map-marker-outline" size={18} color="#18A165" />
+                      <Text style={styles.modalDetailLabel}>Ruangan:</Text>
+                      <Text style={styles.modalDetailValue}>{selectedScheduleDetail.room}</Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.modalDetailRow}>
+                    <MaterialCommunityIcons name="check-decagram-outline" size={18} color="#18A165" />
+                    <Text style={styles.modalDetailLabel}>Presensi:</Text>
+                    <View style={styles.modalPresensiBadge}>
+                      <Text style={styles.modalPresensiText}>
+                        {selectedScheduleDetail.attendance?.status_label || 'Terjadwal'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setSelectedScheduleDetail(null)}
+                  style={styles.modalActionBtn}
+                >
+                  <Text style={styles.modalActionBtnText}>Tutup</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1231,16 +869,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   screen: { flex: 1, backgroundColor: 'transparent' },
-  content: { padding: 16, paddingTop: Platform.OS === 'android' ? 20 : 16 },
+  content: { padding: 16, paddingTop: Platform.OS === 'android' ? 16 : 12 },
+
+  // DATA ANANDA (CARD ANANDA - PRESERVED UNCHANGED)
   studentContainerBlock: {
     marginBottom: 8,
-  },
-  childrenSection: {
-    marginBottom: 14,
-  },
-  childrenScroll: {
-    gap: 10,
-    paddingRight: 10,
   },
   containerBlock: {
     marginBottom: 16,
@@ -1248,992 +881,420 @@ const styles = StyleSheet.create({
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'space-between',
     marginBottom: 10,
+  },
+  sectionHeaderTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   sectionTitle: {
     fontSize: 13.5,
     fontWeight: '900',
     color: '#0F172A',
   },
+  studentCardCountBadge: {
+    backgroundColor: '#EBF8F2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  studentCardCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#084835',
+  },
+  heroCardScrollContainer: {
+    marginHorizontal: -16,
+  },
   heroCardScroll: {
+    paddingHorizontal: 16,
     gap: 12,
-    paddingRight: 10,
+    paddingBottom: 4,
   },
   childCardHeroSize: {
-    width: SCREEN_WIDTH - 32,
+    width: SCREEN_WIDTH - 50,
     minHeight: 148,
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#18A165',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+    borderRadius: 22,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    shadowColor: '#0D6B42',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+    overflow: 'hidden',
+    position: 'relative',
   },
-  childCardHeroSizeActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
+  childCardHeroSizeSingle: {
+    width: '100%',
+    minHeight: 148,
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    shadowColor: '#0D6B42',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  childCardHeroSizeInactive: {
+    opacity: 0.9,
+  },
+  cardDecorCircle: {
+    position: 'absolute',
+    top: -24,
+    right: -24,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    zIndex: 0,
   },
   childHeroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    zIndex: 1,
   },
   avatarBorderWrapHero: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
     overflow: 'hidden',
-    backgroundColor: '#EBF8F2',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  avatarBorderWrapHeroActive: {
-    borderColor: '#FFFFFF',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  avatarBorderWrapHeroInactive: {
+    borderColor: 'rgba(255, 255, 255, 0.8)',
   },
   childAvatarImgHero: {
     width: '100%',
     height: '100%',
   },
-  childHeroTitleRow: {
+  avatarInitialText: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#084835',
+  },
+  childInfoCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  studentNameBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+  },
+  studentFullName: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  studentNisText: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '600',
+    marginTop: 1,
   },
   childNameHero: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#0F172A',
-    flex: 1,
+    color: '#FFFFFF',
   },
-  childClassHero: {
-    fontSize: 11.5,
+  childSubInfoHero: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 1,
+    fontWeight: '600',
+  },
+  studentUnitBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 3,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  studentUnitBadgeInactive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  studentUnitText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    maxWidth: SCREEN_WIDTH - 220,
+  },
+  selectedActionBtnRight: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    marginLeft: 8,
+    minWidth: 46,
+  },
+  selectedActionBtnRightInactive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    elevation: 0,
+  },
+  selectedActionBtnText: {
+    fontSize: 8.5,
     fontWeight: '800',
     color: '#18A165',
     marginTop: 2,
   },
-  childSubInfoHero: {
-    fontSize: 10.5,
-    color: '#64748B',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  childSubInfoHeroActive: {
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
-  childStatusBadgeHero: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  childStatusBadgeHeroActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  childStatusBadgeTextHero: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  childStatusBadgeTextHeroActive: {
+  selectedActionBtnTextInactive: {
     color: '#FFFFFF',
   },
-  childCardBottomBar: {
+  studentAttributesGrid: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(4, 47, 30, 0.35)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    marginTop: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    zIndex: 1,
+  },
+  studentAttributesGridInactive: {
+    backgroundColor: 'rgba(4, 47, 30, 0.35)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  studentAttrBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  studentAttrLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
-  childCardBottomBarActive: {
-    borderTopColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  childInfoPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#F8FAFC',
-  },
-  childInfoPillActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  childInfoPillText: {
-    fontSize: 10,
+  studentAttrLabel: {
+    fontSize: 9.5,
+    color: '#A7F3D0',
     fontWeight: '700',
-    color: '#475569',
+  },
+  studentAttrValue: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  studentPresensiValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  presensiGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#34D399',
+  },
+  studentAttrDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  inactiveText: {
+    color: '#0F172A',
+  },
+  inactiveSubText: {
+    color: '#64748B',
   },
   paginationDotsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 10,
+    marginTop: 8,
+    marginBottom: 4,
   },
   paginationDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: '#CBD5E1',
   },
   paginationDotActive: {
-    width: 22,
+    width: 18,
     backgroundColor: '#18A165',
   },
-  childCardLarge: {
-    width: (SCREEN_WIDTH - 42) / 2,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#18A165',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
-  },
-  childCardLargeActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  childCardTopRow: {
+
+  // 2. DAY SELECTOR PILLS (NEW DESIGN - MATCHING SCREENSHOT)
+  dayStripRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
+    gap: 6,
+    marginTop: 10,
+    marginBottom: 4,
   },
-  avatarBorderWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
-    overflow: 'hidden',
-    backgroundColor: '#EBF8F2',
-  },
-  avatarBorderWrapActive: {
-    borderColor: '#FFFFFF',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  childAvatarImgLarge: {
-    width: '100%',
-    height: '100%',
-  },
-  childStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  childStatusBadgeActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  childStatusBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  childStatusBadgeTextActive: {
-    color: '#FFFFFF',
-  },
-  childCardInfo: {
-    marginTop: 2,
-  },
-  childNameTextLarge: {
-    fontSize: 13.5,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  childUnitTextLarge: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  childChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+  dayPillBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
     borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  childChipActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  childAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EBF8F2',
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  childAvatarActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  childNameText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0F172A',
-    maxWidth: 140,
-  },
-  childUnitText: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  childTextActive: {
-    color: '#FFFFFF',
-  },
-  kpiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  kpiCard: {
-    width: (SCREEN_WIDTH - 42) / 2,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#18A165',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+  dayPillBtnActive: {
+    shadowColor: '#0D6B42',
+    shadowOpacity: 0.2,
     shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
-  },
-  kpiHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  kpiIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  kpiNumber: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  kpiTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#334155',
-  },
-  kpiSubtitle: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  workspaceCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 6,
     elevation: 3,
   },
-  rangeScroll: {
-    gap: 8,
-    paddingBottom: 14,
-  },
-  rangeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: '#F1F5F9',
-  },
-  rangeBtnActive: {
-    backgroundColor: '#18A165',
-  },
-  rangeBtnText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  rangeBtnTextActive: {
-    color: '#FFFFFF',
-  },
-  tabContentArea: {},
-  dateNavigatorCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 16,
-  },
-  dateNavRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  navArrowBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateInfoCenter: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  dateNavTitle: {
-    fontSize: 13.5,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  dateBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-  },
-  todayBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  todayBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '900',
-    color: '#15803D',
-  },
-  historyBadge: {
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  historyBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '900',
-    color: '#B91C1C',
-  },
-  futureBadge: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  futureBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '900',
-    color: '#1D4ED8',
-  },
-  dateSubMeta: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  dateStripScroll: {
-    gap: 8,
-    paddingTop: 10,
-    paddingBottom: 2,
-  },
-  dateStripItem: {
-    width: 52,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  dateStripItemActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  dateStripDayText: {
-    fontSize: 10,
+  dayPillName: {
+    fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#334155',
   },
-  dateStripNumText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#0F172A',
+  dayPillNameActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  dayPillDate: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748B',
     marginTop: 2,
   },
-  dateStripMonthText: {
-    fontSize: 9.5,
-    fontWeight: '600',
-    color: '#94A3B8',
-  },
-  dateStripTextActive: {
+  dayPillDateActive: {
     color: '#FFFFFF',
+    fontWeight: '700',
   },
-  todayDot: {
-    position: 'absolute',
-    bottom: 3,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#18A165',
-  },
-  resetTodayBtn: {
+
+  // 3. DATE HEADER ROW
+  dateHeaderRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  dateHeaderTitle: {
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+
+  // 4. CLEAN SCHEDULE CARDS
+  scheduleListCol: {
+    gap: 10,
+  },
+  cleanScheduleCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  cardTimeCol: {
+    width: 90,
+  },
+  cardTimeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  cardIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    marginTop: 8,
-    paddingVertical: 6,
-    backgroundColor: '#EBF8F2',
-    borderRadius: 10,
+    marginRight: 12,
   },
-  resetTodayBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#18A165',
-  },
-  timelineContainer: {
-    position: 'relative',
-    paddingLeft: 20,
-  },
-  timelineVerticalLine: {
-    position: 'absolute',
-    left: 8,
-    top: 10,
-    bottom: 20,
-    width: 2,
-    backgroundColor: 'rgba(24, 161, 101, 0.25)',
-  },
-  timelineNodeWrapper: {
-    position: 'relative',
-    marginBottom: 16,
-  },
-  milestoneNode: {
-    position: 'absolute',
-    left: -19,
-    top: 12,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    alignItems: 'center',
+  cardInfoCol: {
+    flex: 1,
     justifyContent: 'center',
-    zIndex: 2,
   },
-  scheduleItemCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  scheduleItemCardPast: {
-    borderColor: '#FECACA',
-    backgroundColor: '#FFFAFA',
-  },
-  scheduleItemCardOngoing: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#F0FDF4',
-  },
-  lessonDateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  lessonDateBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#EBF8F2',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  lessonDateText: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#065F46',
-  },
-  itemTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  timeTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  timeTagText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#18A165',
-    letterSpacing: 0.3,
-  },
-  pastBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-  },
-  pastBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#DC2626',
-    textTransform: 'uppercase',
-  },
-  ongoingBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#86EFAC',
-  },
-  ongoingBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#15803D',
-    textTransform: 'uppercase',
-  },
-  upcomingBadge: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  upcomingBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748B',
-    textTransform: 'uppercase',
-  },
-  itemSubjectName: {
+  cardSubjectTitle: {
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '800',
     color: '#0F172A',
-    lineHeight: 19,
-    marginBottom: 4,
   },
-  teacherRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 10,
-  },
-  teacherText: {
+  cardTeacherText: {
     fontSize: 11.5,
-    color: '#475569',
-  },
-  teacherBold: {
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  attendanceBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  attendanceLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  attendanceTitle: {
-    fontSize: 10.5,
-    fontWeight: '800',
     color: '#64748B',
+    marginTop: 2,
   },
-  attendanceStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  attendancePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  attHadir: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  attHadirText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  attIzin: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-  },
-  attIzinText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#2563EB',
-  },
-  attSakit: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
-  },
-  attSakitText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#D97706',
-  },
-  attAlpa: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  attendancePillText: {
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  attendanceTimeText: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '700',
-  },
-  attNonePill: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  attNoneText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#94A3B8',
-  },
-  attendanceNotes: {
-    fontSize: 10,
-    color: '#64748B',
-    fontStyle: 'italic',
-    marginTop: 4,
-  },
-  dayFilterScroll: {
-    gap: 8,
-    paddingBottom: 12,
-  },
-  dayFilterBtnWithDate: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-  },
-  dayFilterBtnActive: {
-    backgroundColor: '#18A165',
-  },
-  dayFilterBtnText: {
+  cardRoomText: {
     fontSize: 11.5,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  dayFilterBtnTextActive: {
-    color: '#FFFFFF',
-  },
-  dayFilterBtnDateSub: {
-    fontSize: 9.5,
-    fontWeight: '700',
-    color: '#94A3B8',
-    marginTop: 1,
-  },
-  dayFilterBtnDateSubActive: {
-    color: '#DCFCE7',
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: Platform.OS === 'android' ? 4 : 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 12,
-    color: '#0F172A',
-    marginLeft: 6,
-    padding: 0,
-  },
-  weeklyCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  roomTag: {
-    backgroundColor: '#EBF8F2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  roomTagText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#18A165',
-  },
-  periodSelectorBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 14,
-  },
-  periodNavBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  periodSelectorTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  periodSelectorSub: {
-    fontSize: 10,
     color: '#64748B',
     marginTop: 1,
   },
-  semesterToggleRow: {
+
+  // 5. BOTTOM NOTICE BANNER
+  bottomNoticeBanner: {
+    backgroundColor: '#DEF7EC',
+    borderRadius: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    marginBottom: 14,
+    marginTop: 12,
+    marginBottom: 16,
   },
-  semesterToggleBtn: {
-    flex: 1,
-    padding: 10,
-    borderRadius: 14,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  semesterToggleBtnActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  semesterToggleText: {
+  bottomNoticeText: {
     fontSize: 12,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  semesterToggleSub: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  semesterToggleTextActive: {
-    color: '#FFFFFF',
-  },
-  academicYearChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  academicYearChipActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  academicYearChipText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  academicYearChipTextActive: {
-    color: '#FFFFFF',
-  },
-  rangeBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: '#EBF8F2',
-    borderWidth: 1.5,
-    borderColor: '#A7F3D0',
-    marginBottom: 14,
-  },
-  rangeBannerTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#065F46',
-  },
-  rangeBannerDesc: {
-    fontSize: 11,
-    color: '#475569',
-    marginTop: 2,
-  },
-  distributionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  distributionTitle: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  distributionSub: {
-    fontSize: 10.5,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  jpBadge: {
-    backgroundColor: '#EBF8F2',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  jpBadgeText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#18A165',
-  },
-  semesterBlock: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  semesterBlockHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  semesterBlockTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  semesterBlockBadge: {
-    fontSize: 10.5,
     fontWeight: '700',
-    color: '#18A165',
-    backgroundColor: '#EBF8F2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    color: '#0D6B42',
   },
-  semesterBlockText: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  annualSummaryCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  annualSummaryTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginBottom: 8,
-  },
-  annualRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  annualLabel: {
-    fontSize: 11.5,
-    color: '#64748B',
-  },
-  annualVal: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
+
+  // EMPTY STATE
   emptyContainer: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 32,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 28,
     alignItems: 'center',
     marginVertical: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   emptyTitle: {
     fontSize: 13.5,
@@ -2246,5 +1307,104 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     marginTop: 4,
+  },
+
+  // DETAIL MODAL
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    shadowColor: '#000000',
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSubjectTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  modalSubjectCode: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 14,
+  },
+  modalBodyRows: {
+    gap: 12,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalDetailLabel: {
+    width: 70,
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modalDetailValue: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  modalPresensiBadge: {
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  modalPresensiText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0D6B42',
+  },
+  modalActionBtn: {
+    marginTop: 18,
+    backgroundColor: '#18A165',
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalActionBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });
