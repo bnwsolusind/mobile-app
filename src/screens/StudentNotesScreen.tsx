@@ -10,6 +10,7 @@ import {
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
+import { useActiveChildStore } from '../stores/activeChildStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CATEGORIES = ['Semua', 'Akademik', 'Perilaku', 'Kedisiplinan', 'Prestasi', 'Konseling', 'Tahfizh', 'Ibadah', 'Kesehatan'];
@@ -43,18 +44,16 @@ export default function StudentNotesScreen({ route }: any) {
   const [signing, setSigning] = useState(false);
 
   const loadChildren = useCallback(async () => {
-    const targetChildId = route?.params?.child_id;
+    const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
     const response = await mobileApiService.getPortalChildren();
     const list = unwrapApiData<any[]>(response);
     const safeList = Array.isArray(list) ? list : [];
-    const filteredList = targetChildId
-      ? safeList.filter((c) => String(c.id) === String(targetChildId))
-      : safeList;
-    setChildren(filteredList.length > 0 ? filteredList : safeList);
-    if (targetChildId) {
-      setSelectedChildId((prev) => (prev !== String(targetChildId) ? String(targetChildId) : prev));
-    } else if (safeList[0]?.id) {
-      setSelectedChildId((prev) => (prev ? prev : String(safeList[0].id)));
+    setChildren(safeList);
+    useActiveChildStore.getState().setChildren(safeList);
+    const resolvedId = targetChildId || useActiveChildStore.getState().activeChildId || (safeList[0]?.id ? String(safeList[0].id) : undefined);
+    if (resolvedId) {
+      setSelectedChildId(String(resolvedId));
+      useActiveChildStore.getState().setActiveChildId(String(resolvedId));
     }
   }, [route?.params?.child_id]);
 
@@ -84,6 +83,7 @@ export default function StudentNotesScreen({ route }: any) {
 
   const selectChildWithScroll = (id: string, index: number) => {
     setSelectedChildId(id);
+    useActiveChildStore.getState().setActiveChildId(id);
     setNotes([]);
     setReplyFor(null);
     const cardWidth = SCREEN_WIDTH - 50;
@@ -99,7 +99,9 @@ export default function StudentNotesScreen({ route }: any) {
     if (idx >= 0 && idx < children.length) {
       const child = children[idx];
       if (child && String(child.id) !== selectedChildId) {
-        setSelectedChildId(String(child.id));
+        const sid = String(child.id);
+        setSelectedChildId(sid);
+        useActiveChildStore.getState().setActiveChildId(sid);
         setNotes([]);
         setReplyFor(null);
       }

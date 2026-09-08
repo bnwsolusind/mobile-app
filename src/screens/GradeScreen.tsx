@@ -26,6 +26,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -369,21 +370,19 @@ export default function GradeScreen({ route }: any) {
   const [prayerDayOffset, setPrayerDayOffset] = useState(0);
   const prayerModalDate = useMemo(() => getDynamicTodayString(prayerDayOffset), [prayerDayOffset]);
 
-  // 1. Fetch children if parent (Isolasi data 1 anak terpilih jika ada child_id)
+  // 1. Fetch children if parent (Simpan seluruh daftar anak agar orang tua dapat berganti anak langsung)
   const loadChildren = useCallback(async () => {
     if (!isParent) return;
-    const targetChildId = route?.params?.child_id;
+    const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
     const response = await mobileApiService.getPortalChildren();
     const list = unwrapApiData<any[]>(response) || [];
     const safeList = Array.isArray(list) ? list : [];
-    const filteredList = targetChildId
-      ? safeList.filter((c) => String(c.id) === String(targetChildId))
-      : safeList;
-    setChildren(filteredList.length > 0 ? filteredList : safeList);
-    if (targetChildId) {
-      setSelectedChildId(String(targetChildId));
-    } else if (safeList[0]?.id) {
-      setSelectedChildId((prev) => prev || String(safeList[0].id));
+    setChildren(safeList);
+    useActiveChildStore.getState().setChildren(safeList);
+    const resolvedId = targetChildId || useActiveChildStore.getState().activeChildId || (safeList[0]?.id ? String(safeList[0].id) : undefined);
+    if (resolvedId) {
+      setSelectedChildId(String(resolvedId));
+      useActiveChildStore.getState().setActiveChildId(String(resolvedId));
     }
   }, [isParent, route?.params?.child_id]);
 
@@ -526,13 +525,16 @@ export default function GradeScreen({ route }: any) {
     if (index >= 0 && index < children.length) {
       const targetChild = children[index];
       if (targetChild && String(targetChild.id) !== selectedChildId) {
-        setSelectedChildId(String(targetChild.id));
+        const sid = String(targetChild.id);
+        setSelectedChildId(sid);
+        useActiveChildStore.getState().setActiveChildId(sid);
       }
     }
   };
 
   const selectChild = (id: string, index: number) => {
     setSelectedChildId(id);
+    useActiveChildStore.getState().setActiveChildId(id);
     setSearch('');
     studentScrollRef.current?.scrollTo({ x: index * (SCREEN_WIDTH - 50 + 12), animated: true });
   };

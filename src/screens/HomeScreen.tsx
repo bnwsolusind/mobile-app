@@ -24,6 +24,7 @@ import { API_BASE_URL, getApiErrorMessage } from '../services/api';
 import { mobileApiService, unwrapApiData, unwrapCollection } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useActiveChildStore } from '../stores/activeChildStore';
 import { SafeRemoteImage } from '../components/SafeRemoteImage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -331,29 +332,65 @@ export default function HomeScreen({ navigation }: any) {
   }, [selectedIdCardStudent]);
   const [idCardSide, setIdCardSide] = useState<'front' | 'back'>('front');
 
-  // Widget Tugas Terbaru & Jadwal Hari Ini (Home Dashboard)
+  // Widget Tugas Terbaru & Jadwal Hari Ini & Hub 360° (Home Dashboard)
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
   const [homeSchedule, setHomeSchedule] = useState<any>(null);
   const [homeAssignments, setHomeAssignments] = useState<any[]>([]);
+  const [homeTahfizh, setHomeTahfizh] = useState<any>(null);
+  const [homeMutabaah, setHomeMutabaah] = useState<any>(null);
+  const [homeAttendance, setHomeAttendance] = useState<any>(null);
   const [loadingHomeWidgets, setLoadingHomeWidgets] = useState(false);
+
+  // Sinkronisasi activeChildIndex saat globalActiveChildId berubah dari luar (Portal/GradeScreen)
+  useEffect(() => {
+    if (globalActiveChildId && parentChildren.length > 0) {
+      const idx = parentChildren.findIndex(
+        (c) => String(c.id || c.student_id) === String(globalActiveChildId)
+      );
+      if (idx !== -1 && idx !== activeChildIndex) {
+        setActiveChildIndex(idx);
+        studentScrollRef.current?.scrollTo({
+          x: idx * studentSnapInterval,
+          animated: true,
+        });
+      }
+    }
+  }, [globalActiveChildId, parentChildren, studentSnapInterval]);
 
   const fetchHomeWidgets = useCallback(async (childId?: string) => {
     try {
       setLoadingHomeWidgets(true);
       const uid = useAuthStore.getState().user?.id;
       const cacheKeyAssign = offlineCache.buildKey('assignments', uid, childId || 'self');
-      const cached = await offlineCache.get<any>(cacheKeyAssign);
-      if (cached) {
-        const cachedList = Array.isArray(cached) ? cached : Array.isArray(cached?.list) ? cached.list : Array.isArray(cached?.data) ? cached.data : [];
-        if (cachedList.length > 0) {
-          setHomeAssignments(cachedList);
-        }
+      const cacheKeyTahfizh = offlineCache.buildKey('home_tahfizh', uid, childId || 'self');
+      const cacheKeyMutabaah = offlineCache.buildKey('home_mutabaah', uid, childId || 'self');
+      const cacheKeyAttend = offlineCache.buildKey('home_attend', uid, childId || 'self');
+
+      // 1. Baca cache lokal instan
+      const [cAssign, cTahfizh, cMutabaah, cAttend] = await Promise.all([
+        offlineCache.get<any>(cacheKeyAssign),
+        offlineCache.get<any>(cacheKeyTahfizh),
+        offlineCache.get<any>(cacheKeyMutabaah),
+        offlineCache.get<any>(cacheKeyAttend),
+      ]);
+
+      if (cAssign) {
+        const cachedList = Array.isArray(cAssign) ? cAssign : Array.isArray(cAssign?.list) ? cAssign.list : Array.isArray(cAssign?.data) ? cAssign.data : [];
+        if (cachedList.length > 0) setHomeAssignments(cachedList);
       }
+      if (cTahfizh) setHomeTahfizh(cTahfizh);
+      if (cMutabaah) setHomeMutabaah(cMutabaah);
+      if (cAttend) setHomeAttendance(cAttend);
 
       const todayStr = new Date().toISOString().slice(0, 10);
-      const [schedRes, assignRes] = await Promise.allSettled([
+      const [schedRes, assignRes, tahfizhRes, mutabaahRes, attendRes] = await Promise.allSettled([
         mobileApiService.getPortalSchedules({ child_id: childId, date: todayStr }),
         mobileApiService.getPortalAssignments({ child_id: childId, per_page: 20 }),
+        mobileApiService.getPortalTahfizh({ student_id: childId, per_page: 5 }),
+        mobileApiService.getPortalMutabaah(childId, todayStr),
+        mobileApiService.getPortalAttendance(childId),
       ]);
+
       if (schedRes.status === 'fulfilled') {
         const d = unwrapApiData<any>(schedRes.value) || schedRes.value?.data || schedRes.value;
         setHomeSchedule(d);
@@ -373,6 +410,23 @@ export default function HomeScreen({ navigation }: any) {
         if (list.length > 0) {
           void offlineCache.set(cacheKeyAssign, { list });
         }
+      }
+      if (tahfizhRes.status === 'fulfilled') {
+        const rawT = tahfizhRes.value;
+        const tList = Array.isArray(rawT?.data) ? rawT.data : Array.isArray(rawT) ? rawT : [];
+        const latestT = tList[0] || null;
+        setHomeTahfizh(latestT);
+        if (latestT) void offlineCache.set(cacheKeyTahfizh, latestT);
+      }
+      if (mutabaahRes.status === 'fulfilled') {
+        const mData = unwrapApiData<any>(mutabaahRes.value) || mutabaahRes.value;
+        setHomeMutabaah(mData);
+        if (mData) void offlineCache.set(cacheKeyMutabaah, mData);
+      }
+      if (attendRes.status === 'fulfilled') {
+        const aData = unwrapApiData<any>(attendRes.value) || attendRes.value;
+        setHomeAttendance(aData);
+        if (aData) void offlineCache.set(cacheKeyAttend, aData);
       }
     } catch {
       // silent fail — widgets gracefully show empty state
@@ -561,7 +615,15 @@ export default function HomeScreen({ navigation }: any) {
     ]);
     if (cachedDash) setDashboard(cachedDash);
     if (cachedAnn && cachedAnn.length > 0) setFetchedAnnouncements(cachedAnn);
-    if (cachedChildren && cachedChildren.length > 0) setParentChildren(cachedChildren);
+    if (cachedChildren && cachedChildren.length > 0) {
+      setParentChildren(cachedChildren);
+      useActiveChildStore.getState().setChildren(cachedChildren);
+      const gid = useActiveChildStore.getState().activeChildId;
+      if (gid) {
+        const found = cachedChildren.findIndex((c) => String(c.id || c.student_id) === String(gid));
+        if (found !== -1) setActiveChildIndex(found);
+      }
+    }
 
     // 2. Fetch dari backend
     try {
@@ -603,9 +665,19 @@ export default function HomeScreen({ navigation }: any) {
         const chList = unwrapApiData<any[]>(childrenRes.value) || [];
         if (Array.isArray(chList)) {
           setParentChildren(chList);
+          useActiveChildStore.getState().setChildren(chList);
+          const gid = useActiveChildStore.getState().activeChildId;
+          let curIdx = activeChildIndex;
+          if (gid) {
+            const found = chList.findIndex((c) => String(c.id || c.student_id) === String(gid));
+            if (found !== -1) {
+              curIdx = found;
+              setActiveChildIndex(found);
+            }
+          }
           if (chList.length > 0) {
             void offlineCache.set(cacheKeyChildren, chList);
-            const curActive = chList[activeChildIndex] || chList[0];
+            const curActive = chList[curIdx] || chList[0];
             const curId = curActive?.id || curActive?.student_id;
             if (curId) {
               void fetchTodayTimeline(curId);
@@ -887,6 +959,106 @@ export default function HomeScreen({ navigation }: any) {
     return DEFAULT_PARENT_AVATAR;
   }, [parent, activeStudent, activeChildPhoto, defaultStudentAvatar, profileImageUrl, imageError]);
 
+  // Data Rangkuman Harian Ananda (Executive 360° Hub)
+  const hubAttendanceData = useMemo(() => {
+    const rawAtt =
+      activeStudent?.attendance_today ||
+      activeStudent?.presensi_hari_ini ||
+      homeAttendance?.today ||
+      homeAttendance ||
+      todayTimeline?.attendance;
+
+    const rawStatus = String(rawAtt?.status || rawAtt?.attendance_status || '').toLowerCase();
+    let label = 'Belum Presensi';
+    let color = '#64748B';
+    let timeText = rawAtt?.time || rawAtt?.check_in_time || rawAtt?.jam_masuk || 'Hari ini';
+
+    if (rawStatus === 'present' || rawStatus === 'hadir') {
+      label = 'Hadir Tepat Waktu';
+      color = '#059669';
+    } else if (rawStatus === 'late' || rawStatus === 'terlambat') {
+      label = 'Hadir Terlambat';
+      color = '#D97706';
+    } else if (rawStatus === 'sick' || rawStatus === 'sakit') {
+      label = 'Izin Sakit';
+      color = '#2563EB';
+    } else if (rawStatus === 'permit' || rawStatus === 'izin') {
+      label = 'Izin Keperluan';
+      color = '#7C3AED';
+    } else if (rawStatus === 'absent' || rawStatus === 'alpha' || rawStatus === 'alpa') {
+      label = 'Tidak Hadir';
+      color = '#DC2626';
+    }
+
+    return { label, color, timeText };
+  }, [activeStudent, homeAttendance, todayTimeline]);
+
+  const hubTaskData = useMemo(() => {
+    const count = homeAssignments.length;
+    if (count === 0) {
+      return { countText: '0 Aktif', title: 'Semua tugas tuntas ✨', sub: 'Tidak ada PR mendesak' };
+    }
+    const firstTask = homeAssignments[0];
+    const title = firstTask?.title || firstTask?.judul || firstTask?.subject_name || 'Tugas Baru';
+    const due = firstTask?.due_date || firstTask?.deadline || firstTask?.tanggal_jatuh_tempo;
+    let sub = 'Perlu dikerjakan';
+    if (due) {
+      const d = new Date(due);
+      if (!isNaN(d.getTime())) {
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+        sub = `Tenggat: ${d.getDate()} ${months[d.getMonth()]}`;
+      }
+    }
+    return { countText: `${count} Aktif`, title, sub };
+  }, [homeAssignments]);
+
+  const hubTahfizhData = useMemo(() => {
+    const t = homeTahfizh || todayTimeline?.tahfizh || activeStudent?.latest_tahfizh;
+    if (!t) {
+      return { surahText: 'Belum ada setoran', badge: 'Tahfizh', note: 'Siap disetorkan hari ini' };
+    }
+    const surah = t.surah_name || t.surah || 'Tahfizh';
+    const range = t.ayat_start && t.ayat_end ? `: ${t.ayat_start}-${t.ayat_end}` : (t.total_ayah ? ` (${t.total_ayah} Ayat)` : '');
+    const surahText = `${surah}${range}`;
+    const badge = t.grade || t.predicate || (t.score != null ? `Nilai ${t.score}` : 'Tuntas');
+    const note = t.notes_teacher || t.notes || (t.score != null ? `Skor: ${t.score}` : 'Setoran tervalidasi');
+    return { surahText, badge, note };
+  }, [homeTahfizh, todayTimeline, activeStudent]);
+
+  const hubMutabaahData = useMemo(() => {
+    const m = homeMutabaah || todayTimeline?.mutabaah;
+    const items = Array.isArray(m?.items) ? m.items : Array.isArray(m?.prayers) ? m.prayers : Array.isArray(m) ? m : [];
+
+    const isPrayerDone = (pName: string) => {
+      const match = items.find((i: any) =>
+        String(i.name || i.nama || i.key || '').toLowerCase().includes(pName)
+      );
+      if (match) {
+        return Boolean(match.is_done || match.status === 'completed' || match.value === 1 || match.status === 'sudah');
+      }
+      if (m && typeof m === 'object') {
+        const val = m[pName] || m[`shalat_${pName}`];
+        if (val) return Boolean(val.is_done || val === true || val === 1 || val === 'completed');
+      }
+      return false;
+    };
+
+    const prayers = [
+      { key: 'S', name: 'subuh', done: isPrayerDone('subuh') },
+      { key: 'D', name: 'dzuhur', done: isPrayerDone('dzuhur') },
+      { key: 'A', name: 'ashar', done: isPrayerDone('ashar') },
+      { key: 'M', name: 'maghrib', done: isPrayerDone('maghrib') },
+      { key: 'I', name: 'isya', done: isPrayerDone('isya') },
+    ];
+
+    const doneCount = prayers.filter((p) => p.done).length;
+    return {
+      ratioText: `${doneCount}/5 Shalat`,
+      prayers,
+      note: doneCount === 5 ? 'Alhamdulillah lengkap' : `${5 - doneCount} waktu shalat tersisa`,
+    };
+  }, [homeMutabaah, todayTimeline]);
+
   return (
     <View style={styles.safeArea}>
       {/* 1. STICKY COMPACT APP BAR (Hanya Avatar Profil, Nama, dan Icon Bell saat di-scroll) */}
@@ -1094,6 +1266,9 @@ export default function HomeScreen({ navigation }: any) {
                 const idx = Math.round(offsetX / studentSnapInterval);
                 if (idx !== activeChildIndex && idx >= 0 && idx < parentChildren.length) {
                   setActiveChildIndex(idx);
+                  const selChild = parentChildren[idx];
+                  const sid = selChild?.id || selChild?.student_id;
+                  if (sid) useActiveChildStore.getState().setActiveChildId(sid);
                 }
               }}
               scrollEventThrottle={16}
@@ -1283,6 +1458,9 @@ export default function HomeScreen({ navigation }: any) {
                     activeOpacity={0.7}
                     onPress={() => {
                       setActiveChildIndex(dotIdx);
+                      const targetC = parentChildren[dotIdx];
+                      const sid = targetC?.id || targetC?.student_id;
+                      if (sid) useActiveChildStore.getState().setActiveChildId(sid);
                       studentScrollRef.current?.scrollTo({
                         x: dotIdx * studentSnapInterval,
                         animated: true,
@@ -1305,6 +1483,155 @@ export default function HomeScreen({ navigation }: any) {
         {/* SHEET PUTIH/SLATE: Melengkung Dimulai Tepat di Bawah Anak    */}
         {/* ============================================================ */}
         <View style={styles.curvedSheetBody}>
+
+        {/* ============================================================ */}
+        {/* EXECUTIVE DAILY 360° HUB (Khusus Orang Tua / Siswa Aktif)    */}
+        {/* ============================================================ */}
+        {parent && activeStudent && (
+          <View style={styles.hubContainer}>
+            {/* Hub Header with Pulse Dot */}
+            <View style={styles.hubHeaderRow}>
+              <View style={styles.hubHeaderTitleWrap}>
+                <View style={styles.hubHeaderIconBox}>
+                  <MaterialCommunityIcons name="view-dashboard-variant-outline" size={17} color="#059669" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={styles.hubHeaderTitle}>Rangkuman Harian Ananda</Text>
+                  <Text numberOfLines={1} style={styles.hubHeaderSubtitle}>Kehadiran, tugas, hafalan, & ibadah hari ini</Text>
+                </View>
+              </View>
+              <View style={styles.hubLiveBadge}>
+                <View style={styles.hubLivePulseDot} />
+                <Text style={styles.hubLiveBadgeText}>Hari Ini</Text>
+              </View>
+            </View>
+
+            {/* 4 Quadrant Cards */}
+            <View style={styles.hubGrid}>
+              {/* 1. Presensi */}
+              <TouchableOpacity
+                activeOpacity={0.78}
+                style={[styles.hubCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}
+                onPress={() => handleMenuNavigation('Absensi')}
+              >
+                <View style={styles.hubCardTopRow}>
+                  <View style={[styles.hubCardIconBox, { backgroundColor: '#DCFCE7' }]}>
+                    <MaterialCommunityIcons name="calendar-check-outline" size={17} color="#059669" />
+                  </View>
+                  <View style={[styles.hubCardTag, { backgroundColor: '#DCFCE7' }]}>
+                    <Text numberOfLines={1} style={[styles.hubCardTagText, { color: '#047857' }]}>
+                      {hubAttendanceData.timeText}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.hubCardLabel}>Presensi Masuk</Text>
+                <Text numberOfLines={1} style={[styles.hubCardValue, { color: hubAttendanceData.color }]}>
+                  {hubAttendanceData.label}
+                </Text>
+                <View style={styles.hubCardFooter}>
+                  <Text style={[styles.hubCardFooterText, { color: '#059669' }]}>Lihat Riwayat</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={13} color="#059669" />
+                </View>
+              </TouchableOpacity>
+
+              {/* 2. Tugas & Kuis */}
+              <TouchableOpacity
+                activeOpacity={0.78}
+                style={[styles.hubCard, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}
+                onPress={() => handleMenuNavigation('Tugas')}
+              >
+                <View style={styles.hubCardTopRow}>
+                  <View style={[styles.hubCardIconBox, { backgroundColor: '#DBEAFE' }]}>
+                    <MaterialCommunityIcons name="clipboard-text-clock-outline" size={17} color="#1D4ED8" />
+                  </View>
+                  <View style={[styles.hubCardTag, { backgroundColor: '#DBEAFE' }]}>
+                    <Text numberOfLines={1} style={[styles.hubCardTagText, { color: '#1D4ED8' }]}>
+                      {hubTaskData.countText}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.hubCardLabel}>Tugas Terdekat</Text>
+                <Text numberOfLines={1} style={[styles.hubCardValue, { color: '#1E293B' }]}>
+                  {hubTaskData.title}
+                </Text>
+                <View style={styles.hubCardFooter}>
+                  <Text numberOfLines={1} style={[styles.hubCardFooterText, { color: '#2563EB', flex: 1 }]}>
+                    {hubTaskData.sub}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-right" size={13} color="#2563EB" />
+                </View>
+              </TouchableOpacity>
+
+              {/* 3. Tahfizh */}
+              <TouchableOpacity
+                activeOpacity={0.78}
+                style={[styles.hubCard, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}
+                onPress={() => handleMenuNavigation('Tahfizh')}
+              >
+                <View style={styles.hubCardTopRow}>
+                  <View style={[styles.hubCardIconBox, { backgroundColor: '#CCFBF1' }]}>
+                    <MaterialCommunityIcons name="book-open-page-variant-outline" size={17} color="#0D9488" />
+                  </View>
+                  <View style={[styles.hubCardTag, { backgroundColor: '#CCFBF1' }]}>
+                    <Text numberOfLines={1} style={[styles.hubCardTagText, { color: '#0F766E' }]}>
+                      {hubTahfizhData.badge}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.hubCardLabel}>Setoran Terakhir</Text>
+                <Text numberOfLines={1} style={[styles.hubCardValue, { color: '#134E4A' }]}>
+                  {hubTahfizhData.surahText}
+                </Text>
+                <View style={styles.hubCardFooter}>
+                  <Text numberOfLines={1} style={[styles.hubCardFooterText, { color: '#0D9488', flex: 1 }]}>
+                    {hubTahfizhData.note}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-right" size={13} color="#0D9488" />
+                </View>
+              </TouchableOpacity>
+
+              {/* 4. Mutaba'ah Shalat */}
+              <TouchableOpacity
+                activeOpacity={0.78}
+                style={[styles.hubCard, { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF' }]}
+                onPress={() => handleMenuNavigation('Mutabaah')}
+              >
+                <View style={styles.hubCardTopRow}>
+                  <View style={[styles.hubCardIconBox, { backgroundColor: '#F3E8FF' }]}>
+                    <MaterialCommunityIcons name="hands-pray" size={17} color="#7E22CE" />
+                  </View>
+                  <View style={[styles.hubCardTag, { backgroundColor: '#F3E8FF' }]}>
+                    <Text numberOfLines={1} style={[styles.hubCardTagText, { color: '#6B21A8' }]}>
+                      {hubMutabaahData.ratioText}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.hubCardLabel}>Shalat 5 Waktu</Text>
+                <View style={styles.hubSholatPillsRow}>
+                  {hubMutabaahData.prayers.map((p) => (
+                    <View
+                      key={p.key}
+                      style={[
+                        styles.hubSholatPill,
+                        p.done ? styles.hubSholatPillDone : styles.hubSholatPillPending,
+                      ]}
+                    >
+                      <Text style={[styles.hubSholatPillText, p.done && styles.hubSholatPillTextDone]}>
+                        {p.key}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                <View style={styles.hubCardFooter}>
+                  <Text numberOfLines={1} style={[styles.hubCardFooterText, { color: '#7E22CE', flex: 1 }]}>
+                    {hubMutabaahData.note}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-right" size={13} color="#7E22CE" />
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* SECTION: Menu Utama (Expandable Card Container) */}
         <View style={styles.menuCardContainer}>
@@ -6842,5 +7169,173 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#059669',
     marginLeft: 4,
+  },
+
+  // 360° Executive Daily Hub Styles
+  hubContainer: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  hubHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  hubHeaderTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  hubHeaderIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  hubHeaderTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    fontFamily: 'Nunito_800ExtraBold',
+  },
+  hubHeaderSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+    fontWeight: '500',
+  },
+  hubLiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  hubLivePulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#16A34A',
+    marginRight: 5,
+  },
+  hubLiveBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  hubGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  hubCard: {
+    width: '48%',
+    borderRadius: 14,
+    padding: 11,
+    borderWidth: 1,
+    justifyContent: 'space-between',
+    minHeight: 110,
+  },
+  hubCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  hubCardIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hubCardTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    maxWidth: '65%',
+  },
+  hubCardTagText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+  },
+  hubCardLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  hubCardValue: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  hubCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+    paddingTop: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(0,0,0,0.06)',
+  },
+  hubCardFooterText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  hubSholatPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginBottom: 6,
+  },
+  hubSholatPill: {
+    width: 17,
+    height: 17,
+    borderRadius: 8.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  hubSholatPillDone: {
+    backgroundColor: '#10B981',
+    borderColor: '#059669',
+  },
+  hubSholatPillPending: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
+  hubSholatPillText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  hubSholatPillTextDone: {
+    color: '#FFFFFF',
   },
 });

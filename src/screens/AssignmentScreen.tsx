@@ -26,6 +26,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -165,29 +166,27 @@ export default function AssignmentScreen({ route, navigation }: any) {
   const [submissionText, setSubmissionText] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  // 1. Fetch children if parent with offline cache
+  // 1. Fetch children if parent with offline cache (Pertahankan seluruh anak)
   const loadChildren = useCallback(async () => {
     if (!isParent) return;
-    const targetChildId = route?.params?.child_id;
+    const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
     const childCacheKey = offlineCache.buildKey('assignments_children', user?.id);
     const cached = await offlineCache.get<Child[]>(childCacheKey);
     if (cached && cached.length > 0) {
-      const filteredCached = targetChildId
-        ? cached.filter((c) => String(c.id) === String(targetChildId))
-        : cached;
-      setChildren(filteredCached.length > 0 ? filteredCached : cached);
-      setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(cached[0].id)));
+      setChildren(cached);
+      useActiveChildStore.getState().setChildren(cached);
+      const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(cached[0].id);
+      setSelectedChildId(activeId);
     }
 
     try {
       const res = await mobileApiService.getPortalChildren();
       const list = unwrapApiData<Child[]>(res) || [];
       if (list.length > 0) {
-        const filteredList = targetChildId
-          ? list.filter((c) => String(c.id) === String(targetChildId))
-          : list;
-        setChildren(filteredList.length > 0 ? filteredList : list);
-        setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(list[0].id)));
+        setChildren(list);
+        useActiveChildStore.getState().setChildren(list);
+        const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(list[0].id);
+        setSelectedChildId(activeId);
         void offlineCache.set(childCacheKey, list);
       }
     } catch {
@@ -199,68 +198,48 @@ export default function AssignmentScreen({ route, navigation }: any) {
     void loadChildren();
   }, [loadChildren]);
 
-  // 2. Fetch assignments from database with offline cache
+  // 2. Fetch assignments list & summary
   const loadAssignments = useCallback(async () => {
-    const cacheKey = offlineCache.buildKey('assignments', user?.id, selectedChildId || 'self');
-
-    // 1. Baca cache dulu agar tampil instan
-    const cached = await offlineCache.get<{ list: AssignmentItem[]; kpi: any; student: any }>(cacheKey);
-    if (cached) {
-      setAssignments(cached.list || []);
-      if (cached.kpi) setBackendKpi(cached.kpi);
-      if (cached.student) setStudentInfo(cached.student);
-    }
-
+    if (isParent && !selectedChildId) return;
     try {
-      const params: Record<string, any> = {
+      setLoading(true);
+      const cacheKey = offlineCache.buildKey('assignments', user?.id, selectedChildId);
+      const cached = await offlineCache.get<{ list: AssignmentItem[]; summary?: any }>(cacheKey);
+      if (cached) {
+        setAssignments(cached.list || []);
+        if (cached.summary) setBackendKpi(cached.summary);
+      }
+
+      const res = await mobileApiService.getPortalAssignments({
         child_id: selectedChildId,
+        semester: selectedSemester,
         per_page: 50,
-      };
+      });
 
-      const res = await mobileApiService.getPortalAssignments(params);
-      const data = unwrapApiData<any>(res) || {};
-      const list = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.items)
-        ? data.items
-        : Array.isArray(data)
-        ? data
-        : Array.isArray(res?.data)
-        ? res.data
-        : [];
-
+      const raw = res?.data?.data || res?.data || res;
+      const list = Array.isArray(raw) ? raw : raw?.items || [];
       setAssignments(list);
 
-      const freshKpi = res?.kpi || data?.kpi || null;
-      const freshStudent = res?.student || data?.student || null;
+      const kpi = res?.summary || res?.data?.summary || null;
+      if (kpi) setBackendKpi(kpi);
 
-      if (freshKpi) setBackendKpi(freshKpi);
-      if (freshStudent) setStudentInfo(freshStudent);
-
-      // Simpan ke cache
-      void offlineCache.set(cacheKey, {
-        list,
-        kpi: freshKpi,
-        student: freshStudent,
-      });
+      void offlineCache.set(cacheKey, { list, summary: kpi });
     } catch {
-      // Jika offline dan belum ada cache sama sekali
-      if (!cached) {
-        setAssignments([]);
-      }
+      // safe fallback
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-  }, [selectedChildId, user?.id]);
+  }, [isParent, selectedChildId, selectedSemester, user?.id]);
+
+  useEffect(() => {
+    void loadAssignments();
+  }, [loadAssignments]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadAssignments();
-    setRefreshing(false);
+    await Promise.all([loadChildren(), loadAssignments()]);
   };
-
-  useEffect(() => {
-    setLoading(true);
-    loadAssignments().finally(() => setLoading(false));
-  }, [loadAssignments]);
 
   const handleStudentScrollEnd = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
@@ -269,13 +248,16 @@ export default function AssignmentScreen({ route, navigation }: any) {
     if (index >= 0 && index < children.length) {
       const targetChild = children[index];
       if (targetChild && String(targetChild.id) !== selectedChildId) {
-        setSelectedChildId(String(targetChild.id));
+        const sid = String(targetChild.id);
+        setSelectedChildId(sid);
+        useActiveChildStore.getState().setActiveChildId(sid);
       }
     }
   };
 
   const selectChildWithScroll = (childId: string, index: number) => {
     setSelectedChildId(childId);
+    useActiveChildStore.getState().setActiveChildId(childId);
     studentScrollRef.current?.scrollTo({
       x: index * (SCREEN_WIDTH - 50 + 12),
       animated: true,

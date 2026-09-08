@@ -24,6 +24,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -141,13 +142,16 @@ export default function ScheduleScreen({ route }: any) {
     if (index >= 0 && index < children.length) {
       const targetChild = children[index];
       if (targetChild && String(targetChild.id) !== selectedChildId) {
-        setSelectedChildId(String(targetChild.id));
+        const sid = String(targetChild.id);
+        setSelectedChildId(sid);
+        useActiveChildStore.getState().setActiveChildId(sid);
       }
     }
   };
 
   const selectChildWithScroll = (childId: string, index: number) => {
     setSelectedChildId(childId);
+    useActiveChildStore.getState().setActiveChildId(childId);
     studentScrollRef.current?.scrollTo({
       x: index * (SCREEN_WIDTH - 50 + 12),
       animated: true,
@@ -162,20 +166,19 @@ export default function ScheduleScreen({ route }: any) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [scheduleData, setScheduleData] = useState<any>(null);
 
-  // 1. Load Children if parent
+  // 1. Load Children if parent (Pertahankan seluruh anak)
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
-      const targetChildId = route?.params?.child_id;
+      const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
       const childCacheKey = offlineCache.buildKey('schedule_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<Child[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          const filteredCached = targetChildId
-            ? cached.filter((c) => String(c.id) === String(targetChildId))
-            : cached;
-          setChildren(filteredCached.length > 0 ? filteredCached : cached);
-          setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => (!prev ? String(cached[0].id) : prev)));
+          setChildren(cached);
+          useActiveChildStore.getState().setChildren(cached);
+          const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(cached[0].id);
+          setSelectedChildId(activeId);
         }
       })();
 
@@ -183,11 +186,10 @@ export default function ScheduleScreen({ route }: any) {
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
           if (isMounted && arr.length > 0) {
-            const filteredArr = targetChildId
-              ? arr.filter((c) => String(c.id) === String(targetChildId))
-              : arr;
-            setChildren(filteredArr.length > 0 ? filteredArr : arr);
-            setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => (!prev ? String(arr[0].id) : prev)));
+            setChildren(arr);
+            useActiveChildStore.getState().setChildren(arr);
+            const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(arr[0].id);
+            setSelectedChildId(activeId);
             void offlineCache.set(childCacheKey, arr);
           }
         })

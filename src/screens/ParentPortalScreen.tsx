@@ -18,6 +18,7 @@ import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { getProfileImageUrl } from '../utils/profile';
 import { useAuthStore } from '../stores/authStore';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
 
 type Child = Record<string, any>;
 type ParentDashboard = Record<string, any>;
@@ -34,7 +35,8 @@ const SUB_TABS = [
 
 export default function ParentPortalScreen({ route, navigation }: any) {
   const user = useAuthStore((state) => state.user);
-  const targetChildId = route?.params?.child_id;
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
+  const targetChildId = route?.params?.child_id || globalActiveChildId;
   const routeTab = route?.params?.tab;
   const [selectedId, setSelectedId] = useState<string | undefined>(targetChildId ? String(targetChildId) : undefined);
   const selectedIdRef = useRef<string | undefined>(targetChildId ? String(targetChildId) : undefined);
@@ -66,20 +68,19 @@ export default function ParentPortalScreen({ route, navigation }: any) {
     setError('');
     const childCacheKey = offlineCache.buildKey('parent_portal_children', user?.id);
 
-    // 1. Baca cache anak dulu
+    // 1. Baca cache anak dulu (Simpan seluruh daftar anak agar orang tua leluasa berganti anak)
     const cachedChildren = await offlineCache.get<Child[]>(childCacheKey);
-    let activeId = targetChildId || selectedIdRef.current;
+    let activeId = targetChildId || selectedIdRef.current || useActiveChildStore.getState().activeChildId;
     if (cachedChildren && cachedChildren.length > 0) {
-      const filteredCached = targetChildId
-        ? cachedChildren.filter((c) => String(c.id) === String(targetChildId))
-        : cachedChildren;
-      setChildren(filteredCached.length > 0 ? filteredCached : cachedChildren);
-      activeId = targetChildId || selectedIdRef.current || String(cachedChildren[0]?.id);
+      setChildren(cachedChildren);
+      useActiveChildStore.getState().setChildren(cachedChildren);
+      activeId = targetChildId || selectedIdRef.current || useActiveChildStore.getState().activeChildId || String(cachedChildren[0]?.id);
       if (activeId) {
         const idStr = String(activeId);
         if (selectedIdRef.current !== idStr) {
           selectedIdRef.current = idStr;
           setSelectedId(idStr);
+          useActiveChildStore.getState().setActiveChildId(idStr);
         }
         const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, idStr);
         const cachedDash = await offlineCache.get<ParentDashboard>(dashKey);
@@ -93,19 +94,18 @@ export default function ParentPortalScreen({ route, navigation }: any) {
     try {
       const childResponse = await mobileApiService.getPortalChildren();
       const available = (unwrapApiData<Child[]>(childResponse) || []);
-      const filteredAvailable = targetChildId
-        ? available.filter((c) => String(c.id) === String(targetChildId))
-        : available;
-      activeId = targetChildId || selectedIdRef.current || (available[0]?.id ? String(available[0].id) : undefined);
-      if (filteredAvailable.length > 0) {
-        setChildren(filteredAvailable);
+      if (available.length > 0) {
+        setChildren(available);
+        useActiveChildStore.getState().setChildren(available);
         void offlineCache.set(childCacheKey, available);
       }
+      activeId = targetChildId || selectedIdRef.current || useActiveChildStore.getState().activeChildId || (available[0]?.id ? String(available[0].id) : undefined);
       if (activeId) {
         const idStr = String(activeId);
         if (selectedIdRef.current !== idStr) {
           selectedIdRef.current = idStr;
           setSelectedId(idStr);
+          useActiveChildStore.getState().setActiveChildId(idStr);
         }
         const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, idStr);
         const dashboardResponse = await mobileApiService.getPortalDashboard(idStr);
@@ -131,6 +131,7 @@ export default function ParentPortalScreen({ route, navigation }: any) {
   const selectChild = async (id: string) => {
     selectedIdRef.current = id;
     setSelectedId(id);
+    useActiveChildStore.getState().setActiveChildId(id);
     setError('');
     const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, id);
     const cachedDash = await offlineCache.get<ParentDashboard>(dashKey);
