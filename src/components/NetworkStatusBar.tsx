@@ -18,7 +18,7 @@ export default function NetworkStatusBar() {
   const startMonitoring = useNetworkStore((state) => state.startMonitoring);
 
   const [visible, setVisible] = useState(false);
-  const translateY = useRef(new Animated.Value(-120)).current;
+  const translateY = useRef(new Animated.Value(-60)).current;
   const hideTimerRef = useRef<any>(null);
 
   // Start background monitoring when component mounts
@@ -31,39 +31,39 @@ export default function NetworkStatusBar() {
 
   useEffect(() => {
     if (!isOnline) {
-      // Masuk ke Mode Offline: Tampilkan banner MERAH
+      // Masuk ke Mode Offline: Tampilkan badge kecil MERAH
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       setVisible(true);
       Animated.spring(translateY, {
         toValue: 0,
         useNativeDriver: true,
-        bounciness: 6,
+        bounciness: 4,
       }).start();
     } else if (wasOffline) {
-      // Kembali Online setelah sebelumnya Offline: Tampilkan banner HIJAU
+      // Kembali Online setelah sebelumnya Offline: Tampilkan badge kecil HIJAU
       setVisible(true);
       Animated.spring(translateY, {
         toValue: 0,
         useNativeDriver: true,
-        bounciness: 6,
+        bounciness: 4,
       }).start();
 
-      // Sembunyikan banner hijau otomatis setelah 3.5 detik
+      // Sembunyikan badge hijau otomatis setelah 2.5 detik
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       hideTimerRef.current = setTimeout(() => {
         Animated.timing(translateY, {
-          toValue: -120,
-          duration: 350,
+          toValue: -60,
+          duration: 250,
           useNativeDriver: true,
         }).start(() => {
           setVisible(false);
         });
-      }, 3500);
+      }, 2500);
     } else {
       // Normal online saat app pertama kali buka
       Animated.timing(translateY, {
-        toValue: -120,
-        duration: 250,
+        toValue: -60,
+        duration: 200,
         useNativeDriver: true,
       }).start(() => {
         setVisible(false);
@@ -80,92 +80,75 @@ export default function NetworkStatusBar() {
   const isRed = !isOnline;
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        {
-          paddingTop: Math.max(insets.top, 8) + 4,
-          backgroundColor: isRed ? '#DC2626' : '#16A34A',
-          transform: [{ translateY }],
-        },
-      ]}
-    >
-      <View style={styles.contentRow}>
-        <View style={styles.iconCircle}>
-          <MaterialCommunityIcons
-            name={isRed ? 'wifi-off' : 'wifi-check'}
-            size={18}
-            color={isRed ? '#DC2626' : '#16A34A'}
-          />
-        </View>
-        <View style={styles.textContainer}>
-          <Text style={styles.title}>
-            {isRed ? 'Mode Offline' : 'Jaringan Online'}
-          </Text>
-          <Text numberOfLines={1} style={styles.subtitle}>
-            {isRed
-              ? 'Koneksi terputus. Menampilkan data lokal (cache).'
-              : 'Terhubung kembali ke server. Data tersinkronisasi.'}
-          </Text>
-        </View>
+    <View style={styles.floatingWrapper} pointerEvents="box-none">
+      <Animated.View
+        style={[
+          styles.compactPill,
+          {
+            top: Math.max(insets.top, 6) + 4,
+            backgroundColor: isRed ? '#DC2626' : '#059669',
+            transform: [{ translateY }],
+          },
+        ]}
+      >
+        <MaterialCommunityIcons
+          name={isRed ? 'wifi-off' : 'wifi-check'}
+          size={13}
+          color="#FFFFFF"
+        />
+        <Text numberOfLines={1} style={styles.pillText}>
+          {isRed ? 'Mode Offline' : 'Online'}
+        </Text>
         {isRed && (
           <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.retryButton}
+            activeOpacity={0.7}
+            style={styles.retryBtn}
             onPress={() => void checkConnectivity()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <MaterialCommunityIcons name="refresh" size={16} color="#FFFFFF" />
+            <MaterialCommunityIcons name="refresh" size={12} color="#FFFFFF" />
           </TouchableOpacity>
         )}
-      </View>
-    </Animated.View>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  floatingWrapper: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 999999,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 10,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
   },
-  contentRow: {
+  compactPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-  },
-  iconCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  textContainer: {
-    flex: 1,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontSize: 11,
-    marginTop: 1,
-  },
-  retryButton: {
-    padding: 6,
+    gap: 5,
+    paddingVertical: 3.5,
+    paddingHorizontal: 10,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  pillText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  retryBtn: {
+    padding: 2,
+    marginLeft: 1,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
 });

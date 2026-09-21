@@ -21,6 +21,7 @@ import {
 import { Card, Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { API_BASE_URL, getApiErrorMessage } from '../services/api';
+import { realtimeWs } from '../services/websocketService';
 import { mobileApiService, unwrapApiData, unwrapCollection } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
@@ -93,6 +94,13 @@ const NEWS_CARD_THEMES = [
 ];
 
 const MENU_SUBTITLES: Record<string, string> = {
+  'Portal Orang Tua': 'Menu khusus untuk kebutuhan orang tua',
+  'Pembayaran': 'Bayar biaya',
+  'Tagihan': 'Daftar tagihan',
+  'Rekap Aktivitas': 'Riwayat hadir',
+  'Perkembangan Anak': 'Grafik belajar',
+  'Laporan & Rapor': 'Rapor semester',
+  'Agenda Orang Tua': 'Agenda kegiatan',
   'Al-Qur\'an': 'Baca & tilawah',
   'Doa & Dzikir': 'Amalan harian',
   'Kalender': 'Agenda kegiatan',
@@ -104,6 +112,8 @@ const MENU_SUBTITLES: Record<string, string> = {
   'Tahfiz': 'Hafalan Al-Qur\'an',
   'Nilai': 'Lihat hasil belajar',
   'Komentar': 'Saran & masukan',
+  'Buku Penghubung': 'Catatan guru & ortu',
+  'Tagihan & SPP': 'Biaya pendidikan',
   'Mutabaah': 'Pantau ibadah',
   'Absensi': 'Kehadiran siswa',
   'Kisi-kisi': 'Persiapan ujian',
@@ -170,12 +180,7 @@ const titleOf = (item: any): string =>
 const subtitleOf = (item: any): string =>
   item?.data_tambahan?.ringkasan || item?.isi_pengumuman || item?.isi || item?.summary || item?.kelas?.nama_kelas || item?.class?.name || item?.time_start || '';
 
-const NEWS_FALLBACK_IMAGES = [
-  'https://images.unsplash.com/photo-1577896851231-70ef18881754?w=400&q=80',
-  'https://images.unsplash.com/photo-1509062522246-3755977927d7?w=400&q=80',
-  'https://images.unsplash.com/photo-1584697964190-7bb8514101e4?w=400&q=80',
-  'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=400&q=80',
-];
+const DEFAULT_NEWS_FALLBACK = require('../../assets/launcher_source.png');
 
 const getNewsThumbnail = (item: any, index: number = 0) => {
   const raw =
@@ -216,8 +221,7 @@ const getNewsThumbnail = (item: any, index: number = 0) => {
     return { uri: `${apiHost}${cleanPath}` };
   }
 
-  const safeIndex = typeof item?._index === 'number' ? item._index : index;
-  return { uri: NEWS_FALLBACK_IMAGES[Math.abs(safeIndex) % NEWS_FALLBACK_IMAGES.length] };
+  return DEFAULT_NEWS_FALLBACK;
 };
 
 const getActivityBadgeStyle = (badgeType: string) => {
@@ -236,7 +240,7 @@ const getActivityBadgeStyle = (badgeType: string) => {
   }
 };
 
-export default function HomeScreen({ navigation }: any) {
+export default function HomeScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 16);
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 18 : 10);
@@ -250,6 +254,7 @@ export default function HomeScreen({ navigation }: any) {
   const [parentChildren, setParentChildren] = useState<any[]>([]);
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
   const studentScrollRef = useRef<ScrollView>(null);
+  const mainScrollViewRef = useRef<any>(null);
   const studentCardWidth = useMemo(() => {
     return parentChildren.length > 1
       ? SCREEN_WIDTH - 16 - STUDENT_CARD_GAP - STUDENT_PEEK_WIDTH
@@ -262,46 +267,69 @@ export default function HomeScreen({ navigation }: any) {
   const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
   const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
   const [cardSetting, setCardSetting] = useState<any>(null);
+  const lastHandledReopenTimestampRef = useRef<number | null>(null);
 
   // Live Timeline Aktivitas Siswa (Fullday & Boarding) — dengan navigasi hari
   const [todayTimeline, setTodayTimeline] = useState<any>(null);
   const [loadingTimeline, setLoadingTimeline] = useState<boolean>(false);
+  const [realtimeBanner, setRealtimeBanner] = useState<{ title: string; subtitle: string; badge: string; type: string } | null>(null);
   const [activeTimelineTab, setActiveTimelineTab] = useState<'pelajaran' | 'sholat' | 'tahfizh' | 'mutabaah'>('pelajaran');
   const [selectedActivity, setSelectedActivity] = useState<any>(null);
 
-  // viewedDate: tanggal yang sedang ditampilkan di timeline (default = hari ini)
-  const todayDateStr = useMemo(() => {
+  // viewedDate: tanggal yang sedang ditampilkan di timeline (diselaraskan dengan tanggal operasional sistem sekolah)
+  const [serverTodayStr, setServerTodayStr] = useState<string>(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }, []);
-  const [viewedDate, setViewedDate] = useState<string>(todayDateStr);
+  });
+  const [viewedDate, setViewedDate] = useState<string>('');
+  const [isViewingToday, setIsViewingToday] = useState<boolean>(true);
 
-  const isViewingToday = viewedDate === todayDateStr;
+  const todayDateStr = serverTodayStr;
 
   const goToPrevDay = useCallback(() => {
+    setIsViewingToday(false);
     setViewedDate(prev => {
-      const d = new Date(prev);
+      const base = prev || serverTodayStr;
+      const d = new Date(base);
       d.setDate(d.getDate() - 1);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     });
-  }, []);
+  }, [serverTodayStr]);
 
   const goToNextDay = useCallback(() => {
     setViewedDate(prev => {
-      if (prev >= todayDateStr) return prev; // tidak bisa maju melampaui hari ini
-      const d = new Date(prev);
+      const base = prev || serverTodayStr;
+      if (base >= serverTodayStr) {
+        setIsViewingToday(true);
+        return serverTodayStr;
+      }
+      const d = new Date(base);
       d.setDate(d.getDate() + 1);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const nextDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (nextDate >= serverTodayStr) {
+        setIsViewingToday(true);
+        return serverTodayStr;
+      }
+      return nextDate;
     });
-  }, [todayDateStr]);
+  }, [serverTodayStr]);
 
-  const fetchTodayTimeline = useCallback(async (childId?: string, date?: string) => {
+  const fetchTodayTimeline = useCallback(async (childId?: string, date?: string, isTodayMode?: boolean) => {
     try {
       setLoadingTimeline(true);
-      const res = await mobileApiService.getTodayLiveTimeline(childId, date);
+      // Jika mode "Hari Ini", kirim undefined agar backend memakai tanggal operasional sekolah terkini
+      const targetDate = isTodayMode ? undefined : (date || undefined);
+      const res = await mobileApiService.getTodayLiveTimeline(childId, targetDate);
       const data = unwrapApiData<any>(res);
       if (data) {
         setTodayTimeline(data);
+        const resolvedDate = data.server_date || data.date;
+        if (resolvedDate) {
+          setServerTodayStr(resolvedDate);
+          if (isTodayMode || !date) {
+            setViewedDate(resolvedDate);
+          }
+        }
       }
     } catch (err) {
       console.warn('[HomeScreen] fetchTodayTimeline error:', err);
@@ -459,6 +487,28 @@ export default function HomeScreen({ navigation }: any) {
   const [studentCbtList, setStudentCbtList] = useState<any[]>([]);
   const [studentNotifFilter, setStudentNotifFilter] = useState<'all' | 'tugas' | 'cbt' | 'pengumuman'>('all');
 
+  // Modal Laporan Perkembangan Pekanan Siswa
+  const [showWeeklyReportModal, setShowWeeklyReportModal] = useState<boolean>(false);
+  const [selectedWeeklyStudent, setSelectedWeeklyStudent] = useState<any>(null);
+  const [weeklyReportLoading, setWeeklyReportLoading] = useState<boolean>(false);
+  const [weeklyReportData, setWeeklyReportData] = useState<any>(null);
+
+  const handleOpenWeeklyReport = useCallback(async (student: any) => {
+    setSelectedWeeklyStudent(student);
+    setShowWeeklyReportModal(true);
+    setWeeklyReportLoading(true);
+    const sId = student?.id || student?.student_id;
+    try {
+      const res = await mobileApiService.getPortalDashboard(sId ? String(sId) : undefined);
+      const payload = unwrapApiData<any>(res) || {};
+      setWeeklyReportData(payload);
+    } catch {
+      setWeeklyReportData(null);
+    } finally {
+      setWeeklyReportLoading(false);
+    }
+  }, []);
+
   const handleOpenStudentNotifications = useCallback(async (student: any) => {
     setSelectedNotificationStudent(student);
     setShowStudentNotificationModal(true);
@@ -497,7 +547,8 @@ export default function HomeScreen({ navigation }: any) {
   const handleChildPortalMenuClick = useCallback(
     (route: string, tabKey?: string) => {
       setShowChildPortalModal(false);
-      const childId = selectedPortalChild?.id || selectedPortalChild?.student_id;
+      const activeChild = parentChildren[activeChildIndex];
+      const childId = selectedPortalChild?.id || selectedPortalChild?.student_id || activeChild?.id || activeChild?.student_id;
       const isGeneralIslamic = route === 'Quran' || route === 'DoaDzikir';
       const navParams: Record<string, any> = {};
       if (tabKey) {
@@ -507,14 +558,35 @@ export default function HomeScreen({ navigation }: any) {
         navParams.child_id = String(childId);
         navParams.student_id = String(childId);
         navParams.single_child_only = true;
+        navParams.from_child_portal = true;
       }
       navigation.navigate(
         String(route),
         Object.keys(navParams).length > 0 ? navParams : undefined
       );
     },
-    [selectedPortalChild, navigation]
+    [selectedPortalChild, parentChildren, activeChildIndex, navigation]
   );
+
+  // Auto-sync santri terpilih saat pengguna kembali dari modul siswa
+  useEffect(() => {
+    const reopenChildId = route?.params?.reopen_child_portal_id;
+    const reopenTimestamp = route?.params?.reopen_timestamp;
+    if (reopenChildId && (!reopenTimestamp || reopenTimestamp !== lastHandledReopenTimestampRef.current)) {
+      if (reopenTimestamp) {
+        lastHandledReopenTimestampRef.current = reopenTimestamp;
+      }
+      const allChildren = parentChildren.length > 0 ? parentChildren : (useActiveChildStore.getState().children || []);
+      const targetIndex = allChildren.findIndex(
+        (c: any) => String(c.id || c.student_id) === String(reopenChildId)
+      );
+      if (targetIndex >= 0) {
+        setActiveChildIndex(targetIndex);
+        setSelectedPortalChild(allChildren[targetIndex]);
+      }
+      navigation.setParams({ reopen_child_portal_id: undefined, reopen_timestamp: undefined });
+    }
+  }, [route?.params?.reopen_child_portal_id, route?.params?.reopen_timestamp, parentChildren, navigation]);
 
   const childPortalMenus = useMemo(() => [
     { label: 'Jadwal', icon: 'clock-time-four', color: '#7C3AED', bg: '#F5F3FF', route: 'Jadwal' },
@@ -535,6 +607,10 @@ export default function HomeScreen({ navigation }: any) {
   const [activeMenuPage, setActiveMenuPage] = useState(0);
   const [isMenuExpanded, setIsMenuExpanded] = useState(false);
   const [showAllMenusModal, setShowAllMenusModal] = useState(false);
+  // Menu Utama disembunyikan sesuai permintaan pengguna (tidak dihapus agar mudah dimunculkan kembali)
+  const SHOW_MAIN_MENU = false;
+  // Menu Portal Orang Tua di Beranda disembunyikan sesuai permintaan pengguna (tidak dihapus agar mudah dimunculkan kembali)
+  const SHOW_PARENT_PORTAL_MENU = false;
 
   const toggleMenuExpansion = useCallback(() => {
     if (
@@ -550,6 +626,33 @@ export default function HomeScreen({ navigation }: any) {
     }
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setIsMenuExpanded((prev) => !prev);
+  }, []);
+
+  // Mode Collapse & Expand untuk Card Rangkuman 360°, Aktivitas Realtime, dan Tugas & Jadwal
+  const [isChildDetailsExpanded, setIsChildDetailsExpanded] = useState<boolean>(true);
+
+  const toggleChildDetailsExpanded = useCallback((forceState?: boolean) => {
+    if (
+      Platform.OS === 'android' &&
+      !(globalThis as any)?.nativeFabricUIManager &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
+      try {
+        UIManager.setLayoutAnimationEnabledExperimental(true);
+      } catch {
+        // no-op in New Architecture
+      }
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setIsChildDetailsExpanded((prev) => {
+      const nextState = typeof forceState === 'boolean' ? forceState : !prev;
+      if (nextState) {
+        setTimeout(() => {
+          mainScrollViewRef.current?.scrollTo?.({ y: 240, animated: true });
+        }, 120);
+      }
+      return nextState;
+    });
   }, []);
   const scrollY = useRef(new Animated.Value(0)).current;
 
@@ -680,11 +783,11 @@ export default function HomeScreen({ navigation }: any) {
             const curActive = chList[curIdx] || chList[0];
             const curId = curActive?.id || curActive?.student_id;
             if (curId) {
-              void fetchTodayTimeline(curId);
+              void fetchTodayTimeline(curId, undefined, true);
               void fetchHomeWidgets(curId);
             }
           } else {
-            void fetchTodayTimeline(undefined);
+            void fetchTodayTimeline(undefined, undefined, true);
             void fetchHomeWidgets(undefined);
           }
         }
@@ -792,6 +895,13 @@ export default function HomeScreen({ navigation }: any) {
     }
     if (parent) {
       return [
+        ['Pembayaran', 'wallet', '#E11D48', '#FFF1F4', 'Tagihan'],
+        ['Tagihan', 'file-document-outline', '#F59E0B', '#FFFDF5', 'Tagihan'],
+        ['Rekap Aktivitas', 'chart-bar', '#10B981', '#F0FDF4', 'Absensi'],
+        ['Perkembangan Anak', 'chart-line', '#059669', '#ECFDF5', 'Nilai'],
+        ['Laporan & Rapor', 'file-document', '#3B82F6', '#EFF6FF', 'Nilai'],
+        ['Buku Penghubung', 'book-open-page-variant', '#7C3AED', '#FAF5FF', 'Komentar'],
+        ['Agenda Orang Tua', 'calendar-check', '#10B981', '#F0FDF4', 'Kalender'],
         ['Al-Qur\'an', 'book-open-variant', '#059669', '#F0FDF4', 'Quran'],
         ['Doa & Dzikir', 'hands-pray', '#F97316', '#FFF7ED', 'DoaDzikir'],
         ['Kalender', 'calendar-month', '#2563EB', '#EFF6FF', 'Kalender'],
@@ -800,13 +910,11 @@ export default function HomeScreen({ navigation }: any) {
         ['Materi', 'book-multiple', '#059669', '#ECFDF5', 'Materi'],
         ['Tugas', 'clipboard-text', '#F59E0B', '#FEF9EC', 'Tugas'],
         ['Tahfizh', 'book-marker', '#2563EB', '#EFF6FF', 'Tahfizh'],
-        ['Nilai', 'chart-box', '#10B981', '#E8FAF2', 'Nilai'],
-        ['Komentar', 'chat-processing', '#2563EB', '#EFF6FF', 'Komentar'],
         ['Mutabaah', 'clipboard-check', '#F59E0B', '#FEF9EC', 'Mutabaah'],
         ['Absensi', 'account-check', '#7C3AED', '#F5F3FF', 'Absensi'],
         ['Kisi-kisi', 'file-question', '#EF4444', '#FEF2F2', 'KisiKisi'],
         ['Ujian CBT', 'laptop', '#2563EB', '#EFF6FF', 'CbtExams'],
-        ['Hasil Rapor', 'file-certificate', '#059669', '#ECFDF5', 'Nilai'],
+        ['Perizinan', 'file-document-edit', '#EF4444', '#FEF2F2', 'Perizinan'],
       ];
     }
     if (student) {
@@ -843,12 +951,24 @@ export default function HomeScreen({ navigation }: any) {
   }, [principal, foundation, superAdmin, teacher, parent, student]);
 
   const primaryMenuItems = useMemo(() => {
+    if (parent) {
+      return [
+        ['Pembayaran', 'wallet', '#E11D48', '#FFF1F4', 'Tagihan'],
+        ['Tagihan', 'file-document-outline', '#F59E0B', '#FFFDF5', 'Tagihan'],
+        ['Rekap Aktivitas', 'chart-bar', '#10B981', '#F0FDF4', 'Absensi'],
+        ['Perkembangan Anak', 'chart-line', '#059669', '#ECFDF5', 'Nilai'],
+        ['Laporan & Rapor', 'file-document', '#3B82F6', '#EFF6FF', 'Nilai'],
+        ['Buku Penghubung', 'book-open-page-variant', '#7C3AED', '#FAF5FF', 'Komentar'],
+        ['Agenda Orang Tua', 'calendar-check', '#10B981', '#F0FDF4', 'Kalender'],
+        ['Lihat Semua', 'view-grid-plus-outline', '#0D9488', '#E6FFFA', '__OPEN_MODAL__'],
+      ];
+    }
     const top7 = roleMenus.slice(0, 7);
     const toggleTile = isMenuExpanded
       ? ['Kembali', 'chevron-up', '#047857', '#DEF7EC', '__TOGGLE__']
       : ['Lainnya', 'view-grid-plus-outline', '#10B981', '#ECFDF5', '__TOGGLE__'];
     return [...top7, toggleTile];
-  }, [roleMenus, isMenuExpanded]);
+  }, [parent, roleMenus, isMenuExpanded]);
 
   const primaryRows = useMemo(() => {
     const rows: any[][] = [];
@@ -869,6 +989,10 @@ export default function HomeScreen({ navigation }: any) {
 
   const handleMenuNavigation = useCallback(
     (route: string, tabKey?: string) => {
+      if (route === '__OPEN_MODAL__' || route === 'Lihat Semua') {
+        setShowAllMenusModal(true);
+        return;
+      }
       if (route === 'Lainnya' || route === '__TOGGLE__') {
         toggleMenuExpansion();
         return;
@@ -884,7 +1008,7 @@ export default function HomeScreen({ navigation }: any) {
       if (parent && activeChildId && !isGeneralIslamic) {
         navParams.child_id = String(activeChildId);
         navParams.student_id = String(activeChildId);
-        navParams.single_child_only = true;
+        navParams.single_child_only = false;
       }
 
       navigation.navigate(
@@ -935,8 +1059,59 @@ export default function HomeScreen({ navigation }: any) {
 
   // Re-fetch saat child atau tanggal yang dilihat berubah
   useEffect(() => {
-    void fetchTodayTimeline(activeChildId, viewedDate);
-  }, [activeChildId, viewedDate, fetchTodayTimeline]);
+    void fetchTodayTimeline(activeChildId, viewedDate, isViewingToday);
+  }, [activeChildId, viewedDate, isViewingToday, fetchTodayTimeline]);
+
+  // Realtime WebSocket Subscription untuk Aktivitas Siswa (Presensi & Tahfizh Instant Zero-Delay)
+  useEffect(() => {
+    if (!activeChildId) return;
+
+    const channel = `student.${activeChildId}`;
+    const unsubscribe = realtimeWs.subscribe(channel, (eventData) => {
+      if (eventData.event === 'student.activity.logged') {
+        const activity = eventData.payload;
+        if (!activity) return;
+
+        // 1. Sisipkan ke urutan paling atas daftar aktivitas hari ini
+        setTodayTimeline((prev: any) => {
+          if (!prev) {
+            void fetchTodayTimeline(activeChildId, viewedDate, isViewingToday);
+            return prev;
+          }
+          const existingList = Array.isArray(prev.activities) ? prev.activities : [];
+          if (existingList.some((item: any) => item.id === activity.id)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            activities: [activity, ...existingList],
+          };
+        });
+
+        // 2. Munculkan In-App Pop-up Banner Real-Time
+        setRealtimeBanner({
+          title: activity.title || 'Aktivitas Baru',
+          subtitle: activity.subtitle || 'Tercatat di sistem',
+          badge: activity.badge_label || 'Baru',
+          type: activity.type || 'mapel',
+        });
+
+        // Auto-hide banner setelah 5 detik
+        setTimeout(() => {
+          setRealtimeBanner(null);
+        }, 5000);
+
+        // 3. Refresh widget jika aktivitas tahfizh
+        if (activity.type === 'tahfizh') {
+          void fetchHomeWidgets(activeChildId);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [activeChildId, viewedDate, fetchTodayTimeline, fetchHomeWidgets]);
 
   // Fetch widget tugas & jadwal hari ini saat child aktif berubah
   useEffect(() => {
@@ -1061,6 +1236,68 @@ export default function HomeScreen({ navigation }: any) {
 
   return (
     <View style={styles.safeArea}>
+      {/* REALTIME IN-APP TOAST NOTIFICATION BANNER */}
+      {realtimeBanner && (
+        <View
+          style={{
+            position: 'absolute',
+            top: topInset + 10,
+            left: 16,
+            right: 16,
+            zIndex: 9999,
+            backgroundColor: '#064E3B',
+            borderRadius: 16,
+            padding: 14,
+            flexDirection: 'row',
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.25,
+            shadowRadius: 10,
+            elevation: 12,
+            borderWidth: 1.5,
+            borderColor: '#34D399',
+          }}
+        >
+          <View
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 12,
+              backgroundColor: '#10B981',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 12,
+            }}
+          >
+            <MaterialCommunityIcons
+              name={realtimeBanner.type === 'tahfizh' ? 'book-open-page-variant' : 'account-check'}
+              size={22}
+              color="#FFFFFF"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ color: '#A7F3D0', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>
+                Aktivitas Baru Real-Time
+              </Text>
+              <View style={{ backgroundColor: '#059669', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 6 }}>
+                <Text style={{ color: '#FFFFFF', fontSize: 9, fontWeight: 'bold' }}>{realtimeBanner.badge}</Text>
+              </View>
+            </View>
+            <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: 'bold', marginTop: 2 }} numberOfLines={1}>
+              {realtimeBanner.title}
+            </Text>
+            <Text style={{ color: '#D1FAE5', fontSize: 11 }} numberOfLines={1}>
+              {realtimeBanner.subtitle}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => setRealtimeBanner(null)} style={{ padding: 4, marginLeft: 8 }}>
+            <MaterialCommunityIcons name="close" size={18} color="#A7F3D0" />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* 1. STICKY COMPACT APP BAR (Hanya Avatar Profil, Nama, dan Icon Bell saat di-scroll) */}
       <Animated.View
         pointerEvents="box-none"
@@ -1137,6 +1374,7 @@ export default function HomeScreen({ navigation }: any) {
 
       {/* 2. MAIN SCROLLABLE DASHBOARD BODY */}
       <Animated.ScrollView
+        ref={mainScrollViewRef}
         style={styles.screen}
         contentContainerStyle={styles.mainScrollContent}
         onScroll={handleMainScroll}
@@ -1202,7 +1440,11 @@ export default function HomeScreen({ navigation }: any) {
                   minimumFontScale={0.75}
                   style={styles.headerAppTitleText}
                 >
-                  DI SIMSIT DAR EL - IMAN
+                  {mobileConfig.branding?.school_name
+                    ? `DI ${mobileConfig.branding.school_name.toUpperCase()}`
+                    : (mobileConfig.branding?.app_name
+                    ? `DI ${mobileConfig.branding.app_name.toUpperCase()}`
+                    : 'DI SIMSIT')}
                 </Text>
               </View>
             </View>
@@ -1362,10 +1604,32 @@ export default function HomeScreen({ navigation }: any) {
                         <TouchableOpacity
                           activeOpacity={0.75}
                           onPress={() => void handleOpenStudentNotifications(student)}
-                          style={styles.studentQrBtn}
+                          style={[styles.studentQrBtn, { position: 'relative' }]}
                           accessibilityLabel="Pengingat & Notifikasi Siswa"
                         >
                           <MaterialCommunityIcons name="bell-ring-outline" size={19} color="#18A165" />
+                          <View
+                            style={{
+                              position: 'absolute',
+                              top: -2,
+                              right: -2,
+                              width: 10,
+                              height: 10,
+                              borderRadius: 5,
+                              backgroundColor: '#EF4444',
+                              borderWidth: 1.5,
+                              borderColor: '#FFFFFF',
+                            }}
+                          />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          activeOpacity={0.75}
+                          onPress={() => handleOpenWeeklyReport(student)}
+                          style={styles.studentQrBtn}
+                          accessibilityLabel="Laporan Perkembangan Pekanan Siswa"
+                        >
+                          <MaterialCommunityIcons name="clipboard-text-outline" size={19} color="#18A165" />
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -1435,13 +1699,33 @@ export default function HomeScreen({ navigation }: any) {
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={() => {
-                          setSelectedPortalChild(student);
-                          setShowChildPortalModal(true);
+                          const isThisActive = activeChildIndex === sIdx;
+                          if (!isThisActive) {
+                            setActiveChildIndex(sIdx);
+                            setSelectedPortalChild(student);
+                            const sid = student?.id || student?.student_id;
+                            if (sid) {
+                              useActiveChildStore.getState().setActiveChildId(sid);
+                            }
+                            toggleChildDetailsExpanded(true);
+                          } else {
+                            toggleChildDetailsExpanded(!isChildDetailsExpanded);
+                          }
                         }}
-                        style={styles.studentActionBtnPrimary}
+                        style={[
+                          styles.studentActionBtnPrimary,
+                          isChildDetailsExpanded && activeChildIndex === sIdx && styles.studentActionBtnClose,
+                        ]}
                       >
-                        <MaterialCommunityIcons name="view-grid" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.studentActionBtnPrimaryText}>Portal</Text>
+                        <MaterialCommunityIcons
+                          name={isChildDetailsExpanded && activeChildIndex === sIdx ? 'chevron-up' : 'view-grid-outline'}
+                          size={14}
+                          color="#FFFFFF"
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={styles.studentActionBtnPrimaryText}>
+                          {isChildDetailsExpanded && activeChildIndex === sIdx ? 'Tutup' : 'Menu'}
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </LinearGradient>
@@ -1485,9 +1769,277 @@ export default function HomeScreen({ navigation }: any) {
         <View style={styles.curvedSheetBody}>
 
         {/* ============================================================ */}
-        {/* EXECUTIVE DAILY 360° HUB (Khusus Orang Tua / Siswa Aktif)    */}
+        {/* KONTAINER MENU PORTAL ORANG TUA (Sesuai Style Menu Siswa)   */}
         {/* ============================================================ */}
-        {parent && activeStudent && (
+        {(SHOW_PARENT_PORTAL_MENU && parent) ? (
+          <View style={styles.childPortalMenuContainer}>
+            {/* Header Kontainer Menu Portal Orang Tua */}
+            <View style={styles.childPortalMenuHeader}>
+              <View style={styles.childPortalMenuHeaderLeft}>
+                <View style={styles.childPortalMenuHeaderIconBox}>
+                  <MaterialCommunityIcons name="account-group" size={18} color="#059669" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={styles.childPortalMenuHeaderTitle}>
+                    Portal Orang Tua · {activeStudent?.nama_lengkap || activeStudent?.nama || activeStudent?.name || 'Ananda'}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.childPortalMenuHeaderSub}>
+                    Layanan & Pemantauan Santri Terpadu
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => setShowAllMenusModal(true)}
+                style={styles.childPortalBadge}
+              >
+                <Text style={styles.childPortalBadgeText}>Semua Menu</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Grid 4 Kolom Menu Portal Orang Tua */}
+            <View style={styles.childPortalGrid}>
+              {primaryMenuItems.map(([label, icon, color, bgPastel, route], idx) => {
+                const isModalTile = route === '__OPEN_MODAL__' || label === 'Lihat Semua';
+                const tabKey = isModalTile ? undefined : (primaryMenuItems[idx] as any)?.[5];
+                return (
+                  <TouchableOpacity
+                    key={`parent-menu-${idx}`}
+                    activeOpacity={0.75}
+                    style={styles.childPortalGridItem}
+                    onPress={() => {
+                      if (isModalTile) {
+                        setShowAllMenusModal(true);
+                      } else {
+                        handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined);
+                      }
+                    }}
+                  >
+                    <View style={[styles.childPortalIconSquircle, { backgroundColor: bgPastel }]}>
+                      <MaterialCommunityIcons
+                        name={String(icon) as any}
+                        size={28}
+                        color={String(color)}
+                      />
+                    </View>
+                    <Text
+                      numberOfLines={2}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                      style={styles.childPortalMenuLabel}
+                    >
+                      {String(label)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ) : SHOW_MAIN_MENU ? (
+          <View style={styles.menuCardContainer}>
+            {/* Baris Utama (Tepat 4 Ikon per Baris) */}
+            {primaryRows.map((rowItems, rIdx) => (
+              <View
+                key={`prim-${rIdx}`}
+                style={[
+                  styles.menuRow,
+                  (!isMenuExpanded && rIdx === primaryRows.length - 1) && styles.menuRowLast,
+                ]}
+              >
+                {rowItems.map(([label, icon, color, bgPastel, route], idx) => {
+                  const isModalTile = route === '__OPEN_MODAL__' || label === 'Lihat Semua';
+                  const isToggleTile = route === '__TOGGLE__';
+                  const tabKey = (isToggleTile || isModalTile) ? undefined : (primaryMenuItems[rIdx * 4 + idx] as any)?.[5];
+                  const subtitle = MENU_SUBTITLES[String(label)] || 'Menu layanan';
+                  return (
+                    <TouchableOpacity
+                      key={idx}
+                      activeOpacity={0.75}
+                      style={[styles.menuCardTile, { backgroundColor: bgPastel }]}
+                      onPress={() => {
+                        if (isModalTile) {
+                          setShowAllMenusModal(true);
+                        } else if (isToggleTile) {
+                          toggleMenuExpansion();
+                        } else {
+                          handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined);
+                        }
+                      }}
+                    >
+                      <View style={styles.menuIconCircleHalo}>
+                        <MaterialCommunityIcons
+                          name={String(icon) as never}
+                          size={28}
+                          color={String(color)}
+                        />
+                      </View>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                        style={styles.menuTileTitle}
+                      >
+                        {String(label)}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        style={styles.menuTileSubtitle}
+                      >
+                        {subtitle}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {rowItems.length < 4 &&
+                  Array.from({ length: 4 - rowItems.length }).map((_, emptyIdx) => (
+                    <View key={`prim-spacer-${emptyIdx}`} style={styles.menuCardTileSpacer} />
+                  ))}
+              </View>
+            ))}
+
+            {/* Baris Tambahan saat di-Expand (Tepat 4 Ikon per Baris) */}
+            {isMenuExpanded &&
+              expandedRows.map((rowItems, rIdx) => (
+                <View
+                  key={`exp-${rIdx}`}
+                  style={[
+                    styles.menuRow,
+                    rIdx === expandedRows.length - 1 && styles.menuRowLast,
+                  ]}
+                >
+                  {rowItems.map(([label, icon, color, bgPastel, route], idx) => {
+                    const remainingIndex = rIdx * 4 + idx;
+                    const originalRemaining = roleMenus.slice(7);
+                    const tabKey = (originalRemaining[remainingIndex] as any)?.[5];
+                    const subtitle = MENU_SUBTITLES[String(label)] || 'Menu layanan';
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        activeOpacity={0.75}
+                        style={[styles.menuCardTile, { backgroundColor: bgPastel }]}
+                        onPress={() => handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined)}
+                      >
+                        <View style={styles.menuIconCircleHalo}>
+                          <MaterialCommunityIcons
+                            name={String(icon) as never}
+                            size={28}
+                            color={String(color)}
+                          />
+                        </View>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.8}
+                          style={styles.menuTileTitle}
+                        >
+                          {String(label)}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.75}
+                          style={styles.menuTileSubtitle}
+                        >
+                          {subtitle}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {rowItems.length < 4 &&
+                    Array.from({ length: 4 - rowItems.length }).map((_, emptyIdx) => (
+                      <View key={`exp-spacer-${emptyIdx}`} style={styles.menuCardTileSpacer} />
+                    ))}
+                </View>
+              ))}
+          </View>
+        ) : null}
+
+
+
+        {/* ============================================================ */}
+        {/* CARD BANNER: PORTAL ORANG TUA (Tepat di Atas Menu Siswa)     */}
+        {/* ============================================================ */}
+        {parent && (
+          <TouchableOpacity
+            activeOpacity={0.88}
+            style={styles.parentPortalBannerCard}
+            onPress={() => setShowAllMenusModal(true)}
+          >
+            <View style={styles.parentPortalBannerIconCircle}>
+              <MaterialCommunityIcons name="account-group" size={24} color="#4338CA" />
+            </View>
+            <View style={styles.parentPortalBannerTextWrap}>
+              <Text style={styles.parentPortalBannerTitle}>Portal Orang Tua</Text>
+              <Text style={styles.parentPortalBannerSubtitle}>
+                Layanan & kebutuhan terpadu orang tua
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={22} color="#7C3AED" />
+          </TouchableOpacity>
+        )}
+
+        {/* ============================================================ */}
+        {/* KONTAINER MENU LAYANAN SISWA (PORTAL SISWA)                  */}
+        {/* ============================================================ */}
+        {Boolean(student || activeStudent || parent) && (
+          <View style={styles.childPortalMenuContainer}>
+            {/* Header Kontainer Menu */}
+            <View style={styles.childPortalMenuHeader}>
+              <View style={styles.childPortalMenuHeaderLeft}>
+                <View style={styles.childPortalMenuHeaderIconBox}>
+                  <MaterialCommunityIcons name="view-grid-plus" size={18} color="#059669" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 2 }}>
+                  <Text numberOfLines={1} style={styles.childPortalMenuHeaderTitle}>
+                    Menu Siswa · {activeStudent?.nama_lengkap || activeStudent?.nama || activeStudent?.name || 'Ananda'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                    <View style={styles.childPortalBadge}>
+                      <Text style={styles.childPortalBadgeText}>Layanan Terpadu</Text>
+                    </View>
+                    <Text numberOfLines={1} style={styles.childPortalMenuHeaderSub}>
+                      {activeStudent?.kelas?.nama_kelas || activeStudent?.kelas?.name || activeStudent?.class_name || 'Portal Akademik & Ibadah'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {/* Grid 4 Kolom Menu Siswa */}
+            <View style={styles.childPortalGrid}>
+              {childPortalMenus.map((item, idx) => (
+                <TouchableOpacity
+                  key={`child-menu-${idx}`}
+                  activeOpacity={0.75}
+                  style={styles.childPortalGridItem}
+                  onPress={() => handleChildPortalMenuClick(item.route, item.tab)}
+                >
+                  <View style={[styles.childPortalIconSquircle, { backgroundColor: item.bg }]}>
+                    <MaterialCommunityIcons name={item.icon as any} size={28} color={item.color} />
+                  </View>
+                  <Text
+                    numberOfLines={2}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                    style={styles.childPortalMenuLabel}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* ============================================================ */}
+        {/* EXECUTIVE DAILY 360° HUB (Khusus Orang Tua / Siswa Aktif)    */}
+        {/* Tampil Tepat di Bawah Menu Utama dengan Nama Ananda Aktif    */}
+        {/* ============================================================ */}
+        {Boolean(
+          ((!parent && (student || activeStudent)) || (parent && activeStudent && isChildDetailsExpanded))
+        ) && (
           <View style={styles.hubContainer}>
             {/* Hub Header with Pulse Dot */}
             <View style={styles.hubHeaderRow}>
@@ -1495,9 +2047,16 @@ export default function HomeScreen({ navigation }: any) {
                 <View style={styles.hubHeaderIconBox}>
                   <MaterialCommunityIcons name="view-dashboard-variant-outline" size={17} color="#059669" />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text numberOfLines={1} style={styles.hubHeaderTitle}>Rangkuman Harian Ananda</Text>
-                  <Text numberOfLines={1} style={styles.hubHeaderSubtitle}>Kehadiran, tugas, hafalan, & ibadah hari ini</Text>
+                <View style={{ flex: 1, marginLeft: 2 }}>
+                  <Text numberOfLines={1} style={styles.hubHeaderTitle}>
+                    Rangkuman Harian
+                  </Text>
+                  <Text numberOfLines={1} style={styles.hubHeaderStudentName}>
+                    Santri: {activeStudent?.nama_lengkap || activeStudent?.nama || activeStudent?.name || 'Ananda'}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.hubHeaderSubtitle}>
+                    Kehadiran, tugas LMS, hafalan, & ibadah hari ini
+                  </Text>
                 </View>
               </View>
               <View style={styles.hubLiveBadge}>
@@ -1633,128 +2192,12 @@ export default function HomeScreen({ navigation }: any) {
           </View>
         )}
 
-        {/* SECTION: Menu Utama (Expandable Card Container) */}
-        <View style={styles.menuCardContainer}>
-          {/* Baris Utama (2 Baris Pertama, Tepat 4 Ikon per Baris, Ikon ke-8 di Sebelah Tugas adalah Tombol Expand/Kembali) */}
-          {primaryRows.map((rowItems, rIdx) => (
-            <View
-              key={`prim-${rIdx}`}
-              style={[
-                styles.menuRow,
-                (!isMenuExpanded && rIdx === primaryRows.length - 1) && styles.menuRowLast,
-              ]}
-            >
-              {rowItems.map(([label, icon, color, bgPastel, route], idx) => {
-                const isToggleTile = route === '__TOGGLE__';
-                const tabKey = isToggleTile ? undefined : (primaryMenuItems[rIdx * 4 + idx] as any)?.[5];
-                const subtitle = MENU_SUBTITLES[String(label)] || 'Menu layanan';
-                return (
-                  <TouchableOpacity
-                    key={idx}
-                    activeOpacity={0.75}
-                    style={[styles.menuCardTile, { backgroundColor: bgPastel }]}
-                    onPress={() => {
-                      if (isToggleTile) {
-                        toggleMenuExpansion();
-                      } else {
-                        handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined);
-                      }
-                    }}
-                  >
-                    <View style={styles.menuIconCircleHalo}>
-                      <MaterialCommunityIcons
-                        name={String(icon) as never}
-                        size={28}
-                        color={String(color)}
-                      />
-                    </View>
-                    <Text
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.8}
-                      style={styles.menuTileTitle}
-                    >
-                      {String(label)}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.75}
-                      style={styles.menuTileSubtitle}
-                    >
-                      {subtitle}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-              {rowItems.length < 4 &&
-                Array.from({ length: 4 - rowItems.length }).map((_, emptyIdx) => (
-                  <View key={`prim-spacer-${emptyIdx}`} style={styles.menuCardTileSpacer} />
-                ))}
-            </View>
-          ))}
-
-          {/* Baris Tambahan saat di-Expand (Tepat 4 Ikon per Baris) */}
-          {isMenuExpanded &&
-            expandedRows.map((rowItems, rIdx) => (
-              <View
-                key={`exp-${rIdx}`}
-                style={[
-                  styles.menuRow,
-                  rIdx === expandedRows.length - 1 && styles.menuRowLast,
-                ]}
-              >
-                {rowItems.map(([label, icon, color, bgPastel, route], idx) => {
-                  const remainingIndex = rIdx * 4 + idx;
-                  const originalRemaining = roleMenus.slice(7);
-                  const tabKey = (originalRemaining[remainingIndex] as any)?.[5];
-                  const subtitle = MENU_SUBTITLES[String(label)] || 'Menu layanan';
-                  return (
-                    <TouchableOpacity
-                      key={idx}
-                      activeOpacity={0.75}
-                      style={[styles.menuCardTile, { backgroundColor: bgPastel }]}
-                      onPress={() => handleMenuNavigation(String(route), tabKey ? String(tabKey) : undefined)}
-                    >
-                      <View style={styles.menuIconCircleHalo}>
-                        <MaterialCommunityIcons
-                          name={String(icon) as never}
-                          size={28}
-                          color={String(color)}
-                        />
-                      </View>
-                      <Text
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.8}
-                        style={styles.menuTileTitle}
-                      >
-                        {String(label)}
-                      </Text>
-                      <Text
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.75}
-                        style={styles.menuTileSubtitle}
-                      >
-                        {subtitle}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-                {rowItems.length < 4 &&
-                  Array.from({ length: 4 - rowItems.length }).map((_, emptyIdx) => (
-                    <View key={`exp-spacer-${emptyIdx}`} style={styles.menuCardTileSpacer} />
-                  ))}
-              </View>
-            ))}
-        </View>
-
         {/* ============================================================ */}
         {/* ============================================================ */}
         {/* SECTION: Aktivitas Siswa Hari Berjalan (Realtime Feed)        */}
         {/* ============================================================ */}
-        <View style={styles.activityTimelineCard}>
+        {Boolean(!parent || (parent && isChildDetailsExpanded)) && (
+          <View style={styles.activityTimelineCard}>
           {/* Header Bar: Navigasi Hari + Tanggal + Status */}
           <View style={styles.activityTimelineHeaderRow}>
             {/* Tombol Panah Kiri (hari sebelumnya) */}
@@ -1773,6 +2216,9 @@ export default function HomeScreen({ navigation }: any) {
                 <MaterialCommunityIcons name="pulse" size={18} color="#059669" />
               </View>
               <View style={styles.activityTimelineTitleCol}>
+                <Text style={styles.activityTimelineStudentName} numberOfLines={1}>
+                  {activeStudent?.nama_lengkap || activeStudent?.nama || activeStudent?.name || 'Ananda'}
+                </Text>
                 <View style={styles.activityTimelineDateRow}>
                   <MaterialCommunityIcons name="calendar-check" size={12} color="#059669" style={{ marginRight: 3 }} />
                   <Text style={styles.activityTimelineDateTitle} numberOfLines={1}>
@@ -1784,9 +2230,6 @@ export default function HomeScreen({ navigation }: any) {
                     </View>
                   )}
                 </View>
-                <Text style={styles.activityTimelineSubtitle} numberOfLines={1}>
-                  {todayTimeline?.program?.label ? `${todayTimeline.program.label}` : 'Aktivitas hari berjalan'}
-                </Text>
               </View>
             </View>
 
@@ -1922,11 +2365,12 @@ export default function HomeScreen({ navigation }: any) {
             </View>
           )}
         </View>
+        )}
 
         {/* ============================================================ */}
         {/* SECTION: Widget Tugas Terbaru & Jadwal Hari Ini              */}
         {/* ============================================================ */}
-        {(student || parent) && (
+        {Boolean((!parent && (student || parent)) || (parent && isChildDetailsExpanded)) && (
           <View style={styles.homeWidgetRow}>
 
             {/* ── Card Kiri: Tugas Terbaru ── */}
@@ -1943,7 +2387,14 @@ export default function HomeScreen({ navigation }: any) {
                 <View style={[styles.homeWidgetIconBox, { backgroundColor: '#F5F3FF' }]}>
                   <MaterialCommunityIcons name="clipboard-text" size={18} color="#7C3AED" />
                 </View>
-                <Text style={styles.homeWidgetCardTitle}>Tugas Terbaru</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.homeWidgetCardTitle} numberOfLines={1}>Tugas Terbaru</Text>
+                  {activeStudent && (
+                    <Text numberOfLines={1} style={styles.homeWidgetCardStudentName}>
+                      {activeStudent?.nama_lengkap || activeStudent?.nama || activeStudent?.name || 'Ananda'}
+                    </Text>
+                  )}
+                </View>
               </View>
 
               {loadingHomeWidgets ? (
@@ -2011,7 +2462,14 @@ export default function HomeScreen({ navigation }: any) {
                 <View style={[styles.homeWidgetIconBox, { backgroundColor: '#EFF6FF' }]}>
                   <MaterialCommunityIcons name="calendar-today" size={18} color="#2563EB" />
                 </View>
-                <Text style={styles.homeWidgetCardTitle}>Jadwal Hari Ini</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.homeWidgetCardTitle} numberOfLines={1}>Jadwal Hari Ini</Text>
+                  {activeStudent && (
+                    <Text numberOfLines={1} style={styles.homeWidgetCardStudentName}>
+                      {activeStudent?.nama_lengkap || activeStudent?.nama || activeStudent?.name || 'Ananda'}
+                    </Text>
+                  )}
+                </View>
               </View>
 
               {loadingHomeWidgets ? (
@@ -2320,11 +2778,37 @@ export default function HomeScreen({ navigation }: any) {
                 </View>
 
                 <View style={styles.activityModalInfoItem}>
+                  <MaterialCommunityIcons name="account-tie-outline" size={18} color="#059669" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activityModalInfoLabel}>Guru / Musyrif Verifikator</Text>
+                    <Text style={styles.activityModalInfoVal}>
+                      {selectedActivity?.verifier_name
+                        ? `${selectedActivity.verifier_name} (${selectedActivity.verifier_role || 'Pengampu'})`
+                        : (selectedActivity?.subtitle?.includes('Guru: ')
+                            ? selectedActivity.subtitle.replace(/^.*?Guru:\s*/, 'Guru: ')
+                            : (selectedActivity?.subtitle?.includes('Musyrif: ')
+                                ? selectedActivity.subtitle.replace(/^.*?Musyrif:\s*/, 'Musyrif: ')
+                                : 'Ustadz / Ustadzah Pengampu'))}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.activityModalInfoItem}>
                   <MaterialCommunityIcons name="shield-check-outline" size={18} color="#059669" style={{ marginRight: 10 }} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.activityModalInfoLabel}>Status Validasi</Text>
                     <Text style={styles.activityModalInfoVal}>
-                      Telah terverifikasi oleh sistem sekolah / musyrif
+                      {selectedActivity?.verifier_name
+                        ? `Telah diverifikasi oleh ${selectedActivity.verifier_name} (${selectedActivity.verifier_role || 'Guru/Musyrif'})`
+                        : (selectedActivity?.subtitle?.includes('Guru: ')
+                            ? `Telah diverifikasi oleh Guru Mapel (${selectedActivity.subtitle.replace(/^.*?Guru:\s*/, '')})`
+                            : (selectedActivity?.subtitle?.includes('Musyrif: ')
+                                ? `Telah diverifikasi oleh Musyrif Pembina (${selectedActivity.subtitle.replace(/^.*?Musyrif:\s*/, '')})`
+                                : (selectedActivity?.type === 'tahfizh'
+                                    ? 'Telah diverifikasi oleh Guru Pembimbing Tahfizh'
+                                    : (selectedActivity?.type === 'sholat'
+                                        ? 'Telah diverifikasi oleh Musyrif Pembina Asrama'
+                                        : 'Telah diverifikasi resmi oleh Guru Pengampu'))))}
                     </Text>
                   </View>
                 </View>
@@ -2537,9 +3021,15 @@ export default function HomeScreen({ navigation }: any) {
                             </View>
                           )}
                           <View style={styles.webCardBrandCol}>
-                            <Text style={styles.webCardYayasanLabel}>YAYASAN</Text>
-                            <Text numberOfLines={1} style={styles.webCardBrandName}>DAR EL-IMAN</Text>
-                            <Text style={styles.webCardSchoolSub}>Islamic School</Text>
+                            <Text style={styles.webCardYayasanLabel}>
+                              {mobileConfig.branding?.school_name?.toUpperCase().includes('YAYASAN') ? 'LEMBAGA' : 'YAYASAN'}
+                            </Text>
+                            <Text numberOfLines={1} style={styles.webCardBrandName}>
+                              {mobileConfig.branding?.school_name || selectedIdCardStudent?.education_unit?.name || 'SEKOLAH'}
+                            </Text>
+                            <Text style={styles.webCardSchoolSub}>
+                              {selectedIdCardStudent?.education_unit?.name || 'Islamic School'}
+                            </Text>
                           </View>
                         </View>
 
@@ -2551,7 +3041,7 @@ export default function HomeScreen({ navigation }: any) {
                           {showCardMotto && (
                             <View style={styles.webCardMottoBox}>
                               <Text style={[styles.webCardMottoText, { color: activeCardTheme.primary }]}>
-                                Berilmu, Berakhlak, Beramal
+                                {cardSetting?.motto || selectedIdCardStudent?.education_unit?.metadata?.motto || 'Berilmu, Berakhlak, Beramal'}
                               </Text>
                               <MaterialCommunityIcons name="star-four-points" size={10} color={activeCardTheme.accent} style={{ alignSelf: 'flex-end', marginTop: 1 }} />
                             </View>
@@ -2716,9 +3206,15 @@ export default function HomeScreen({ navigation }: any) {
                             </View>
                           )}
                           <View style={styles.webCardBrandCol}>
-                            <Text style={styles.webCardYayasanLabel}>YAYASAN</Text>
-                            <Text numberOfLines={1} style={styles.webCardBrandName}>DAR EL-IMAN</Text>
-                            <Text style={styles.webCardSchoolSub}>Sistem Terpadu SIMSIT</Text>
+                            <Text style={styles.webCardYayasanLabel}>
+                              {mobileConfig.branding?.school_name?.toUpperCase().includes('YAYASAN') ? 'LEMBAGA' : 'YAYASAN'}
+                            </Text>
+                            <Text numberOfLines={1} style={styles.webCardBrandName}>
+                              {mobileConfig.branding?.school_name || selectedIdCardStudent?.education_unit?.name || 'SEKOLAH'}
+                            </Text>
+                            <Text style={styles.webCardSchoolSub}>
+                              {selectedIdCardStudent?.education_unit?.name || mobileConfig.branding?.app_name || 'Sistem Terpadu SIMSIT'}
+                            </Text>
                           </View>
                         </View>
 
@@ -2739,7 +3235,7 @@ export default function HomeScreen({ navigation }: any) {
                           <View style={styles.webCardBackList}>
                             <Text style={styles.webCardBackItem}>
                               <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>1. </Text>
-                              Kartu ini adalah kartu identitas resmi siswa Yayasan Dar el-Iman.
+                              Kartu ini adalah kartu identitas resmi siswa {mobileConfig.branding?.school_name || selectedIdCardStudent?.education_unit?.name || 'sekolah'}.
                             </Text>
                             <Text style={styles.webCardBackItem}>
                               <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>2. </Text>
@@ -3002,11 +3498,16 @@ export default function HomeScreen({ navigation }: any) {
         onRequestClose={() => setShowAllMenusModal(false)}
       >
         <View style={[styles.qrModalBackdrop, { justifyContent: 'flex-end', padding: 0 }]}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowAllMenusModal(false)}
+          />
           <View style={styles.allMenusModalContent}>
             <View style={styles.allMenusModalHeader}>
               <View>
                 <Text style={styles.allMenusModalTitle}>Semua Menu</Text>
-                <Text style={styles.allMenusModalSub}>Pilih layanan & modul sistem</Text>
+                <Text style={styles.allMenusModalSub}>Pilih layanan & modul sistem terpadu</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowAllMenusModal(false)}
@@ -3016,7 +3517,10 @@ export default function HomeScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.allMenusGridScroll}>
+            <ScrollView
+              contentContainerStyle={styles.allMenusGridScroll}
+              showsVerticalScrollIndicator={false}
+            >
               <View style={styles.allMenusGrid}>
                 {roleMenus.map(([label, icon, color, bgPastel, route], idx) => (
                   <TouchableOpacity
@@ -3595,7 +4099,12 @@ export default function HomeScreen({ navigation }: any) {
                 onPress={() => {
                   setShowChildPortalModal(false);
                   const childId = selectedPortalChild?.id || selectedPortalChild?.student_id;
-                  navigation.navigate('Orang Tua', childId ? { child_id: String(childId), student_id: String(childId), single_child_only: true } : undefined);
+                  navigation.navigate('Orang Tua', childId ? {
+                    child_id: String(childId),
+                    student_id: String(childId),
+                    single_child_only: true,
+                    from_child_portal: true,
+                  } : undefined);
                 }}
               >
                 <MaterialCommunityIcons name="view-dashboard-outline" size={18} color="#059669" style={{ marginRight: 6 }} />
@@ -3806,18 +4315,25 @@ export default function HomeScreen({ navigation }: any) {
                       {studentAssignmentsList.map((item: any, tIdx: number) => {
                         const sId = selectedNotificationStudent?.id || selectedNotificationStudent?.student_id;
                         const deadline = item.due_date || item.deadline || item.tanggal_jatuh_tempo || '';
+                        const isQuiz = item.jenis_tugas === 'quiz' || 
+                                       item.type === 'quiz' || 
+                                       (item.title || item.judul || '').toLowerCase().includes('kuis');
+
                         return (
                           <TouchableOpacity
                             key={item.id || tIdx}
                             activeOpacity={0.82}
                             onPress={() => {
                               setShowStudentNotificationModal(false);
-                              navigation.navigate('Tugas', sId ? { child_id: String(sId), student_id: String(sId) } : undefined);
+                              navigation.navigate('Tugas', {
+                                ...(sId ? { child_id: String(sId), student_id: String(sId) } : {}),
+                                target_assignment_id: String(item.id),
+                              });
                             }}
                             style={{
-                              backgroundColor: '#FFFBEB',
-                              borderColor: '#FDE68A',
-                              borderWidth: 1,
+                              backgroundColor: isQuiz ? '#FAF5FF' : '#FFFBEB',
+                              borderColor: isQuiz ? '#E9D5FF' : '#FDE68A',
+                              borderWidth: 1.5,
                               borderRadius: 14,
                               padding: 12,
                               marginBottom: 8,
@@ -3825,24 +4341,31 @@ export default function HomeScreen({ navigation }: any) {
                           >
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                               <View style={{ flex: 1, marginRight: 8 }}>
-                                <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '800', color: '#92400E' }}>
-                                  {item.title || item.judul || 'Tugas Siswa'}
-                                </Text>
-                                <Text style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                                  {isQuiz && <MaterialCommunityIcons name="lightning-bolt" size={14} color="#7C3AED" />}
+                                  <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '800', color: isQuiz ? '#581C87' : '#92400E', flex: 1 }}>
+                                    {item.title || item.judul || (isQuiz ? 'Kuis CBT Siswa' : 'Tugas Siswa')}
+                                  </Text>
+                                </View>
+                                <Text style={{ fontSize: 11, color: isQuiz ? '#7C3AED' : '#B45309' }}>
                                   {item.subject?.name || item.mapel || 'Mata Pelajaran'} · {item.teacher?.name || item.guru || 'Guru Pengampu'}
                                 </Text>
                               </View>
-                              <View style={{ backgroundColor: '#F59E0B', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-                                <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>LMS</Text>
+                              <View style={{ backgroundColor: isQuiz ? '#7C3AED' : '#F59E0B', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                                <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>
+                                  {isQuiz ? '⚡ KUIS' : 'TUGAS'}
+                                </Text>
                               </View>
                             </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#FEF3C7' }}>
-                              <Text style={{ fontSize: 11, color: '#B45309', fontWeight: '600' }}>
-                                ⏰ Batas: {deadline ? deadline : 'Segera kumpulkan'}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: isQuiz ? '#F3E8FF' : '#FEF3C7' }}>
+                              <Text style={{ fontSize: 11, color: isQuiz ? '#6B21A8' : '#B45309', fontWeight: '600' }}>
+                                {isQuiz && item.durasi_menit ? `⏱️ ${item.durasi_menit} mnt · ` : ''}⏰ Batas: {deadline ? deadline : 'Segera kerjakan'}
                               </Text>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706' }}>Buka Tugas</Text>
-                                <MaterialCommunityIcons name="chevron-right" size={14} color="#D97706" />
+                                <Text style={{ fontSize: 11, fontWeight: '800', color: isQuiz ? '#7C3AED' : '#D97706' }}>
+                                  {isQuiz ? 'Kerjakan Kuis' : 'Buka Tugas'}
+                                </Text>
+                                <MaterialCommunityIcons name="chevron-right" size={14} color={isQuiz ? '#7C3AED' : '#D97706'} />
                               </View>
                             </View>
                           </TouchableOpacity>
@@ -3942,6 +4465,226 @@ export default function HomeScreen({ navigation }: any) {
                 <MaterialCommunityIcons name="arrow-right" size={15} color="#475569" style={{ marginLeft: 4 }} />
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ══════════════════════════════════════════════════════════════
+          MODAL: LAPORAN PERKEMBANGAN PEKANAN SISWA (ORANG TUA & SISWA)
+         ══════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={showWeeklyReportModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowWeeklyReportModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.65)', justifyContent: 'flex-end' }}>
+          <View style={{ width: '100%', maxHeight: '92%', backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
+            {/* Header Modal */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center' }}>
+                  <MaterialCommunityIcons name="file-document-check-outline" size={22} color="#059669" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }}>
+                    Laporan Perkembangan Pekanan
+                  </Text>
+                  <Text numberOfLines={1} style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
+                    {selectedWeeklyStudent?.full_name || selectedWeeklyStudent?.nama_lengkap || selectedWeeklyStudent?.name || 'Shezakia Mufidah Alfirdausi'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowWeeklyReportModal(false)}
+                style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {weeklyReportLoading ? (
+              <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator size="large" color="#059669" />
+                <Text style={{ marginTop: 12, fontSize: 13, color: '#64748B', fontWeight: '600' }}>
+                  Memuat data perkembangan ananda...
+                </Text>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
+                {/* Kop & Info Card */}
+                <View style={{ backgroundColor: '#F8FAFC', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Image
+                        source={require('../../assets/logo.png')}
+                        style={{ width: 22, height: 22, resizeMode: 'contain' }}
+                      />
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#064E3B' }}>
+                        {mobileConfig.branding?.school_name?.toUpperCase() || selectedWeeklyStudent?.education_unit?.name?.toUpperCase() || 'LEMBAGA PENDIDIKAN'}
+                      </Text>
+                    </View>
+                    <View style={{ backgroundColor: '#D1FAE5', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                      <Text style={{ fontSize: 9.5, fontWeight: '800', color: '#047857' }}>
+                        {selectedWeeklyStudent?.education_unit?.metadata?.akreditasi
+                          ? `Terakreditasi ${selectedWeeklyStudent.education_unit.metadata.akreditasi}`
+                          : (selectedWeeklyStudent?.education_unit?.level ? `Jenjang ${selectedWeeklyStudent.education_unit.level}` : 'Terakreditasi Resmi')}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                    {selectedWeeklyStudent?.education_unit?.name || selectedWeeklyStudent?.unit || 'Unit Pendidikan'}
+                  </Text>
+                  <Text style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>
+                    {weeklyReportData?.academic_context?.date
+                      ? `Periode: ${weeklyReportData.academic_context.date}`
+                      : (weeklyReportData?.academic_context?.academic_year
+                      ? `Tahun Ajaran ${weeklyReportData.academic_context.academic_year}`
+                      : 'Periode Berjalan')}
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 11, color: '#334155' }}>
+                      Kelas: <Text style={{ fontWeight: '800' }}>{selectedWeeklyStudent?.kelas?.nama_kelas || selectedWeeklyStudent?.kelas || selectedWeeklyStudent?.rombel || weeklyReportData?.student?.kelas?.nama_kelas || '-'}</Text>
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#334155' }}>
+                      Wali Kelas: <Text style={{ fontWeight: '800' }}>{selectedWeeklyStudent?.wali_kelas || selectedWeeklyStudent?.homeroom_teacher || weeklyReportData?.student?.wali_kelas || weeklyReportData?.latest_note?.teacher_name || '-'}</Text>
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 1. KEDISIPLINAN & KEHADIRAN PAGI */}
+                <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <MaterialCommunityIcons name="alarm-check" size={16} color="#059669" />
+                    <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                      1. Kedisiplinan & Kehadiran Pagi
+                    </Text>
+                  </View>
+                  <View style={{ backgroundColor: '#ECFDF5', borderRadius: 10, padding: 10, flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <View>
+                      <Text style={{ fontSize: 10, color: '#047857', fontWeight: '600' }}>Tingkat Kehadiran</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#064E3B' }}>
+                        {weeklyReportData?.kpi?.attendance_rate != null
+                          ? `${weeklyReportData.kpi.attendance_rate}% Hadir`
+                          : (weeklyReportData?.attendance_today || 'Tercatat Hadir')}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ fontSize: 10, color: '#047857', fontWeight: '600' }}>Perizinan Resmi</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#047857' }}>
+                        {weeklyReportData?.parent_summary?.perizinan?.count ? `${weeklyReportData.parent_summary.perizinan.count} Izin` : 'Nihil (-)'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 2. ABSENSI SHALAT BERJAMAAH / MUTABAAH */}
+                <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <MaterialCommunityIcons name="mosque" size={16} color="#0284C7" />
+                    <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                      2. Aktivitas Ibadah & Mutaba'ah
+                    </Text>
+                  </View>
+                  <View style={{ backgroundColor: '#F0F9FF', borderRadius: 10, padding: 10 }}>
+                    <Text style={{ fontSize: 10, color: '#0369A1', fontWeight: '600' }}>Status Mutaba'ah Yaumiyyah Hari Ini</Text>
+                    <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0C4A6E', marginTop: 2 }}>
+                      {weeklyReportData?.mutabaah_today?.status_label || (weeklyReportData?.mutabaah_today ? '✅ Sudah Terisi Lengkap' : '📅 Menunggu Pengisian')}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 3. CAPAIAN TAHSIN & TAHFIZH */}
+                <View style={{ backgroundColor: '#FFF7ED', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#FED7AA', marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <MaterialCommunityIcons name="book-open-page-variant" size={16} color="#EA580C" />
+                      <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#9A3412' }}>
+                        3. Capaian Tahsin & Tahfizh
+                      </Text>
+                    </View>
+                    <View style={{ backgroundColor: '#10B981', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                      <Text style={{ fontSize: 9.5, fontWeight: '900', color: '#FFFFFF' }}>
+                        {weeklyReportData?.latest_tahfizh?.status ? String(weeklyReportData.latest_tahfizh.status).toUpperCase() : 'AKTIF'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 11, color: '#7C2D12' }}>
+                      Hafalan Terakhir:{' '}
+                      <Text style={{ fontWeight: '800' }}>
+                        {weeklyReportData?.latest_tahfizh
+                          ? `${weeklyReportData.latest_tahfizh.surah_name || 'Al-Qur\'an'} (Ayat ${weeklyReportData.latest_tahfizh.ayah_start || 1}-${weeklyReportData.latest_tahfizh.ayah_end || 10})`
+                          : 'Belum ada setoran terbaru pekan ini'}
+                      </Text>
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#7C2D12', marginTop: 2 }}>
+                      {weeklyReportData?.latest_tahfizh
+                        ? `Capaian: Juz ${weeklyReportData.latest_tahfizh.juz || 30} · Skor ${weeklyReportData.latest_tahfizh.score || 80}`
+                        : 'Terjadwal pada sesi halaqah tahfizh berikutnya'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 4. KEHADIRAN PER MATA PELAJARAN */}
+                <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <MaterialCommunityIcons name="notebook-outline" size={16} color="#4F46E5" />
+                    <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#0F172A' }}>
+                      4. Pembelajaran & Penugasan Akademik
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 6 }}>
+                    {weeklyReportData?.latest_grades && weeklyReportData.latest_grades.length > 0
+                      ? `Tercatat ${weeklyReportData.latest_grades.length} rekaman evaluasi mata pelajaran terbaru.`
+                      : 'Seluruh sesi KBM terkoordinasi aktif dengan jadwal sekolah.'}
+                  </Text>
+                  <View style={{ backgroundColor: '#EEF2FF', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#3730A3' }}>Status Presensi Akademik</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '900', color: '#4338CA' }}>
+                      {weeklyReportData?.kpi?.attendance_rate != null ? `${weeklyReportData.kpi.attendance_rate}% Hadir` : '100% Hadir'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 5. CATATAN GURU & DOA */}
+                <View style={{ backgroundColor: '#FEFCE8', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#FEF08A', marginBottom: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <MaterialCommunityIcons name="comment-text-outline" size={16} color="#CA8A04" />
+                    <Text style={{ fontSize: 12.5, fontWeight: '900', color: '#854D0E' }}>
+                      5. Catatan Guru & Kemitraan
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#713F12', lineHeight: 16 }}>
+                    {weeklyReportData?.latest_note?.content ||
+                      weeklyReportData?.latest_note?.title ||
+                      '🤝 Keberhasilan pendidikan Ananda merupakan hasil sinergi antara sekolah dan keluarga. Semoga Allah ﷻ senantiasa menjaga dan memberkahi ananda.'}
+                  </Text>
+                  {Boolean(weeklyReportData?.latest_note?.teacher_name) && (
+                    <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#A16207', marginTop: 4 }}>
+                      — {weeklyReportData.latest_note.teacher_name}
+                    </Text>
+                  )}
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#854D0E', textAlign: 'center', marginTop: 10 }}>
+                    جَزَاكُمُ اللَّهُ خَيْرًا وَبَارَكَ اللَّهُ فِيكُمْ
+                  </Text>
+                </View>
+
+                {/* Tombol Tutup */}
+                <TouchableOpacity
+                  onPress={() => setShowWeeklyReportModal(false)}
+                  style={{
+                    backgroundColor: '#059669',
+                    paddingVertical: 13,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>Tutup Pratinjau Perkembangan</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -4831,6 +5574,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
+  activityTimelineStudentName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginBottom: 2,
+  },
   activityTimelineDateRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5189,7 +5938,7 @@ const styles = StyleSheet.create({
   menuCardContainer: {
     marginHorizontal: 16,
     marginTop: 2,
-    marginBottom: 20,
+    marginBottom: 14,
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     paddingTop: 14,
@@ -5867,6 +6616,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  studentActionBtnClose: {
+    backgroundColor: '#047857',
+    borderColor: 'rgba(255, 255, 255, 0.7)',
   },
   studentDotsRow: {
     flexDirection: 'row',
@@ -6850,7 +7603,12 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '800',
     color: '#1E293B',
-    flex: 1,
+  },
+  homeWidgetCardStudentName: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#059669',
+    marginTop: 1,
   },
   homeWidgetBody: {
     flex: 1,
@@ -7174,8 +7932,8 @@ const styles = StyleSheet.create({
   // 360° Executive Daily Hub Styles
   hubContainer: {
     marginHorizontal: 16,
-    marginTop: 14,
-    marginBottom: 10,
+    marginTop: 0,
+    marginBottom: 18,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 14,
@@ -7218,6 +7976,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
     fontFamily: 'Nunito_800ExtraBold',
+  },
+  hubHeaderStudentName: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#047857',
+    marginTop: 1,
   },
   hubHeaderSubtitle: {
     fontSize: 11,
@@ -7337,5 +8101,158 @@ const styles = StyleSheet.create({
   },
   hubSholatPillTextDone: {
     color: '#FFFFFF',
+  },
+  parentPortalBannerCardInside: {
+    marginHorizontal: 12,
+    marginTop: 0,
+    marginBottom: 12,
+    backgroundColor: '#F5F3FF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EDE9FE',
+  },
+  parentPortalBannerCard: {
+    marginHorizontal: 16,
+    marginTop: 2,
+    marginBottom: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#EDE9FE',
+    shadowColor: '#4338CA',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  parentPortalBannerIconCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#EDE9FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  parentPortalBannerTextWrap: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  parentPortalBannerTitle: {
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#1E1B4B',
+    fontFamily: 'Nunito_800ExtraBold',
+    letterSpacing: -0.2,
+  },
+  parentPortalBannerSubtitle: {
+    fontSize: 11.5,
+    color: '#6B7280',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  // Child Portal Menu Container Styles (Expanded from student card)
+  childPortalMenuContainer: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  childPortalMenuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    marginBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0FDF4',
+  },
+  childPortalMenuHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  childPortalMenuHeaderIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  childPortalMenuHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  childPortalMenuHeaderSub: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  childPortalBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  childPortalBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  childPortalGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    rowGap: 18,
+  },
+  childPortalGridItem: {
+    width: '25%',
+    alignItems: 'center',
+    paddingHorizontal: 2,
+  },
+  childPortalIconSquircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  childPortalMenuLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1F2937',
+    textAlign: 'center',
+    marginTop: 7,
+    lineHeight: 15,
+    minHeight: 32,
   },
 });

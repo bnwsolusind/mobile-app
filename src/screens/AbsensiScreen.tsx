@@ -30,6 +30,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -82,6 +83,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
   // Attendance & Permissions Data (100% Real Database)
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceItem[]>([]);
   const [permissionsHistory, setPermissionsHistory] = useState<PermissionItem[]>([]);
+  const [dormitoryPermits, setDormitoryPermits] = useState<any[]>([]);
 
   // Employee Specific Data
   const [employeeHistory, setEmployeeHistory] = useState<any[]>([]);
@@ -89,8 +91,23 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const [savingAttendance, setSavingAttendance] = useState<boolean>(false);
 
   // UI Filtering & Search
-  const [activeTab, setActiveTab] = useState<'all' | 'attendance' | 'permissions'>('all');
+  const routeTab = route?.params?.tab;
+  const [activeTab, setActiveTab] = useState<'all' | 'attendance' | 'permissions' | 'boarding'>(
+    routeTab && ['all', 'attendance', 'permissions', 'boarding'].includes(routeTab) ? routeTab : 'all'
+  );
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    if (route?.params?.tab && ['all', 'attendance', 'permissions', 'boarding'].includes(route.params.tab)) {
+      setActiveTab(route.params.tab);
+    }
+  }, [route?.params?.tab]);
+
+  useEffect(() => {
+    if (route?.params?.child_id) {
+      setSelectedChildId(String(route.params.child_id));
+    }
+  }, [route?.params?.child_id]);
 
   // Modals
   const [selectedDetail, setSelectedDetail] = useState<any | null>(null);
@@ -104,26 +121,29 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const [permReason, setPermReason] = useState<string>('');
   const [permSubmitting, setPermSubmitting] = useState<boolean>(false);
 
-  // ── 1. Load Children if Parent (Isolasi data 1 anak terpilih jika ada child_id) ──
+  // ── 1. Load Children if Parent ──
   const loadChildren = useCallback(async () => {
     if (!isParent) return;
     try {
       const res = await mobileApiService.getPortalChildren();
       const list = unwrapApiData<Child[]>(res) || [];
       const targetChildId = route?.params?.child_id;
-      const filteredList = targetChildId
+      const isSingleChild = route?.params?.single_child_only === true;
+      const filteredList = (isSingleChild && targetChildId)
         ? list.filter((c) => String(c.id) === String(targetChildId))
         : list;
       setChildren(filteredList.length > 0 ? filteredList : list);
-      if (filteredList.length > 0) {
+      if (isSingleChild && filteredList.length > 0) {
         setSelectedChildId(String(filteredList[0].id));
+      } else if (targetChildId) {
+        setSelectedChildId(String(targetChildId));
       } else if (list.length > 0) {
         setSelectedChildId((prev) => prev || String(list[0].id));
       }
     } catch (err) {
       console.warn('Failed to load portal children:', err);
     }
-  }, [isParent, route?.params?.child_id]);
+  }, [isParent, route?.params?.child_id, route?.params?.single_child_only]);
 
   useEffect(() => {
     void loadChildren();
@@ -158,10 +178,11 @@ export default function AbsensiScreen({ route, navigation }: any) {
     setError('');
     const cacheKey = offlineCache.buildKey('absensi', user?.id, selectedChildId || 'staff');
     // 1. Baca cache dulu
-    const cached = await offlineCache.get<{ logs: AttendanceItem[]; perms: PermissionItem[]; empHistory: any[]; empStats: any }>(cacheKey);
+    const cached = await offlineCache.get<{ logs: AttendanceItem[]; perms: PermissionItem[]; dorms: any[]; empHistory: any[]; empStats: any }>(cacheKey);
     if (cached) {
       if (cached.logs?.length > 0) setAttendanceLogs(cached.logs);
       if (cached.perms?.length > 0) setPermissionsHistory(cached.perms);
+      if (cached.dorms?.length > 0) setDormitoryPermits(cached.dorms);
       if (cached.empHistory?.length > 0) setEmployeeHistory(cached.empHistory);
       if (cached.empStats) setEmployeeStats(cached.empStats);
     }
@@ -169,13 +190,15 @@ export default function AbsensiScreen({ route, navigation }: any) {
     try {
       if (isParent || isStudent) {
         const targetId = isParent ? selectedChildId : undefined;
-        const [attRes, permRes] = await Promise.allSettled([
+        const [attRes, permRes, dormRes] = await Promise.allSettled([
           mobileApiService.getPortalAttendance(targetId),
           mobileApiService.getPortalPermissions(targetId),
+          mobileApiService.getDormitoryPermits(targetId),
         ]);
 
         let logs: AttendanceItem[] = [];
         let perms: PermissionItem[] = [];
+        let dorms: any[] = [];
 
         if (attRes.status === 'fulfilled') {
           const raw = attRes.value?.data || attRes.value || [];
@@ -187,12 +210,17 @@ export default function AbsensiScreen({ route, navigation }: any) {
           perms = Array.isArray(rawP?.data) ? rawP.data : (Array.isArray(rawP) ? rawP : []);
           setPermissionsHistory(perms);
         }
+        if (dormRes.status === 'fulfilled') {
+          const rawD = dormRes.value?.data || dormRes.value || [];
+          dorms = Array.isArray(rawD?.data) ? rawD.data : (Array.isArray(rawD) ? rawD : []);
+          setDormitoryPermits(dorms);
+        }
         if (isStudent) {
           setStudentInfo((prev: any) => prev || user?.student || user);
         }
         // 3. Simpan ke cache
-        if (logs.length > 0 || perms.length > 0) {
-          void offlineCache.set(cacheKey, { logs, perms, empHistory: [], empStats: null });
+        if (logs.length > 0 || perms.length > 0 || dorms.length > 0) {
+          void offlineCache.set(cacheKey, { logs, perms, dorms, empHistory: [], empStats: null });
         }
       } else if (isStaff) {
         if (employeeId) {
@@ -348,6 +376,36 @@ export default function AbsensiScreen({ route, navigation }: any) {
       });
     }
 
+    // Boarding Pass & Izin Kepulangan Santri Asrama
+    if (activeTab === 'all' || activeTab === 'permissions' || activeTab === 'boarding') {
+      dormitoryPermits.forEach((bp, idx) => {
+        const rawStatus = bp.status || 'disetujui';
+        const isLate = bp.status === 'late' || (bp.late_minutes && bp.late_minutes > 0);
+        const statusLabel = isLate
+          ? `Terlambat +${bp.late_minutes}m`
+          : rawStatus === 'returned'
+            ? 'Kembali ke Pondok'
+            : rawStatus === 'active' || rawStatus === 'keluar'
+              ? 'Sedang di Luar (Pesiar)'
+              : 'Boarding Pass';
+
+        list.push({
+          id: bp.id || `bp-${idx}`,
+          category: 'boarding_pass',
+          title: `Boarding Pass: ${bp.permit_type ? bp.permit_type.replace('_', ' ').toUpperCase() : 'PESIAR MINGGUAN'}`,
+          subtitle: `Tujuan: ${bp.destination || 'Rumah Orang Tua'} | No: ${bp.permit_number}`,
+          date: bp.scheduled_departure_at || bp.created_at,
+          time: bp.actual_return_at
+            ? `Kembali: ${formatJamIndo(bp.actual_return_at)}`
+            : `Batas: ${formatJamIndo(bp.scheduled_return_at)}`,
+          status: statusLabel,
+          statusKey: isLate ? 'late' : bp.status === 'returned' ? 'hadir' : 'active',
+          notes: bp.purpose_notes || bp.notes || `Penjemput: ${bp.pickup_person_name || 'Wali'} (${bp.pickup_person_relation || 'Orang Tua'})`,
+          raw: bp,
+        });
+      });
+    }
+
     // Filter by search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -360,7 +418,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
     }
 
     return list;
-  }, [isStaff, employeeHistory, activeTab, attendanceLogs, permissionsHistory, searchQuery]);
+  }, [isStaff, employeeHistory, activeTab, attendanceLogs, permissionsHistory, dormitoryPermits, searchQuery]);
 
   // ── 5. Employee Actions (Check In / Out) ──
   const todayRecord = employeeHistory[0];
@@ -475,156 +533,58 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
                   <Text style={styles.sectionTitle}>Data Ananda</Text>
                 </View>
-                {children.length > 1 && (
-                  <View style={styles.studentCardCountBadge}>
-                    <Text style={styles.studentCardCountBadgeText}>
-                      {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
-                    </Text>
-                  </View>
-                )}
               </View>
-
-              <ScrollView
-                ref={studentScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
-                decelerationRate="fast"
-                snapToAlignment="start"
-                onMomentumScrollEnd={handleStudentScrollEnd}
-                style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
-              >
-                {children.map((child, idx) => {
-                  const isSelected = String(child.id) === selectedChildId;
-                  const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-                  const unitTitle = child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || 'Kelas Belum Ditentukan';
-                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                  const avatarUri = getProfileImageUrl(child);
-                  const cardStyle = children.length === 1 ? styles.childCardHeroSizeSingle : styles.childCardHeroSize;
-
-                  return (
-                    <TouchableOpacity
-                      key={String(child.id)}
-                      activeOpacity={0.88}
-                      onPress={() => selectChildWithScroll(String(child.id), idx)}
-                    >
-                      <LinearGradient
-                        colors={['#0D6B42', '#18A165', '#2BD988']}
-                        locations={[0, 0.55, 1]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[cardStyle, !isSelected && { opacity: 0.9 }]}
-                      >
-                        <View style={styles.cardDecorCircle} />
-
-                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Selection Button */}
-                        <View style={styles.childHeroTopRow}>
-                          <View style={styles.avatarBorderWrapHero}>
-                            {avatarUri ? (
-                              <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                            ) : (
-                              <Image
-                                source={
-                                  child?.gender === 'female' ||
-                                  child?.jenis_kelamin === 'P' ||
-                                  child?.jenis_kelamin === 'female' ||
-                                  child?.gender === 'P'
-                                    ? DEFAULT_STUDENT_GIRL_AVATAR
-                                    : DEFAULT_STUDENT_BOY_AVATAR
-                                }
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            )}
-                          </View>
-                          <View style={styles.childInfoCol}>
-                            <View style={styles.studentNameBadgeRow}>
-                              <Text numberOfLines={1} style={styles.studentFullName}>
-                                {childFullName}
-                              </Text>
-                            </View>
-                            <Text style={styles.studentNisText}>
-                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                            </Text>
-                            <View style={styles.studentUnitBadge}>
-                              <MaterialCommunityIcons
-                                name="school"
-                                size={11}
-                                color="#FFFFFF"
-                                style={{ marginRight: 4 }}
-                              />
-                              <Text numberOfLines={1} style={styles.studentUnitText}>
-                                {unitTitle}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Right Action Button */}
-                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                            <MaterialCommunityIcons
-                              name={isSelected ? 'check-circle' : 'gesture-tap'}
-                              size={16}
-                              color={isSelected ? '#18A165' : '#FFFFFF'}
-                            />
-                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                              {isSelected ? 'Terpilih' : 'Pilih'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                        <View style={styles.studentAttributesGrid}>
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Kelas</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {className}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {jenjang}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Presensi</Text>
-                            </View>
-                            <View style={styles.studentPresensiValueRow}>
-                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                                Hadir
-                              </Text>
-                              <View style={styles.presensiGreenDot} />
-                            </View>
-                          </View>
-                        </View>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((c, i) => (
-                    <TouchableOpacity
-                      key={String(c.id || i)}
-                      onPress={() => selectChildWithScroll(String(c.id), i)}
-                      style={[styles.paginationDot, String(c.id) === selectedChildId && styles.paginationDotActive]}
-                    />
-                  ))}
+              {children.length === 1 ? (
+                <View style={styles.singleHeroCardContainer}>
+                  <StudentHeroCard
+                    child={children[0]}
+                    isSelected={true}
+                    isSingleChild={true}
+                    showActionButtons={false}
+                  />
                 </View>
+              ) : (
+                <>
+                  <ScrollView
+                    ref={studentScrollRef}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={SCREEN_WIDTH - 50 + 12}
+                    decelerationRate="fast"
+                    snapToAlignment="start"
+                    onMomentumScrollEnd={handleStudentScrollEnd}
+                    style={styles.heroCardScrollContainer}
+                    contentContainerStyle={styles.heroCardScroll}
+                  >
+                    {children.map((child, idx) => (
+                      <StudentHeroCard
+                        key={String(child.id || idx)}
+                        child={child}
+                        isSelected={String(child.id) === selectedChildId}
+                        isSingleChild={false}
+                        showActionButtons={false}
+                        onSelect={() => selectChildWithScroll(String(child.id), idx)}
+                      />
+                    ))}
+                  </ScrollView>
+
+                  {/* DOT INDIKATOR SCROLL SISWA */}
+                  <View style={styles.paginationDotsRow}>
+                    {children.map((c, i) => {
+                      const isDotActive = String(c.id) === selectedChildId;
+                      return (
+                        <TouchableOpacity
+                          key={String(c.id || i)}
+                          onPress={() => selectChildWithScroll(String(c.id), i)}
+                          style={[
+                            styles.paginationDot,
+                            isDotActive && styles.paginationDotActive,
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                </>
               )}
             </View>
           ) : studentInfo ? (
@@ -635,93 +595,14 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   <Text style={styles.sectionTitle}>Data Ananda</Text>
                 </View>
               </View>
-              <LinearGradient
-                colors={['#0D6B42', '#18A165', '#2BD988']}
-                locations={[0, 0.55, 1]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.childCardHeroSizeSingle}
-              >
-                <View style={styles.cardDecorCircle} />
-                <View style={styles.childHeroTopRow}>
-                  <View style={styles.avatarBorderWrapHero}>
-                    {getProfileImageUrl(studentInfo) ? (
-                      <Image
-                        source={{ uri: getProfileImageUrl(studentInfo) || undefined }}
-                        style={styles.childAvatarImgHero}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <Image
-                        source={
-                          studentInfo?.gender === 'female' ||
-                          studentInfo?.jenis_kelamin === 'P' ||
-                          studentInfo?.jenis_kelamin === 'female' ||
-                          studentInfo?.gender === 'P'
-                            ? DEFAULT_STUDENT_GIRL_AVATAR
-                            : DEFAULT_STUDENT_BOY_AVATAR
-                        }
-                        style={styles.childAvatarImgHero}
-                        resizeMode="cover"
-                      />
-                    )}
-                  </View>
-                  <View style={styles.childInfoCol}>
-                    <View style={styles.studentNameBadgeRow}>
-                      <Text numberOfLines={1} style={styles.studentFullName}>
-                        {studentInfo.name || 'Siswa Aktif'}
-                      </Text>
-                    </View>
-                    <Text style={styles.studentNisText}>
-                      NIS: {studentInfo.nis || '-'} {studentInfo.nisn ? `· NISN: ${studentInfo.nisn}` : ''}
-                    </Text>
-                    <View style={styles.studentUnitBadge}>
-                      <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text numberOfLines={1} style={styles.studentUnitText}>
-                        {studentInfo.unit || 'Unit Sekolah'}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.selectedActionBtnRight}>
-                    <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
-                    <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                  </View>
-                </View>
-                <View style={styles.studentAttributesGrid}>
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Kelas</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>
-                      {studentInfo.class || '—'}
-                    </Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>
-                      {studentInfo.unit || 'Terpadu'}
-                    </Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Presensi</Text>
-                    </View>
-                    <View style={styles.studentPresensiValueRow}>
-                      <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                        Hadir
-                      </Text>
-                      <View style={styles.presensiGreenDot} />
-                    </View>
-                  </View>
-                </View>
-              </LinearGradient>
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={studentInfo}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={false}
+                />
+              </View>
             </View>
           ) : user ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
@@ -1043,7 +924,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   style={[styles.filterTabPill, activeTab === 'all' && styles.filterTabPillActive]}
                 >
                   <Text style={[styles.filterTabPillText, activeTab === 'all' && styles.filterTabPillTextActive]}>
-                    Semua ({attendanceLogs.length + permissionsHistory.length})
+                    Semua ({attendanceLogs.length + permissionsHistory.length + dormitoryPermits.length})
                   </Text>
                 </TouchableOpacity>
 
@@ -1066,6 +947,18 @@ export default function AbsensiScreen({ route, navigation }: any) {
                     Izin / Sakit ({permissionsHistory.length})
                   </Text>
                 </TouchableOpacity>
+
+                {dormitoryPermits.length > 0 && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('boarding')}
+                    style={[styles.filterTabPill, activeTab === 'boarding' && styles.filterTabPillActive]}
+                  >
+                    <Text style={[styles.filterTabPillText, activeTab === 'boarding' && styles.filterTabPillTextActive]}>
+                      Boarding Pass ({dormitoryPermits.length})
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -1244,6 +1137,39 @@ export default function AbsensiScreen({ route, navigation }: any) {
                       </>
                     )}
 
+                    {selectedDetail.category === 'boarding_pass' && (
+                      <>
+                        <View style={styles.detailFieldRow}>
+                          <Text style={styles.detailFieldLabel}>Nomor Boarding Pass:</Text>
+                          <Text style={[styles.detailFieldVal, { fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }]}>
+                            {selectedDetail.raw?.permit_number || '-'}
+                          </Text>
+                        </View>
+                        <View style={styles.detailFieldRow}>
+                          <Text style={styles.detailFieldLabel}>Alamat Tujuan:</Text>
+                          <Text style={styles.detailFieldVal}>{selectedDetail.raw?.destination || '-'}</Text>
+                        </View>
+                        <View style={styles.detailFieldRow}>
+                          <Text style={styles.detailFieldLabel}>Batas Wajib Kembali:</Text>
+                          <Text style={styles.detailFieldVal}>{formatJamIndo(selectedDetail.raw?.scheduled_return_at)}</Text>
+                        </View>
+                        {selectedDetail.raw?.actual_return_at && (
+                          <View style={styles.detailFieldRow}>
+                            <Text style={styles.detailFieldLabel}>Absensi Kembali Riil:</Text>
+                            <Text style={[styles.detailFieldVal, { color: selectedDetail.raw?.late_minutes > 0 ? '#DC2626' : '#059669', fontWeight: 'bold' }]}>
+                              {formatJamIndo(selectedDetail.raw?.actual_return_at)} {selectedDetail.raw?.late_minutes > 0 ? `(Terlambat +${selectedDetail.raw?.late_minutes}m)` : '(Tepat Waktu)'}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.detailFieldRow}>
+                          <Text style={styles.detailFieldLabel}>Penjemput / Wali:</Text>
+                          <Text style={styles.detailFieldVal}>
+                            {selectedDetail.raw?.pickup_person_name || 'Orang Tua / Wali'} {selectedDetail.raw?.pickup_person_phone ? `(${selectedDetail.raw?.pickup_person_phone})` : ''}
+                          </Text>
+                        </View>
+                      </>
+                    )}
+
                     {selectedDetail.notes ? (
                       <View style={[styles.detailFieldRow, { flexDirection: 'column', alignItems: 'flex-start' }]}>
                         <Text style={[styles.detailFieldLabel, { marginBottom: 4 }]}>Catatan Tambahan:</Text>
@@ -1415,6 +1341,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,

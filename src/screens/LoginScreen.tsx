@@ -217,7 +217,15 @@ export default function LoginScreen() {
   };
 
   const handleContactAdmin = () => {
-    const adminPhone = (branding as any).admin_whatsapp || (branding as any).contact_phone || '628116666888';
+    const adminPhone = (branding as any).admin_whatsapp || (branding as any).contact_phone || (branding as any).phone || '';
+    if (!adminPhone) {
+      Alert.alert(
+        'Bantuan Pendaftaran',
+        'Pendaftaran akun dilakukan oleh pihak Tata Usaha / Admin Sekolah. Silakan hubungi tata usaha sekolah Anda.',
+        [{ text: 'Mengerti', style: 'default' }]
+      );
+      return;
+    }
     Alert.alert(
       'Bantuan Pendaftaran',
       'Pendaftaran akun dilakukan oleh pihak Tata Usaha / Admin Sekolah. Hubungi admin sekarang?',
@@ -235,8 +243,8 @@ export default function LoginScreen() {
   };
 
   const loginLogoUrl = branding.logo_login_url || branding.logo_url;
-  const appName = branding.app_name || 'SDIT 2';
-  const schoolName = branding.school_name || 'DAR EL-IMAN';
+  const appName = branding.app_name || 'SIMSIT Mobile';
+  const schoolName = branding.school_name || '';
 
   return (
     <KeyboardAvoidingView
@@ -506,7 +514,7 @@ export default function LoginScreen() {
               <View style={styles.manualInputRow}>
                 <TextInput
                   style={styles.manualInput}
-                  placeholder="Contoh: SDIT2-SISWA-001"
+                  placeholder="Contoh: KODE-SISWA-001"
                   placeholderTextColor="#94A3B8"
                   value={manualCode}
                   onChangeText={setManualCode}

@@ -17,7 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole } from '../utils/roles';
+import { isParentRole, isTeacherRole } from '../utils/roles';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
@@ -25,6 +25,7 @@ import {
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -49,6 +50,45 @@ const formatIndonesianDate = (d: Date): string => {
   const monthName = MONTH_NAMES[d.getMonth()];
   const year = d.getFullYear();
   return `${dayName}, ${dayNum} ${monthName} ${year}`;
+};
+
+// Helper: Deteksi status waktu sesi jadwal (past / current / upcoming)
+const getSessionTimelineStatus = (
+  timeStartStr?: string,
+  timeEndStr?: string,
+  selectedDate?: Date
+): 'past' | 'current' | 'upcoming' => {
+  if (!selectedDate) return 'upcoming';
+  const now = new Date();
+  const isToday =
+    now.getFullYear() === selectedDate.getFullYear() &&
+    now.getMonth() === selectedDate.getMonth() &&
+    now.getDate() === selectedDate.getDate();
+
+  if (!isToday) {
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const selMidnight = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()).getTime();
+    if (selMidnight < todayMidnight) return 'past';
+    return 'upcoming';
+  }
+
+  if (!timeStartStr || !timeEndStr) return 'upcoming';
+
+  const parseToMinutes = (t: string) => {
+    const clean = t.replace(/\./g, ':').trim();
+    const parts = clean.split(':');
+    const h = parseInt(parts[0] || '0', 10);
+    const m = parseInt(parts[1] || '0', 10);
+    return h * 60 + m;
+  };
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const startMinutes = parseToMinutes(timeStartStr);
+  const endMinutes = parseToMinutes(timeEndStr);
+
+  if (currentMinutes < startMinutes) return 'upcoming';
+  if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) return 'current';
+  return 'past';
 };
 
 // Helper: Dapatkan tanggal Senin dari minggu yang mengandung tanggal d
@@ -130,6 +170,7 @@ export default function ScheduleScreen({ route }: any) {
 
   const user = useAuthStore((state) => state.user);
   const isParent = isParentRole(user?.roles || []);
+  const isTeacher = isTeacherRole(user?.roles || []);
 
   const [children, setChildren] = useState<Child[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string | undefined>(route?.params?.child_id);
@@ -170,14 +211,19 @@ export default function ScheduleScreen({ route }: any) {
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
+      const isSingleChild = route?.params?.single_child_only === true;
       const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
       const childCacheKey = offlineCache.buildKey('schedule_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<Child[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          setChildren(cached);
+          const displayCached = (isSingleChild && targetChildId)
+            ? cached.filter((c) => String(c.id) === String(targetChildId))
+            : cached;
+          const safeCached = displayCached.length > 0 ? displayCached : cached;
+          setChildren(safeCached);
           useActiveChildStore.getState().setChildren(cached);
-          const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(cached[0].id);
+          const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(safeCached[0].id);
           setSelectedChildId(activeId);
         }
       })();
@@ -186,9 +232,13 @@ export default function ScheduleScreen({ route }: any) {
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
           if (isMounted && arr.length > 0) {
-            setChildren(arr);
+            const displayList = (isSingleChild && targetChildId)
+              ? arr.filter((c) => String(c.id) === String(targetChildId))
+              : arr;
+            const safeList = displayList.length > 0 ? displayList : arr;
+            setChildren(safeList);
             useActiveChildStore.getState().setChildren(arr);
-            const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(arr[0].id);
+            const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(safeList[0].id);
             setSelectedChildId(activeId);
             void offlineCache.set(childCacheKey, arr);
           }
@@ -198,7 +248,7 @@ export default function ScheduleScreen({ route }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, route?.params?.child_id]);
+  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
 
   const hasLoadedRef = useRef<boolean>(false);
 
@@ -217,13 +267,43 @@ export default function ScheduleScreen({ route }: any) {
     }
 
     try {
-      const res = await mobileApiService.getPortalSchedules({
-        child_id: selectedChildId,
-        date: dateStr,
-      });
-      const data = unwrapApiData<any>(res) || {};
-      setScheduleData(data);
-      void offlineCache.set(cacheKey, data);
+      if (isTeacher && !isParent) {
+        const res = await mobileApiService.getTeacherSchedules();
+        const rawList = res?.data || (Array.isArray(res) ? res : []);
+        const mapped = (Array.isArray(rawList) ? rawList : []).map((s: any) => ({
+          id: s.id,
+          day_of_week: Number(s.day_of_week),
+          time_start: s.time_start,
+          time_end: s.time_end,
+          time_display: `${(s.time_start || '').slice(0, 5)} - ${(s.time_end || '').slice(0, 5)}`,
+          subject: {
+            id: s.subject_id,
+            name: s.subject?.name || s.subject?.nama_mapel || 'Mata Pelajaran',
+            code: s.subject?.code || s.subject?.kode_mapel || '',
+          },
+          room: s.room || s.ruangan || 'Ruang Kelas',
+          class_name: s.kelas?.nama_kelas || s.kelas?.kode_kelas || 'Kelas',
+          teacher: {
+            name: user?.name || 'Saya',
+          },
+        }));
+        const targetDay = selectedDate.getDay();
+        const data = {
+          all_schedules: mapped,
+          today_schedules: mapped.filter((s: any) => s.day_of_week === targetDay),
+          is_teacher_schedule: true,
+        };
+        setScheduleData(data);
+        void offlineCache.set(cacheKey, data);
+      } else {
+        const res = await mobileApiService.getPortalSchedules({
+          child_id: selectedChildId,
+          date: dateStr,
+        });
+        const data = unwrapApiData<any>(res) || {};
+        setScheduleData(data);
+        void offlineCache.set(cacheKey, data);
+      }
     } catch {
       // Jika offline dan belum ada cache, set empty object bukan crash
       if (!cached) {
@@ -253,12 +333,19 @@ export default function ScheduleScreen({ route }: any) {
     const MONTH_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
     // Senin minggu ini
     const monday = getMonday(selectedDate);
-    // Buat array 5 hari kerja (Senin–Jumat)
-    return Array.from({ length: 5 }, (_, i) => {
+
+    // Deteksi apakah jadwal mencakup hari Sabtu (khusus unit Boarding / Pesantren)
+    const hasSaturday = Array.isArray(scheduleData?.all_schedules) && scheduleData.all_schedules.some(
+      (s: any) => Number(s.day_of_week) === 6
+    );
+    const dayCount = hasSaturday ? 6 : 5;
+
+    // Buat array hari kerja dinamis (5 hari untuk Fullday, 6 hari untuk Boarding/Pesantren)
+    return Array.from({ length: dayCount }, (_, i) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
       const iso = formatDateISO(d);
-      const dotw = d.getDay(); // 1=Sen, 2=Sel, ..., 5=Jum
+      const dotw = d.getDay(); // 1=Sen, 2=Sel, ..., 5=Jum, 6=Sab
       return {
         dayName: DAY_NAMES_SHORT[dotw],
         dayNum: d.getDate(),
@@ -271,7 +358,7 @@ export default function ScheduleScreen({ route }: any) {
         dateObj: d,
       };
     });
-  }, [selectedDate]);
+  }, [scheduleData, selectedDate]);
 
   const formattedSelectedDate = useMemo(() => formatIndonesianDate(selectedDate), [selectedDate]);
 
@@ -326,156 +413,56 @@ export default function ScheduleScreen({ route }: any) {
                 )}
               </View>
 
-              <ScrollView
-                ref={studentScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
-                decelerationRate="fast"
-                onMomentumScrollEnd={handleStudentScrollEnd}
-                style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
-              >
-                {children.map((child, idx) => {
-                  const isSelected = String(child.id) === selectedChildId;
-                  const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-                  const unitTitle = child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
-                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                  const avatarUri = getProfileImageUrl(child);
-
-                  return (
-                    <TouchableOpacity
-                      key={String(child.id)}
-                      activeOpacity={0.88}
-                      onPress={() => selectChildWithScroll(String(child.id), idx)}
-                    >
-                      <LinearGradient
-                        colors={['#0D6B42', '#18A165', '#2BD988']}
-                        locations={[0, 0.55, 1]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
-                      >
-                        <View style={styles.cardDecorCircle} />
-
-                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Selection Button */}
-                        <View style={styles.childHeroTopRow}>
-                          <View style={styles.avatarBorderWrapHero}>
-                            {avatarUri ? (
-                              <Image
-                                source={{ uri: avatarUri }}
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            ) : (
-                              <Image
-                                source={
-                                  child?.gender === 'female' ||
-                                  child?.jenis_kelamin === 'P' ||
-                                  child?.jenis_kelamin === 'female' ||
-                                  child?.gender === 'P'
-                                    ? DEFAULT_STUDENT_GIRL_AVATAR
-                                    : DEFAULT_STUDENT_BOY_AVATAR
-                                }
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            )}
-                          </View>
-                          <View style={styles.childInfoCol}>
-                            <View style={styles.studentNameBadgeRow}>
-                              <Text numberOfLines={1} style={styles.studentFullName}>
-                                {childFullName}
-                              </Text>
-                            </View>
-                            <Text style={styles.studentNisText}>
-                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                            </Text>
-                            <View style={styles.studentUnitBadge}>
-                              <MaterialCommunityIcons
-                                name="school"
-                                size={11}
-                                color="#FFFFFF"
-                                style={{ marginRight: 4 }}
-                              />
-                              <Text numberOfLines={1} style={styles.studentUnitText}>
-                                {unitTitle}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Right Action Button */}
-                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                            <MaterialCommunityIcons
-                              name={isSelected ? 'check-circle' : 'gesture-tap'}
-                              size={16}
-                              color={isSelected ? '#18A165' : '#FFFFFF'}
-                            />
-                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                              {isSelected ? 'Terpilih' : 'Pilih'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                        <View style={styles.studentAttributesGrid}>
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Kelas</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {className}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {jenjang}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Presensi</Text>
-                            </View>
-                            <View style={styles.studentPresensiValueRow}>
-                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                                Hadir
-                              </Text>
-                              <View style={styles.presensiGreenDot} />
-                            </View>
-                          </View>
-                        </View>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* DOT INDIKATOR SCROLL SISWA */}
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((c, i) => {
-                    const isDotActive = String(c.id) === selectedChildId;
-                    return (
-                      <TouchableOpacity
-                        key={String(c.id || i)}
-                        onPress={() => selectChildWithScroll(String(c.id), i)}
-                        style={[
-                          styles.paginationDot,
-                          isDotActive && styles.paginationDotActive,
-                        ]}
-                      />
-                    );
-                  })}
+              {children.length === 1 ? (
+                <View style={styles.singleHeroCardContainer}>
+                  <StudentHeroCard
+                    child={children[0]}
+                    isSelected={true}
+                    isSingleChild={true}
+                    showActionButtons={false}
+                  />
                 </View>
+              ) : (
+                <>
+                  <ScrollView
+                    ref={studentScrollRef}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={SCREEN_WIDTH - 50 + 12}
+                    decelerationRate="fast"
+                    onMomentumScrollEnd={handleStudentScrollEnd}
+                    style={styles.heroCardScrollContainer}
+                    contentContainerStyle={styles.heroCardScroll}
+                  >
+                    {children.map((child, idx) => (
+                      <StudentHeroCard
+                        key={String(child.id || idx)}
+                        child={child}
+                        isSelected={String(child.id) === selectedChildId}
+                        isSingleChild={false}
+                        showActionButtons={false}
+                        onSelect={() => selectChildWithScroll(String(child.id), idx)}
+                      />
+                    ))}
+                  </ScrollView>
+
+                  {/* DOT INDIKATOR SCROLL SISWA */}
+                  <View style={styles.paginationDotsRow}>
+                    {children.map((c, i) => {
+                      const isDotActive = String(c.id) === selectedChildId;
+                      return (
+                        <TouchableOpacity
+                          key={String(c.id || i)}
+                          onPress={() => selectChildWithScroll(String(c.id), i)}
+                          style={[
+                            styles.paginationDot,
+                            isDotActive && styles.paginationDotActive,
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                </>
               )}
             </View>
           ) : scheduleData?.student ? (
@@ -487,101 +474,14 @@ export default function ScheduleScreen({ route }: any) {
                 </View>
               </View>
 
-              {(() => {
-                const s = scheduleData.student;
-                const studentName = s.name || s.full_name || s.nama_lengkap || 'Siswa Aktif';
-                const studentClass = s.class || s.class_name || s.kelas?.nama_kelas || 'Kelas Belum Ditentukan';
-                const studentUnit = s.unit || s.unit_name || s.education_unit?.name || 'Unit Pendidikan';
-                const jenjang = s.kelas?.jenjang || s.education_unit?.level || 'Terpadu';
-                const avatarUri = getProfileImageUrl(s);
-
-                return (
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.childCardHeroSizeSingle}
-                  >
-                    <View style={styles.cardDecorCircle} />
-
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image
-                            source={{ uri: avatarUri }}
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <Image
-                            source={
-                              s?.gender === 'female' ||
-                              s?.jenis_kelamin === 'P' ||
-                              s?.jenis_kelamin === 'female' ||
-                              s?.gender === 'P'
-                                ? DEFAULT_STUDENT_GIRL_AVATAR
-                                : DEFAULT_STUDENT_BOY_AVATAR
-                            }
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <View style={styles.studentNameBadgeRow}>
-                          <Text numberOfLines={1} style={styles.studentFullName}>
-                            {studentName}
-                          </Text>
-                        </View>
-                        <Text style={styles.studentNisText}>
-                          NIS: {s.nis || '-'} {s.nisn ? `· NISN: ${s.nisn}` : ''}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {studentUnit}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.selectedActionBtnRight}>
-                        <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
-                        <Text style={styles.selectedActionBtnText}>Siswa</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Kelas</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{studentClass}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{jenjang}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        </View>
-                        <View style={styles.studentPresensiValueRow}>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
-                          <View style={styles.presensiGreenDot} />
-                        </View>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                );
-              })()}
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={scheduleData.student}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={false}
+                />
+              </View>
             </View>
           ) : user ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
@@ -595,7 +495,7 @@ export default function ScheduleScreen({ route }: any) {
               {(() => {
                 const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
                 const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
-                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || "Mahad Abu Ja'far");
+                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || (user as any)?.unit?.name || 'Unit Pendidikan');
                 const avatarUri = getProfileImageUrl(user);
 
                 return (
@@ -699,57 +599,166 @@ export default function ScheduleScreen({ route }: any) {
             <Text style={styles.dateHeaderTitle}>{formattedSelectedDate}</Text>
           </View>
 
-          {/* 4. CLEAN SCHEDULE CARDS LIST */}
+          {/* 4. MILESTONE SCHEDULE TIMELINE */}
           {loading ? (
             <ActivityIndicator color="#18A165" style={{ marginVertical: 32 }} />
           ) : displaySchedules.length > 0 ? (
-            <View style={styles.scheduleListCol}>
-              {displaySchedules.map((item, idx) => {
-                const styleMeta = getSubjectStyle(item.subject?.name, idx);
-                const rawTime = item.time_display || (item.time_start && item.time_end ? `${item.time_start.slice(0, 5)} - ${item.time_end.slice(0, 5)}` : '08.00 - 09.00');
-                const timeText = rawTime.replace(/:/g, '.');
-                const teacherName = item.teacher?.name;
-                const roomName = item.room;
+            <View style={styles.milestoneContainer}>
+              {/* Milestone Tracker Summary Bar */}
+              <View style={styles.milestoneSummaryBar}>
+                <View style={styles.milestoneSummaryLeft}>
+                  <MaterialCommunityIcons name="map-marker-path" size={18} color="#0D6B42" />
+                  <Text style={styles.milestoneSummaryTitle}>Jalur Pembelajaran Hari Ini</Text>
+                </View>
+                <View style={styles.milestoneSummaryBadge}>
+                  <Text style={styles.milestoneSummaryBadgeText}>
+                    {displaySchedules.length} Sesi Terjadwal
+                  </Text>
+                </View>
+              </View>
 
-                return (
-                  <TouchableOpacity
-                    key={item.id || idx}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedScheduleDetail(item)}
-                    style={styles.cleanScheduleCard}
-                  >
-                    {/* Left Column: Time Range */}
-                    <View style={styles.cardTimeCol}>
-                      <Text style={styles.cardTimeText}>{timeText}</Text>
-                    </View>
+              {/* Milestone Items List */}
+              <View style={styles.milestoneList}>
+                {displaySchedules.map((item, idx) => {
+                  const styleMeta = getSubjectStyle(item.subject?.name, idx);
+                  const rawTime = item.time_display || (item.time_start && item.time_end ? `${item.time_start.slice(0, 5)} - ${item.time_end.slice(0, 5)}` : '08.00 - 09.00');
+                  const timeText = rawTime.replace(/:/g, '.');
+                  const timeParts = timeText.split('-').map((s: string) => s.trim());
+                  const timeStart = timeParts[0] || '08.00';
+                  const timeEnd = timeParts[1] || '09.00';
+                  const teacherName = item.teacher?.name;
+                  const roomName = item.room;
+                  const status = getSessionTimelineStatus(item.time_start || timeStart, item.time_end || timeEnd, selectedDate);
+                  const isPast = status === 'past';
+                  const isCurrent = status === 'current';
+                  const isUpcoming = status === 'upcoming';
+                  const isFirst = idx === 0;
+                  const isLast = idx === displaySchedules.length - 1;
 
-                    {/* Middle: Pastel Squircle Icon */}
-                    <View style={[styles.cardIconBox, { backgroundColor: styleMeta.bg }]}>
-                      <MaterialCommunityIcons name={styleMeta.icon as any} size={22} color={styleMeta.color} />
-                    </View>
-
-                    {/* Middle-Right: Subject Title & Teacher/Room */}
-                    <View style={styles.cardInfoCol}>
-                      <Text numberOfLines={1} style={styles.cardSubjectTitle}>
-                        {item.subject?.name || 'Mata Pelajaran'}
-                      </Text>
-                      {teacherName ? (
-                        <Text numberOfLines={1} style={styles.cardTeacherText}>
-                          {teacherName}
+                  return (
+                    <View key={item.id || idx} style={styles.milestoneRow}>
+                      {/* Column 1: Time */}
+                      <View style={styles.milestoneTimeCol}>
+                        <Text style={[styles.milestoneTimeStart, isCurrent && styles.milestoneTimeStartCurrent]}>
+                          {timeStart}
                         </Text>
-                      ) : null}
-                      {roomName ? (
-                        <Text numberOfLines={1} style={styles.cardRoomText}>
-                          {roomName}
+                        <Text style={styles.milestoneTimeEnd}>
+                          {timeEnd}
                         </Text>
-                      ) : null}
-                    </View>
+                        {isCurrent && (
+                          <View style={styles.liveIndicatorPill}>
+                            <View style={styles.liveIndicatorDot} />
+                            <Text style={styles.liveIndicatorText}>LIVE</Text>
+                          </View>
+                        )}
+                      </View>
 
-                    {/* Right: Chevron */}
-                    <MaterialCommunityIcons name="chevron-right" size={20} color="#94A3B8" />
-                  </TouchableOpacity>
-                );
-              })}
+                      {/* Column 2: Milestone Node & Connecting Spine */}
+                      <View style={styles.milestoneSpineCol}>
+                        {/* Top Line Segment */}
+                        <View
+                          style={[
+                            styles.milestoneSpineTop,
+                            isFirst && { opacity: 0 },
+                            (isPast || isCurrent) && styles.milestoneSpinePast,
+                          ]}
+                        />
+
+                        {/* Node Circle */}
+                        <View
+                          style={[
+                            styles.milestoneNode,
+                            isPast && styles.milestoneNodePast,
+                            isCurrent && styles.milestoneNodeCurrent,
+                            isUpcoming && styles.milestoneNodeUpcoming,
+                          ]}
+                        >
+                          {isPast ? (
+                            <MaterialCommunityIcons name="check" size={13} color="#FFFFFF" />
+                          ) : isCurrent ? (
+                            <View style={styles.milestoneNodeCurrentInner} />
+                          ) : (
+                            <Text style={styles.milestoneNodeNumber}>{idx + 1}</Text>
+                          )}
+                        </View>
+
+                        {/* Bottom Line Segment */}
+                        <View
+                          style={[
+                            styles.milestoneSpineBottom,
+                            isLast && { opacity: 0 },
+                            isPast && styles.milestoneSpinePast,
+                          ]}
+                        />
+                      </View>
+
+                      {/* Column 3: Milestone Card */}
+                      <TouchableOpacity
+                        activeOpacity={0.88}
+                        onPress={() => setSelectedScheduleDetail(item)}
+                        style={[
+                          styles.milestoneCard,
+                          isCurrent && styles.milestoneCardCurrent,
+                          isPast && styles.milestoneCardPast,
+                        ]}
+                      >
+                        {/* Header: Sesi badge & live status */}
+                        <View style={styles.milestoneCardHeader}>
+                          <View style={[styles.sessionBadge, isCurrent && styles.sessionBadgeCurrent]}>
+                            <Text style={[styles.sessionBadgeText, isCurrent && styles.sessionBadgeTextCurrent]}>
+                              SESI #{idx + 1}
+                            </Text>
+                          </View>
+
+                          {isCurrent ? (
+                            <View style={styles.currentStatusBadge}>
+                              <View style={styles.currentStatusDot} />
+                              <Text style={styles.currentStatusText}>Sedang Berlangsung</Text>
+                            </View>
+                          ) : isPast ? (
+                            <View style={styles.pastStatusBadge}>
+                              <Text style={styles.pastStatusText}>Selesai</Text>
+                            </View>
+                          ) : (
+                            <Text style={styles.upcomingStatusText}>Akan Datang</Text>
+                          )}
+                        </View>
+
+                        {/* Content: Subject + Icon + Teacher + Room */}
+                        <View style={styles.milestoneCardBody}>
+                          <View style={[styles.milestoneIconBox, { backgroundColor: styleMeta.bg }]}>
+                            <MaterialCommunityIcons name={styleMeta.icon as any} size={22} color={styleMeta.color} />
+                          </View>
+
+                          <View style={styles.milestoneInfoCol}>
+                            <Text numberOfLines={1} style={styles.milestoneSubjectTitle}>
+                              {item.subject?.name || 'Mata Pelajaran'}
+                            </Text>
+
+                            <View style={styles.milestoneMetaDetails}>
+                              {teacherName ? (
+                                <View style={styles.metaRow}>
+                                  <MaterialCommunityIcons name="account-tie-outline" size={13} color="#64748B" style={{ marginRight: 3 }} />
+                                  <Text numberOfLines={1} style={styles.metaText}>{teacherName}</Text>
+                                </View>
+                              ) : null}
+
+                              {roomName ? (
+                                <View style={styles.metaRow}>
+                                  <MaterialCommunityIcons name="door-open" size={13} color="#64748B" style={{ marginRight: 3 }} />
+                                  <Text numberOfLines={1} style={styles.metaText}>{roomName}</Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          </View>
+
+                          <MaterialCommunityIcons name="chevron-right" size={20} color="#94A3B8" />
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
             </View>
           ) : (
             <View style={styles.emptyContainer}>
@@ -908,6 +917,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,
@@ -1218,6 +1231,277 @@ const styles = StyleSheet.create({
   // 4. CLEAN SCHEDULE CARDS
   scheduleListCol: {
     gap: 10,
+  },
+  // MILESTONE STYLES
+  milestoneContainer: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  milestoneSummaryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#DEF7EC',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+  },
+  milestoneSummaryLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  milestoneSummaryTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0D6B42',
+  },
+  milestoneSummaryBadge: {
+    backgroundColor: '#0D6B42',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  milestoneSummaryBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  milestoneList: {
+    paddingLeft: 2,
+    paddingRight: 2,
+  },
+  milestoneRow: {
+    flexDirection: 'row',
+    marginBottom: 14,
+    minHeight: 88,
+  },
+  milestoneTimeCol: {
+    width: 60,
+    alignItems: 'flex-end',
+    paddingTop: 10,
+    paddingRight: 8,
+  },
+  milestoneTimeStart: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  milestoneTimeStartCurrent: {
+    color: '#059669',
+    fontSize: 13,
+  },
+  milestoneTimeEnd: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  liveIndicatorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginTop: 6,
+    gap: 3,
+  },
+  liveIndicatorDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#10B981',
+  },
+  liveIndicatorText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#059669',
+    letterSpacing: 0.5,
+  },
+  milestoneSpineCol: {
+    width: 28,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  milestoneSpineTop: {
+    width: 2.5,
+    flex: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  milestoneSpineBottom: {
+    width: 2.5,
+    flex: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  milestoneSpinePast: {
+    backgroundColor: '#10B981',
+  },
+  milestoneNode: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  milestoneNodePast: {
+    backgroundColor: '#10B981',
+    borderColor: '#10B981',
+  },
+  milestoneNodeCurrent: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  milestoneNodeCurrentInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10B981',
+  },
+  milestoneNodeUpcoming: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+  },
+  milestoneNodeNumber: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  milestoneCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 14,
+    marginLeft: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  milestoneCardCurrent: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#86EFAC',
+    borderLeftWidth: 4,
+    borderLeftColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  milestoneCardPast: {
+    backgroundColor: '#FAFAFA',
+    borderColor: '#F1F5F9',
+    opacity: 0.92,
+  },
+  milestoneCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sessionBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  sessionBadgeCurrent: {
+    backgroundColor: '#DEF7EC',
+  },
+  sessionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.3,
+  },
+  sessionBadgeTextCurrent: {
+    color: '#059669',
+  },
+  currentStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+    gap: 4,
+  },
+  currentStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  currentStatusText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  pastStatusBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  pastStatusText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  upcomingStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  milestoneCardBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  milestoneIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  milestoneInfoCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  milestoneSubjectTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+  },
+  milestoneMetaDetails: {
+    marginTop: 3,
+    gap: 2,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontWeight: '500',
   },
   cleanScheduleCard: {
     backgroundColor: '#FFFFFF',

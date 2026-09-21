@@ -24,6 +24,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -218,18 +219,20 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
     let isMounted = true;
     if (isParent) {
       const targetChildId = route?.params?.child_id;
+      const isSingleChild = route?.params?.single_child_only === true;
       const childCacheKey = offlineCache.buildKey('academic_cal_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<Child[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          const filteredCached = targetChildId
+          const filteredCached = (isSingleChild && targetChildId)
             ? cached.filter((c) => String(c.id) === String(targetChildId))
             : cached;
-          setChildren(filteredCached.length > 0 ? filteredCached : cached);
+          const safeCached = filteredCached.length > 0 ? filteredCached : cached;
+          setChildren(safeCached);
           if (targetChildId) {
             setSelectedChildId(String(targetChildId));
           } else if (!selectedChildId) {
-            setSelectedChildId(String(cached[0].id));
+            setSelectedChildId(String(safeCached[0].id));
           }
         }
       })();
@@ -238,14 +241,15 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
           if (isMounted && arr.length > 0) {
-            const filteredArr = targetChildId
+            const filteredArr = (isSingleChild && targetChildId)
               ? arr.filter((c) => String(c.id) === String(targetChildId))
               : arr;
-            setChildren(filteredArr.length > 0 ? filteredArr : arr);
+            const safeArr = filteredArr.length > 0 ? filteredArr : arr;
+            setChildren(safeArr);
             if (targetChildId) {
               setSelectedChildId(String(targetChildId));
             } else if (!selectedChildId) {
-              setSelectedChildId(String(arr[0].id));
+              setSelectedChildId(String(safeArr[0].id));
             }
             void offlineCache.set(childCacheKey, arr);
           }
@@ -255,7 +259,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, route?.params?.child_id]);
+  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
 
   // 2. Load Academic Calendar Data from Database API with offline cache
   const loadCalendar = useCallback(async () => {
@@ -442,156 +446,58 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
             )}
           </View>
 
-          <ScrollView
-            ref={studentScrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={SCREEN_WIDTH - 50 + 12}
-            decelerationRate="fast"
-            onMomentumScrollEnd={handleStudentScrollEnd}
-            style={styles.heroCardScrollContainer}
-            contentContainerStyle={styles.heroCardScroll}
-          >
-            {children.map((child, idx) => {
-              const isSelected = String(child.id) === selectedChildId;
-              const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-              const unitTitle = child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-              const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
-              const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-              const avatarUri = getProfileImageUrl(child);
-
-              return (
-                <TouchableOpacity
-                  key={String(child.id)}
-                  activeOpacity={0.88}
-                  onPress={() => selectChildWithScroll(String(child.id), idx)}
-                >
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
-                  >
-                    <View style={styles.cardDecorCircle} />
-
-                    {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Button */}
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image
-                            source={{ uri: avatarUri }}
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <Image
-                            source={
-                              child?.gender === 'female' ||
-                              child?.jenis_kelamin === 'P' ||
-                              child?.jenis_kelamin === 'female' ||
-                              child?.gender === 'P'
-                                ? DEFAULT_STUDENT_GIRL_AVATAR
-                                : DEFAULT_STUDENT_BOY_AVATAR
-                            }
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <View style={styles.studentNameBadgeRow}>
-                          <Text numberOfLines={1} style={styles.studentFullName}>
-                            {childFullName}
-                          </Text>
-                        </View>
-                        <Text style={styles.studentNisText}>
-                          NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons
-                            name="school"
-                            size={11}
-                            color="#FFFFFF"
-                            style={{ marginRight: 4 }}
-                          />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {unitTitle}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* Right Action Button */}
-                      <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                        <MaterialCommunityIcons
-                          name={isSelected ? 'check-circle' : 'gesture-tap'}
-                          size={16}
-                          color={isSelected ? '#18A165' : '#FFFFFF'}
-                        />
-                        <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                          {isSelected ? 'Terpilih' : 'Pilih'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Kelas</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {className}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {jenjang}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        </View>
-                        <View style={styles.studentPresensiValueRow}>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                            Hadir
-                          </Text>
-                          <View style={styles.presensiGreenDot} />
-                        </View>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* DOT INDIKATOR SCROLL SISWA */}
-          {children.length > 1 && (
-            <View style={styles.paginationDotsRow}>
-              {children.map((c, i) => {
-                const isDotActive = String(c.id) === selectedChildId;
-                return (
-                  <TouchableOpacity
-                    key={String(c.id || i)}
-                    onPress={() => selectChildWithScroll(String(c.id), i)}
-                    style={[
-                      styles.paginationDot,
-                      isDotActive && styles.paginationDotActive,
-                    ]}
-                  />
-                );
-              })}
+          {children.length === 1 ? (
+            <View style={styles.singleHeroCardContainer}>
+              <StudentHeroCard
+                child={children[0]}
+                isSelected={true}
+                isSingleChild={true}
+                showActionButtons={false}
+              />
             </View>
+          ) : (
+            <>
+              <ScrollView
+                ref={studentScrollRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                snapToInterval={SCREEN_WIDTH - 50 + 12}
+                decelerationRate="fast"
+                onMomentumScrollEnd={handleStudentScrollEnd}
+                style={styles.heroCardScrollContainer}
+                contentContainerStyle={styles.heroCardScroll}
+              >
+                {children.map((child, idx) => (
+                  <StudentHeroCard
+                    key={String(child.id || idx)}
+                    child={child}
+                    isSelected={String(child.id) === selectedChildId}
+                    isSingleChild={false}
+                    showActionButtons={false}
+                    onSelect={() => selectChildWithScroll(String(child.id), idx)}
+                  />
+                ))}
+              </ScrollView>
+
+              {/* DOT INDIKATOR SCROLL SISWA */}
+              {children.length > 1 && (
+                <View style={styles.paginationDotsRow}>
+                  {children.map((c, i) => {
+                    const isDotActive = String(c.id) === selectedChildId;
+                    return (
+                      <TouchableOpacity
+                        key={String(c.id || i)}
+                        onPress={() => selectChildWithScroll(String(c.id), i)}
+                        style={[
+                          styles.paginationDot,
+                          isDotActive && styles.paginationDotActive,
+                        ]}
+                      />
+                    );
+                  })}
+                </View>
+              )}
+            </>
           )}
         </View>
       ) : studentInfo ? (
@@ -603,101 +509,14 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
             </View>
           </View>
 
-          {(() => {
-            const s = studentInfo;
-            const studentName = s.full_name || s.nama_lengkap || s.name || 'Siswa Aktif';
-            const studentClass = s.kelas?.nama_kelas || s.kelas?.name || s.class || s.class_name || 'Kelas Belum Ditentukan';
-            const studentUnit = s.education_unit?.name || s.unit || s.unit_name || 'Unit Pendidikan';
-            const jenjang = s.kelas?.jenjang || s.education_unit?.level || 'Terpadu';
-            const avatarUri = getProfileImageUrl(s);
-
-            return (
-              <LinearGradient
-                colors={['#0D6B42', '#18A165', '#2BD988']}
-                locations={[0, 0.55, 1]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.childCardHeroSizeSingle}
-              >
-                <View style={styles.cardDecorCircle} />
-
-                <View style={styles.childHeroTopRow}>
-                  <View style={styles.avatarBorderWrapHero}>
-                    {avatarUri ? (
-                      <Image
-                        source={{ uri: avatarUri }}
-                        style={styles.childAvatarImgHero}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <Image
-                        source={
-                          s?.gender === 'female' ||
-                          s?.jenis_kelamin === 'P' ||
-                          s?.jenis_kelamin === 'female' ||
-                          s?.gender === 'P'
-                            ? DEFAULT_STUDENT_GIRL_AVATAR
-                            : DEFAULT_STUDENT_BOY_AVATAR
-                        }
-                        style={styles.childAvatarImgHero}
-                        resizeMode="cover"
-                      />
-                    )}
-                  </View>
-                  <View style={styles.childInfoCol}>
-                    <View style={styles.studentNameBadgeRow}>
-                      <Text numberOfLines={1} style={styles.studentFullName}>
-                        {studentName}
-                      </Text>
-                    </View>
-                    <Text style={styles.studentNisText}>
-                      NIS: {s.nis || '-'} {s.nisn ? `· NISN: ${s.nisn}` : ''}
-                    </Text>
-                    <View style={styles.studentUnitBadge}>
-                      <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text numberOfLines={1} style={styles.studentUnitText}>
-                        {studentUnit}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.selectedActionBtnRight}>
-                    <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
-                    <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                  </View>
-                </View>
-
-                <View style={styles.studentAttributesGrid}>
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Kelas</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>{studentClass}</Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>{jenjang}</Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Presensi</Text>
-                    </View>
-                    <View style={styles.studentPresensiValueRow}>
-                      <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
-                      <View style={styles.presensiGreenDot} />
-                    </View>
-                  </View>
-                </View>
-              </LinearGradient>
-            );
-          })()}
+          <View style={styles.singleHeroCardContainer}>
+            <StudentHeroCard
+              child={studentInfo}
+              isSelected={true}
+              isSingleChild={true}
+              showActionButtons={false}
+            />
+          </View>
         </View>
       ) : user ? (
         <View style={[styles.containerBlock, styles.studentContainerBlock]}>
@@ -711,7 +530,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
           {(() => {
             const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
             const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
-            const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || 'Mahad Abu Ja\'far');
+            const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || (user as any)?.unit?.name || 'Unit Pendidikan');
             const avatarUri = getProfileImageUrl(user);
 
             return (
@@ -1346,6 +1165,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,

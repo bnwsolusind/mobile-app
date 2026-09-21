@@ -11,6 +11,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { useActiveChildStore } from '../stores/activeChildStore';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CATEGORIES = ['Semua', 'Akademik', 'Perilaku', 'Kedisiplinan', 'Prestasi', 'Konseling', 'Tahfizh', 'Ibadah', 'Kesehatan'];
@@ -44,18 +45,23 @@ export default function StudentNotesScreen({ route }: any) {
   const [signing, setSigning] = useState(false);
 
   const loadChildren = useCallback(async () => {
+    const isSingleChild = route?.params?.single_child_only === true;
     const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
     const response = await mobileApiService.getPortalChildren();
     const list = unwrapApiData<any[]>(response);
     const safeList = Array.isArray(list) ? list : [];
-    setChildren(safeList);
+    const displayList = (isSingleChild && targetChildId)
+      ? safeList.filter((c) => String(c.id) === String(targetChildId))
+      : safeList;
+    const finalChildren = displayList.length > 0 ? displayList : safeList;
+    setChildren(finalChildren);
     useActiveChildStore.getState().setChildren(safeList);
-    const resolvedId = targetChildId || useActiveChildStore.getState().activeChildId || (safeList[0]?.id ? String(safeList[0].id) : undefined);
+    const resolvedId = targetChildId || useActiveChildStore.getState().activeChildId || (finalChildren[0]?.id ? String(finalChildren[0].id) : undefined);
     if (resolvedId) {
       setSelectedChildId(String(resolvedId));
       useActiveChildStore.getState().setActiveChildId(String(resolvedId));
     }
-  }, [route?.params?.child_id]);
+  }, [route?.params?.child_id, route?.params?.single_child_only]);
 
   const loadNotes = useCallback(async (page = 1, append = false) => {
     if (!selectedChildId) return;
@@ -162,143 +168,63 @@ export default function StudentNotesScreen({ route }: any) {
             )}
           </View>
 
-          <ScrollView
-            ref={studentScrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={SCREEN_WIDTH - 50 + 12}
-            decelerationRate="fast"
-            snapToAlignment="start"
-            onMomentumScrollEnd={handleStudentScrollEnd}
-            style={styles.heroCardScrollContainer}
-            contentContainerStyle={styles.heroCardScroll}
-          >
-            {children.map((child, index) => {
-              const isSelected = String(child.id) === selectedChildId;
-              const photo = getProfileImageUrl(child);
-              const fullName = childName(child);
-              const className = childClass(child);
-              const unitTitle = childUnit(child);
-              const jenjang = child?.kelas?.jenjang || child?.education_unit?.level || 'Terpadu';
-              const cardStyle = children.length === 1 ? styles.childCardHeroSizeSingle : styles.childCardHeroSize;
-
-              return (
-                <TouchableOpacity
-                  key={String(child.id)}
-                  activeOpacity={0.88}
-                  onPress={() => selectChildWithScroll(String(child.id), index)}
-                >
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[cardStyle, !isSelected && { opacity: 0.9 }]}
-                  >
-                    <View style={styles.cardDecorCircle} />
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {photo ? (
-                          <Image source={{ uri: photo }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                        ) : (
-                          <Image
-                            source={
-                              child?.gender === 'female' ||
-                              child?.jenis_kelamin === 'P' ||
-                              child?.jenis_kelamin === 'female' ||
-                              child?.gender === 'P'
-                                ? DEFAULT_STUDENT_GIRL_AVATAR
-                                : DEFAULT_STUDENT_BOY_AVATAR
-                            }
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <View style={styles.studentNameBadgeRow}>
-                          <Text numberOfLines={1} style={styles.studentFullName}>
-                            {fullName}
-                          </Text>
-                        </View>
-                        <Text style={styles.studentNisText}>
-                          NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {unitTitle}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                        <MaterialCommunityIcons name={isSelected ? 'check-circle' : 'gesture-tap'} size={16} color={isSelected ? '#18A165' : '#FFFFFF'} />
-                        <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                          {isSelected ? 'Terpilih' : 'Pilih'}
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Kelas</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {className || '—'}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {jenjang}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        </View>
-                        <View style={styles.studentPresensiValueRow}>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                            Hadir
-                          </Text>
-                          <View style={styles.presensiGreenDot} />
-                        </View>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-          {children.length > 1 && (
-            <View style={styles.paginationDotsRow}>
-              {children.map((child, index) => (
-                <TouchableOpacity
-                  key={String(child.id)}
-                  onPress={() => selectChildWithScroll(String(child.id), index)}
-                  style={[styles.paginationDot, String(child.id) === selectedChildId && styles.paginationDotActive]}
-                />
-              ))}
+          {children.length === 1 ? (
+            <View style={styles.singleHeroCardContainer}>
+              <StudentHeroCard
+                child={children[0]}
+                isSelected={true}
+                isSingleChild={true}
+                showActionButtons={false}
+              />
             </View>
+          ) : (
+            <>
+              <ScrollView
+                ref={studentScrollRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                snapToInterval={SCREEN_WIDTH - 50 + 12}
+                decelerationRate="fast"
+                snapToAlignment="start"
+                onMomentumScrollEnd={handleStudentScrollEnd}
+                style={styles.heroCardScrollContainer}
+                contentContainerStyle={styles.heroCardScroll}
+              >
+                {children.map((child, index) => (
+                  <StudentHeroCard
+                    key={String(child.id || index)}
+                    child={child}
+                    isSelected={String(child.id) === selectedChildId}
+                    isSingleChild={false}
+                    showActionButtons={false}
+                    onSelect={() => selectChildWithScroll(String(child.id), index)}
+                  />
+                ))}
+              </ScrollView>
+              {children.length > 1 && (
+                <View style={styles.paginationDotsRow}>
+                  {children.map((child, index) => (
+                    <TouchableOpacity
+                      key={String(child.id)}
+                      onPress={() => selectChildWithScroll(String(child.id), index)}
+                      style={[styles.paginationDot, String(child.id) === selectedChildId && styles.paginationDotActive]}
+                    />
+                  ))}
+                </View>
+              )}
+            </>
           )}
         </View>
       )}
 
       <View style={styles.containerBlock}>
-        <View style={styles.sectionHeader}><MaterialCommunityIcons name="comment-text-multiple-outline" size={19} color="#18A165"/><View><Text style={styles.sectionTitle}>Komentar & Catatan Guru</Text><Text style={styles.sectionSub}>Catatan resmi yang dibagikan guru kepada orang tua.</Text></View></View>
+        <View style={styles.sectionHeader}><MaterialCommunityIcons name="notebook-edit-outline" size={19} color="#18A165"/><View><Text style={styles.sectionTitle}>Buku Penghubung</Text><Text style={styles.sectionSub}>Buku penghubung komunikasi perkembangan anak antara guru dan orang tua.</Text></View></View>
         <View style={styles.searchBox}><MaterialCommunityIcons name="magnify" size={20} color="#94A3B8"/><TextInput value={search} onChangeText={setSearch} placeholder="Cari catatan atau nama guru..." placeholderTextColor="#94A3B8" style={styles.searchInput}/></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{CATEGORIES.map((item) => <TouchableOpacity key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && styles.filterActive]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></TouchableOpacity>)}</ScrollView>
       </View>
 
       {error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}
-      {loading ? <ActivityIndicator color="#18A165" style={{ marginVertical: 36 }}/> : filtered.length === 0 ? <View style={styles.empty}><MaterialCommunityIcons name="comment-alert-outline" size={38} color="#CBD5E1"/><Text style={styles.emptyTitle}>Belum Ada Komentar</Text><Text style={styles.emptyText}>Belum ada catatan guru yang dipublikasikan untuk kategori ini.</Text></View> : filtered.map((note) => {
+      {loading ? <ActivityIndicator color="#18A165" style={{ marginVertical: 36 }}/> : filtered.length === 0 ? <View style={styles.empty}><MaterialCommunityIcons name="notebook-outline" size={38} color="#CBD5E1"/><Text style={styles.emptyTitle}>Belum Ada Catatan</Text><Text style={styles.emptyText}>Belum ada catatan buku penghubung untuk kategori ini.</Text></View> : filtered.map((note) => {
         const status = note.signature_status || 'unsigned';
         const signed = status === 'signed';
         return <View key={String(note.id)} style={styles.noteCard}>
@@ -349,6 +275,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,

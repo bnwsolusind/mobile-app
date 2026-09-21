@@ -418,31 +418,34 @@ export default function TahfizhScreen({ route, navigation }: any) {
   const loadChildren = useCallback(async () => {
     if (!isParent) return;
     const targetChildId = route?.params?.child_id;
+    const isSingleChild = route?.params?.single_child_only === true;
     const childCacheKey = offlineCache.buildKey('tahfizh_children', user?.id);
     const cached = await offlineCache.get<any[]>(childCacheKey);
     if (cached && cached.length > 0) {
-      const filteredCached = targetChildId
+      const filteredCached = (isSingleChild && targetChildId)
         ? cached.filter((c) => String(c.id) === String(targetChildId))
         : cached;
-      setChildren(filteredCached.length > 0 ? filteredCached : cached);
-      setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(cached[0].id)));
+      const safeCached = filteredCached.length > 0 ? filteredCached : cached;
+      setChildren(safeCached);
+      setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(safeCached[0].id)));
     }
 
     try {
       const res = await mobileApiService.getPortalChildren();
       const list = unwrapApiData<any[]>(res) || [];
       if (Array.isArray(list) && list.length > 0) {
-        const filteredList = targetChildId
+        const filteredList = (isSingleChild && targetChildId)
           ? list.filter((c) => String(c.id) === String(targetChildId))
           : list;
-        setChildren(filteredList.length > 0 ? filteredList : list);
-        setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(list[0].id)));
+        const safeList = filteredList.length > 0 ? filteredList : list;
+        setChildren(safeList);
+        setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || String(safeList[0].id)));
         void offlineCache.set(childCacheKey, list);
       }
     } catch {
       // Keep cached children if available
     }
-  }, [isParent, user?.id, route?.params?.child_id]);
+  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
 
   useEffect(() => {
     void loadChildren();
@@ -1042,41 +1045,27 @@ export default function TahfizhScreen({ route, navigation }: any) {
                 )}
               </View>
 
-              <ScrollView
-                ref={studentScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
-                decelerationRate="fast"
-                onMomentumScrollEnd={handleStudentScrollEnd}
-                style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
-              >
-                {children.map((child, idx) => {
-                  const isSelected = String(child.id) === selectedChildId;
-                  const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-                  const unitTitle =
-                    child.kelas?.unit_pendidikan?.name ||
-                    child.kelas?.unitPendidikan?.name ||
-                    child.education_unit?.name ||
-                    child.unit_name ||
-                    'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
-                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                  const avatarUri = getProfileImageUrl(child);
+              {children.length === 1 ? (
+                <View style={styles.singleHeroCardContainer}>
+                  {(() => {
+                    const child = children[0];
+                    const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
+                    const unitTitle =
+                      child.kelas?.unit_pendidikan?.name ||
+                      child.kelas?.unitPendidikan?.name ||
+                      child.education_unit?.name ||
+                      child.unit_name ||
+                      'Unit Sekolah';
+                    const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
+                    const avatarUri = getProfileImageUrl(child);
 
-                  return (
-                    <TouchableOpacity
-                      key={String(child.id)}
-                      activeOpacity={0.88}
-                      onPress={() => selectChildWithScroll(String(child.id), idx)}
-                    >
+                    return (
                       <LinearGradient
                         colors={['#0D6B42', '#18A165', '#2BD988']}
                         locations={[0, 0.55, 1]}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
-                        style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
+                        style={styles.childCardHeroSizeSingle}
                       >
                         <View style={styles.cardDecorCircle} />
 
@@ -1084,7 +1073,11 @@ export default function TahfizhScreen({ route, navigation }: any) {
                         <View style={styles.childHeroTopRow}>
                           <View style={styles.avatarBorderWrapHero}>
                             {avatarUri ? (
-                              <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
+                              <Image
+                                source={{ uri: avatarUri }}
+                                style={styles.childAvatarImgHero}
+                                resizeMode="cover"
+                              />
                             ) : (
                               <Image
                                 source={
@@ -1110,12 +1103,7 @@ export default function TahfizhScreen({ route, navigation }: any) {
                               NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
                             </Text>
                             <View style={styles.studentUnitBadge}>
-                              <MaterialCommunityIcons
-                                name="school"
-                                size={11}
-                                color="#FFFFFF"
-                                style={{ marginRight: 4 }}
-                              />
+                              <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
                               <Text numberOfLines={1} style={styles.studentUnitText}>
                                 {unitTitle}
                               </Text>
@@ -1123,63 +1111,27 @@ export default function TahfizhScreen({ route, navigation }: any) {
                           </View>
 
                           {/* Right Action Button */}
-                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
+                          <View style={styles.selectedActionBtnRight}>
                             <MaterialCommunityIcons
-                              name={isSelected ? 'check-circle' : 'gesture-tap'}
+                              name="check-circle"
                               size={16}
-                              color={isSelected ? '#18A165' : '#FFFFFF'}
+                              color="#18A165"
                             />
-                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                              {isSelected ? 'Terpilih' : 'Pilih'}
+                            <Text style={styles.selectedActionBtnText}>
+                              Terpilih
                             </Text>
                           </View>
                         </View>
 
-                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
+                        {/* Middle Attributes Bar: Total Ayat | Total Juz | Progress */}
                         <View style={styles.studentAttributesGrid}>
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Kelas</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {className}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {jenjang}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Presensi</Text>
-                            </View>
-                            <View style={styles.studentPresensiValueRow}>
-                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                                Hadir
-                              </Text>
-                              <View style={styles.presensiGreenDot} />
-                            </View>
-                          </View>
-                        </View>
-
-                        {/* Tahfizh Achievement Bar inside Card Ananda */}
-                        <View style={styles.cardTahfizhStatsRow}>
                           <View style={styles.cardTahfizhStatItem}>
                             <View style={styles.cardTahfizhStatIconLabel}>
                               <MaterialCommunityIcons name="book-open-page-variant" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
                               <Text style={styles.cardTahfizhStatLabel}>Total Ayat</Text>
                             </View>
                             <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
-                              {isSelected ? `${totalAyat} Ayat` : `${child.total_ayat || 0} Ayat`}
+                              {totalAyat} Ayat
                             </Text>
                           </View>
                           <View style={styles.cardTahfizhStatDivider} />
@@ -1189,9 +1141,7 @@ export default function TahfizhScreen({ route, navigation }: any) {
                               <Text style={styles.cardTahfizhStatLabel}>Total Juz</Text>
                             </View>
                             <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
-                              {isSelected
-                                ? `${Number(tahfizhAchievement?.completed_juz_count ?? tahfizhAchievement?.juz_count ?? 0)} Juz`
-                                : `${child.completed_juz_count || child.juz_count || 0} Juz`}
+                              {Number(tahfizhAchievement?.completed_juz_count ?? tahfizhAchievement?.juz_count ?? 0)} Juz
                             </Text>
                           </View>
                           <View style={styles.cardTahfizhStatDivider} />
@@ -1201,33 +1151,171 @@ export default function TahfizhScreen({ route, navigation }: any) {
                               <Text style={styles.cardTahfizhStatLabel}>Progress</Text>
                             </View>
                             <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
-                              {isSelected ? `${targetProgress}%` : `${child.target_progress || 0}%`}
+                              {targetProgress}%
                             </Text>
                           </View>
                         </View>
                       </LinearGradient>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* DOT INDIKATOR SCROLL SISWA */}
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((c, i) => {
-                    const isDotActive = String(c.id) === selectedChildId;
-                    return (
-                      <TouchableOpacity
-                        key={String(c.id || i)}
-                        onPress={() => selectChildWithScroll(String(c.id), i)}
-                        style={[
-                          styles.paginationDot,
-                          isDotActive && styles.paginationDotActive,
-                        ]}
-                      />
                     );
-                  })}
+                  })()}
                 </View>
+              ) : (
+                <>
+                  <ScrollView
+                    ref={studentScrollRef}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={SCREEN_WIDTH - 50 + 12}
+                    decelerationRate="fast"
+                    onMomentumScrollEnd={handleStudentScrollEnd}
+                    style={styles.heroCardScrollContainer}
+                    contentContainerStyle={styles.heroCardScroll}
+                  >
+                    {children.map((child, idx) => {
+                      const isSelected = String(child.id) === selectedChildId;
+                      const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
+                      const unitTitle =
+                        child.kelas?.unit_pendidikan?.name ||
+                        child.kelas?.unitPendidikan?.name ||
+                        child.education_unit?.name ||
+                        child.unit_name ||
+                        'Unit Sekolah';
+                      const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
+                      const avatarUri = getProfileImageUrl(child);
+
+                      return (
+                        <TouchableOpacity
+                          key={String(child.id)}
+                          activeOpacity={0.88}
+                          onPress={() => selectChildWithScroll(String(child.id), idx)}
+                        >
+                          <LinearGradient
+                            colors={['#0D6B42', '#18A165', '#2BD988']}
+                            locations={[0, 0.55, 1]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
+                          >
+                            <View style={styles.cardDecorCircle} />
+
+                            {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Button */}
+                            <View style={styles.childHeroTopRow}>
+                              <View style={styles.avatarBorderWrapHero}>
+                                {avatarUri ? (
+                                  <Image
+                                    source={{ uri: avatarUri }}
+                                    style={styles.childAvatarImgHero}
+                                    resizeMode="cover"
+                                  />
+                                ) : (
+                                  <Image
+                                    source={
+                                      child?.gender === 'female' ||
+                                      child?.jenis_kelamin === 'P' ||
+                                      child?.jenis_kelamin === 'female' ||
+                                      child?.gender === 'P'
+                                        ? DEFAULT_STUDENT_GIRL_AVATAR
+                                        : DEFAULT_STUDENT_BOY_AVATAR
+                                    }
+                                    style={styles.childAvatarImgHero}
+                                    resizeMode="cover"
+                                  />
+                                )}
+                              </View>
+                              <View style={styles.childInfoCol}>
+                                <View style={styles.studentNameBadgeRow}>
+                                  <Text numberOfLines={1} style={styles.studentFullName}>
+                                    {childFullName}
+                                  </Text>
+                                </View>
+                                <Text style={styles.studentNisText}>
+                                  NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
+                                </Text>
+                                <View style={styles.studentUnitBadge}>
+                                  <MaterialCommunityIcons
+                                    name="school"
+                                    size={11}
+                                    color="#FFFFFF"
+                                    style={{ marginRight: 4 }}
+                                  />
+                                  <Text numberOfLines={1} style={styles.studentUnitText}>
+                                    {unitTitle}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* Right Action Button */}
+                              <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
+                                <MaterialCommunityIcons
+                                  name={isSelected ? 'check-circle' : 'gesture-tap'}
+                                  size={16}
+                                  color={isSelected ? '#18A165' : '#FFFFFF'}
+                                />
+                                <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
+                                  {isSelected ? 'Terpilih' : 'Pilih'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Middle Attributes Bar: Total Ayat | Total Juz | Progress */}
+                            <View style={styles.studentAttributesGrid}>
+                              <View style={styles.cardTahfizhStatItem}>
+                                <View style={styles.cardTahfizhStatIconLabel}>
+                                  <MaterialCommunityIcons name="book-open-page-variant" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
+                                  <Text style={styles.cardTahfizhStatLabel}>Total Ayat</Text>
+                                </View>
+                                <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
+                                  {isSelected ? `${totalAyat} Ayat` : `${child.total_ayat || 0} Ayat`}
+                                </Text>
+                              </View>
+                              <View style={styles.cardTahfizhStatDivider} />
+                              <View style={styles.cardTahfizhStatItem}>
+                                <View style={styles.cardTahfizhStatIconLabel}>
+                                  <MaterialCommunityIcons name="book-multiple-outline" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
+                                  <Text style={styles.cardTahfizhStatLabel}>Total Juz</Text>
+                                </View>
+                                <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
+                                  {isSelected
+                                    ? `${Number(tahfizhAchievement?.completed_juz_count ?? tahfizhAchievement?.juz_count ?? 0)} Juz`
+                                    : `${child.completed_juz_count || child.juz_count || 0} Juz`}
+                                </Text>
+                              </View>
+                              <View style={styles.cardTahfizhStatDivider} />
+                              <View style={styles.cardTahfizhStatItem}>
+                                <View style={styles.cardTahfizhStatIconLabel}>
+                                  <MaterialCommunityIcons name="trophy-outline" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
+                                  <Text style={styles.cardTahfizhStatLabel}>Progress</Text>
+                                </View>
+                                <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
+                                  {isSelected ? `${targetProgress}%` : `${child.target_progress || 0}%`}
+                                </Text>
+                              </View>
+                            </View>
+                          </LinearGradient>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* DOT INDIKATOR SCROLL SISWA */}
+                  {children.length > 1 && (
+                    <View style={styles.paginationDotsRow}>
+                      {children.map((c, i) => {
+                        const isDotActive = String(c.id) === selectedChildId;
+                        return (
+                          <TouchableOpacity
+                            key={String(c.id || i)}
+                            onPress={() => selectChildWithScroll(String(c.id), i)}
+                            style={[
+                              styles.paginationDot,
+                              isDotActive && styles.paginationDotActive,
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
+                  )}
+                </>
               )}
             </View>
           ) : studentInfo ? (
@@ -2898,6 +2986,10 @@ const styles = StyleSheet.create({
   },
   studentContainerBlock: {
     marginBottom: 8,
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   sectionHeaderRow: {
     flexDirection: 'row',

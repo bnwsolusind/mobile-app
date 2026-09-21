@@ -27,6 +27,7 @@ import {
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -370,21 +371,26 @@ export default function GradeScreen({ route }: any) {
   const [prayerDayOffset, setPrayerDayOffset] = useState(0);
   const prayerModalDate = useMemo(() => getDynamicTodayString(prayerDayOffset), [prayerDayOffset]);
 
-  // 1. Fetch children if parent (Simpan seluruh daftar anak agar orang tua dapat berganti anak langsung)
+  // 1. Fetch children if parent
   const loadChildren = useCallback(async () => {
     if (!isParent) return;
+    const isSingleChild = route?.params?.single_child_only === true;
     const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
     const response = await mobileApiService.getPortalChildren();
     const list = unwrapApiData<any[]>(response) || [];
     const safeList = Array.isArray(list) ? list : [];
-    setChildren(safeList);
+    const displayList = (isSingleChild && targetChildId)
+      ? safeList.filter((c) => String(c.id) === String(targetChildId))
+      : safeList;
+    const finalChildren = displayList.length > 0 ? displayList : safeList;
+    setChildren(finalChildren);
     useActiveChildStore.getState().setChildren(safeList);
-    const resolvedId = targetChildId || useActiveChildStore.getState().activeChildId || (safeList[0]?.id ? String(safeList[0].id) : undefined);
+    const resolvedId = targetChildId || useActiveChildStore.getState().activeChildId || (finalChildren[0]?.id ? String(finalChildren[0].id) : undefined);
     if (resolvedId) {
       setSelectedChildId(String(resolvedId));
       useActiveChildStore.getState().setActiveChildId(String(resolvedId));
     }
-  }, [isParent, route?.params?.child_id]);
+  }, [isParent, route?.params?.child_id, route?.params?.single_child_only]);
 
   // 2. Fetch grades, tahfizh, mutabaah, assignments, and prayer assessment
   const loadGrades = useCallback(async () => {
@@ -1233,7 +1239,16 @@ export default function GradeScreen({ route }: any) {
               )}
             </View>
 
-            {children.length > 0 ? (
+            {children.length === 1 ? (
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={children[0]}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={false}
+                />
+              </View>
+            ) : children.length > 1 ? (
               <>
                 <ScrollView
                   ref={studentScrollRef}
@@ -1245,148 +1260,36 @@ export default function GradeScreen({ route }: any) {
                   style={styles.heroCardScrollContainer}
                   contentContainerStyle={styles.heroCardScroll}
                 >
-                  {children.map((child, index) => {
-                    const active = String(child.id) === selectedChildId;
-                    const name = child.full_name || child.name || 'Siswa';
-                    const childClass = child.kelas?.name || child.kelas?.nama_kelas || child.class_name || 'Kelas Belum Ditentukan';
-                    const childUnit = child.kelas?.unit_pendidikan?.name || child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-                    const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                    const avatarUri = getProfileImageUrl(child);
-
-                    return (
-                      <TouchableOpacity key={String(child.id)} activeOpacity={0.88} onPress={() => selectChild(String(child.id), index)}>
-                        <LinearGradient
-                          colors={['#0D6B42', '#18A165', '#2BD988']}
-                          locations={[0, 0.55, 1]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={[styles.childCardHeroSize, !active && { opacity: 0.9 }]}
-                        >
-                          <View style={styles.cardDecorCircle} />
-
-                          {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Selection Button */}
-                          <View style={styles.childHeroTopRow}>
-                            <View style={styles.avatarBorderWrapHero}>
-                              {avatarUri ? (
-                                <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                              ) : (
-                                <Image
-                                  source={
-                                    child?.gender === 'female' ||
-                                    child?.jenis_kelamin === 'P' ||
-                                    child?.jenis_kelamin === 'female' ||
-                                    child?.gender === 'P'
-                                      ? DEFAULT_STUDENT_GIRL_AVATAR
-                                      : DEFAULT_STUDENT_BOY_AVATAR
-                                  }
-                                  style={styles.childAvatarImgHero}
-                                  resizeMode="cover"
-                                />
-                              )}
-                            </View>
-                            <View style={styles.childInfoCol}>
-                              <View style={styles.studentNameBadgeRow}>
-                                <Text numberOfLines={1} style={styles.studentFullName}>{name}</Text>
-                              </View>
-                              <Text style={styles.studentNisText}>
-                                NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                              </Text>
-                              <View style={styles.studentUnitBadge}>
-                                <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                                <Text numberOfLines={1} style={styles.studentUnitText}>{childUnit}</Text>
-                              </View>
-                            </View>
-                            <View style={[styles.selectedActionBtnRight, !active && styles.selectedActionBtnRightInactive]}>
-                              <MaterialCommunityIcons name={active ? 'check-circle' : 'gesture-tap'} size={16} color={active ? '#18A165' : '#FFFFFF'} />
-                              <Text style={[styles.selectedActionBtnText, !active && styles.selectedActionBtnTextInactive]}>
-                                {active ? 'Terpilih' : 'Pilih'}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                          <View style={styles.studentAttributesGrid}>
-                            <View style={styles.studentAttrBox}>
-                              <View style={styles.studentAttrLabelRow}>
-                                <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                                <Text style={styles.studentAttrLabel}>Kelas</Text>
-                              </View>
-                              <Text numberOfLines={1} style={styles.studentAttrValue}>{childClass}</Text>
-                            </View>
-                            <View style={styles.studentAttrDivider} />
-                            <View style={styles.studentAttrBox}>
-                              <View style={styles.studentAttrLabelRow}>
-                                <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                                <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                              </View>
-                              <Text numberOfLines={1} style={styles.studentAttrValue}>{jenjang}</Text>
-                            </View>
-                            <View style={styles.studentAttrDivider} />
-                            <View style={styles.studentAttrBox}>
-                              <View style={styles.studentAttrLabelRow}>
-                                <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                                <Text style={styles.studentAttrLabel}>Presensi</Text>
-                              </View>
-                              <View style={styles.studentPresensiValueRow}>
-                                <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
-                                <View style={styles.presensiGreenDot} />
-                              </View>
-                            </View>
-                          </View>
-                        </LinearGradient>
-                      </TouchableOpacity>
-                    );
-                  })}
+                  {children.map((child, index) => (
+                    <StudentHeroCard
+                      key={String(child.id || index)}
+                      child={child}
+                      isSelected={String(child.id) === selectedChildId}
+                      isSingleChild={false}
+                      showActionButtons={false}
+                      onSelect={() => selectChild(String(child.id), index)}
+                    />
+                  ))}
                 </ScrollView>
-                {children.length > 1 && (
-                  <View style={styles.paginationDotsRow}>
-                    {children.map((child, idx) => (
-                      <TouchableOpacity
-                        key={String(child.id || idx)}
-                        onPress={() => selectChild(String(child.id), idx)}
-                        style={[styles.paginationDot, String(child.id) === selectedChildId && styles.paginationDotActive]}
-                      />
-                    ))}
-                  </View>
-                )}
+                <View style={styles.paginationDotsRow}>
+                  {children.map((child, idx) => (
+                    <TouchableOpacity
+                      key={String(child.id || idx)}
+                      onPress={() => selectChild(String(child.id), idx)}
+                      style={[styles.paginationDot, String(child.id) === selectedChildId && styles.paginationDotActive]}
+                    />
+                  ))}
+                </View>
               </>
             ) : student ? (
-              <LinearGradient colors={['#0D6B42', '#18A165', '#2BD988']} locations={[0, 0.55, 1]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.childCardHeroSizeSingle}>
-                <View style={styles.cardDecorCircle} />
-                <View style={styles.childHeroTopRow}>
-                  <View style={styles.avatarBorderWrapHero}>
-                    <Image source={{ uri: getProfileImageUrl(student) || `https://ui-avatars.com/api/?name=${encodeURIComponent(studentName)}` }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                  </View>
-                  <View style={styles.childInfoCol}>
-                    <Text numberOfLines={1} style={styles.childNameHero}>{studentName}</Text>
-                    <Text style={styles.childSubInfoHero}>NIS: {student?.nis || '-'}</Text>
-                    <View style={styles.studentUnitBadge}>
-                      <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text numberOfLines={1} style={styles.studentUnitText}>{unitName || 'Unit Sekolah'}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.selectedActionBtnRight}>
-                    <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
-                    <Text style={styles.selectedActionBtnText}>Siswa</Text>
-                  </View>
-                </View>
-                <View style={styles.studentAttributesGrid}>
-                  <View style={styles.studentAttrBox}>
-                    <Text style={styles.studentAttrLabel}>Kelas</Text>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>{className || '—'}</Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>Terpadu</Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <Text style={styles.studentAttrLabel}>Presensi</Text>
-                    <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
-                  </View>
-                </View>
-              </LinearGradient>
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={student}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={false}
+                />
+              </View>
             ) : null}
           </View>
 
@@ -1579,16 +1482,16 @@ export default function GradeScreen({ route }: any) {
                     : item.submission;
 
                   const statusObj = getAssignmentStatus(item);
-                  const subjectName = item.subject?.name || item.subject?.nama_mapel || item.mata_pelajaran || 'Pendidikan Agama Islam (PAI)';
+                  const subjectName = item.subject?.name || item.subject?.nama_mapel || item.mata_pelajaran || item.mapel?.nama_mapel || 'Penugasan';
                   const subjectTheme = getSubjectTheme(subjectName);
-                  const teacherName = item.teacher?.name || item.guru?.nama_lengkap || item.teacher_name || 'Muhammad Elvi Syam';
+                  const teacherName = item.teacher?.name || item.guru?.nama_lengkap || item.teacher_name || '-';
                   const taskTitle = item.judul_tugas || item.judul || 'Penugasan Pembelajaran';
                   const taskDesc = item.deskripsi || item.instruksi || 'Tidak ada deskripsi penugasan.';
                   const deadlineFormatted = formatDeadline(item.deadline);
                   const isGraded = statusObj.key === 'graded' || (sub && sub.nilai_guru !== null && sub.nilai_guru !== undefined);
                   const isSubmitted = statusObj.key === 'submitted';
-                  const scoreVal = sub?.nilai_guru ?? sub?.nilai ?? '92.5';
-                  const attachmentCount = item.attachments_count ?? (Array.isArray(item.attachments) ? item.attachments.length : (Array.isArray(item.files) ? item.files.length : (item.file_url || item.lampiran ? 1 : 2)));
+                  const scoreVal = sub?.nilai_guru != null ? String(sub.nilai_guru) : (sub?.nilai != null ? String(sub.nilai) : (item.nilai != null ? String(item.nilai) : '-'));
+                  const attachmentCount = item.attachments_count ?? (Array.isArray(item.attachments) ? item.attachments.length : (Array.isArray(item.files) ? item.files.length : (item.file_url || item.lampiran ? 1 : 0)));
 
                   return (
                     <TouchableOpacity
@@ -1792,6 +1695,30 @@ export default function GradeScreen({ route }: any) {
                                 <Text style={styles.gradeLetter}>{scoreText(item.kkm)}</Text>
                               </View>
                             </View>
+                            {(item.score_assignment !== undefined || item.score_quiz !== undefined || item.score_mid !== undefined || item.score_final !== undefined) && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9', flexWrap: 'wrap' }}>
+                                {item.score_assignment !== undefined && item.score_assignment !== null && (
+                                  <View style={{ backgroundColor: '#F8FAFC', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                                    <Text style={{ fontSize: 10, color: '#64748B' }}>Tugas: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{item.score_assignment}</Text></Text>
+                                  </View>
+                                )}
+                                {item.score_quiz !== undefined && item.score_quiz !== null && (
+                                  <View style={{ backgroundColor: '#F5F3FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#DDD6FE' }}>
+                                    <Text style={{ fontSize: 10, color: '#7C3AED' }}>⚡ Kuis: <Text style={{ fontWeight: '700', color: '#6D28D9' }}>{item.score_quiz}</Text></Text>
+                                  </View>
+                                )}
+                                {item.score_mid !== undefined && item.score_mid !== null && (
+                                  <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#BFDBFE' }}>
+                                    <Text style={{ fontSize: 10, color: '#2563EB' }}>UTS: <Text style={{ fontWeight: '700', color: '#1D4ED8' }}>{item.score_mid}</Text></Text>
+                                  </View>
+                                )}
+                                {item.score_final !== undefined && item.score_final !== null && (
+                                  <View style={{ backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#A7F3D0' }}>
+                                    <Text style={{ fontSize: 10, color: '#059669' }}>UAS: <Text style={{ fontWeight: '700', color: '#047857' }}>{item.score_final}</Text></Text>
+                                  </View>
+                                )}
+                              </View>
+                            )}
                             {item.notes ? <Text style={styles.notes}>“{item.notes}”</Text> : null}
                           </View>
                         ))
@@ -2899,15 +2826,15 @@ export default function GradeScreen({ route }: any) {
                   : selectedAssignment.submission;
 
                 const statusObj = getAssignmentStatus(selectedAssignment);
-                const subjectName = selectedAssignment.subject?.name || selectedAssignment.subject?.nama_mapel || selectedAssignment.mata_pelajaran || 'Pendidikan Agama Islam (PAI)';
+                const subjectName = selectedAssignment.subject?.name || selectedAssignment.subject?.nama_mapel || selectedAssignment.mata_pelajaran || selectedAssignment.mapel?.nama_mapel || 'Penugasan';
                 const subjectTheme = getSubjectTheme(subjectName);
-                const teacherName = selectedAssignment.teacher?.name || selectedAssignment.guru?.nama_lengkap || selectedAssignment.teacher_name || 'Muhammad Elvi Syam';
+                const teacherName = selectedAssignment.teacher?.name || selectedAssignment.guru?.nama_lengkap || selectedAssignment.teacher_name || '-';
                 const taskTitle = selectedAssignment.judul_tugas || selectedAssignment.judul || 'Penugasan Pembelajaran';
                 const taskDesc = selectedAssignment.deskripsi || selectedAssignment.instruksi || 'Tidak ada instruksi khusus.';
                 const deadlineFormatted = formatDeadline(selectedAssignment.deadline);
                 const isGraded = statusObj.key === 'graded' || (sub && sub.nilai_guru !== null && sub.nilai_guru !== undefined);
-                const scoreVal = sub?.nilai_guru ?? sub?.nilai ?? '92.5';
-                const attachmentCount = selectedAssignment.attachments_count ?? (Array.isArray(selectedAssignment.attachments) ? selectedAssignment.attachments.length : (Array.isArray(selectedAssignment.files) ? selectedAssignment.files.length : (selectedAssignment.file_url || selectedAssignment.lampiran ? 1 : 2)));
+                const scoreVal = sub?.nilai_guru != null ? String(sub.nilai_guru) : (sub?.nilai != null ? String(sub.nilai) : (selectedAssignment.nilai != null ? String(selectedAssignment.nilai) : '-'));
+                const attachmentCount = selectedAssignment.attachments_count ?? (Array.isArray(selectedAssignment.attachments) ? selectedAssignment.attachments.length : (Array.isArray(selectedAssignment.files) ? selectedAssignment.files.length : (selectedAssignment.file_url || selectedAssignment.lampiran ? 1 : 0)));
 
                 return (
                   <>
@@ -2995,7 +2922,7 @@ export default function GradeScreen({ route }: any) {
                             <MaterialCommunityIcons name="message-text-outline" size={14} color="#059669" style={{ marginTop: 2, marginRight: 6 }} />
                             <Text style={styles.modalTeacherNoteText}>
                               <Text style={{ fontWeight: '800', color: '#065F46' }}>Catatan Guru: </Text>
-                              {sub?.catatan_guru || sub?.catatan || 'Pekerjaan sangat baik dan rapi. Pertahankan prestasinya!'}
+                              {sub?.catatan_guru || sub?.catatan || 'Tidak ada catatan khusus dari guru.'}
                             </Text>
                           </View>
                         </View>
@@ -4233,6 +4160,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,

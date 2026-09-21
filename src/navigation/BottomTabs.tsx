@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -9,6 +9,7 @@ import InAppNotificationBanner from '../components/InAppNotificationBanner';
 import { useChatNotificationWatcher } from '../hooks/useChatNotificationWatcher';
 import { notificationService } from '../services/notificationService';
 import { useChatBadgeStore } from '../stores/chatBadgeStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import HomeScreen from '../screens/HomeScreen';
 import AbsensiScreen from '../screens/AbsensiScreen';
 import ProfilScreen from '../screens/ProfilScreen';
@@ -33,6 +34,7 @@ import ExamGridsScreen from '../screens/ExamGridsScreen';
 import CbtExamsScreen from '../screens/CbtExamsScreen';
 import QuranScreen from '../screens/QuranScreen';
 import DoaDzikirScreen from '../screens/DoaDzikirScreen';
+import ParentBillsScreen from '../screens/ParentBillsScreen';
 import AccessDeniedScreen from '../components/AccessDeniedScreen';
 import { useAuthStore } from '../stores/authStore';
 import { mobileApiService } from '../services/mobileApiService';
@@ -42,7 +44,7 @@ import { canAccessScreen, ScreenKey } from '../utils/accessControl';
 
 const Tab = createBottomTabNavigator();
 
-function ModuleHeader({ title, subtitle, navigation }: { title: string; subtitle?: string; navigation: any }) {
+function ModuleHeader({ title, subtitle, navigation, route }: { title: string; subtitle?: string; navigation: any; route?: any }) {
   const insets = useSafeAreaInsets();
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
 
@@ -53,6 +55,22 @@ function ModuleHeader({ title, subtitle, navigation }: { title: string; subtitle
     title === 'Kalender Akademik' ? 'Agenda & kalender pendidikan terpadu' :
     undefined
   );
+
+  const handleBack = () => {
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    if (handled) {
+      return;
+    }
+    const childId = route?.params?.child_id || route?.params?.student_id;
+    if (route?.params?.from_child_portal && childId) {
+      navigation.navigate('Beranda', {
+        reopen_child_portal_id: String(childId),
+        reopen_timestamp: Date.now(),
+      });
+    } else {
+      navigation.navigate('Beranda');
+    }
+  };
 
   return (
     <View style={{ backgroundColor: '#FFFFFF', width: '100%' }}>
@@ -98,8 +116,8 @@ function ModuleHeader({ title, subtitle, navigation }: { title: string; subtitle
         <View style={moduleHeaderStyles.buttonsRow}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Kembali ke Beranda"
-            onPress={() => navigation.navigate('Beranda')}
+            accessibilityLabel="Kembali ke halaman sebelumnya"
+            onPress={handleBack}
             style={moduleHeaderStyles.backButton}
           >
             <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
@@ -120,13 +138,13 @@ function ModuleHeader({ title, subtitle, navigation }: { title: string; subtitle
   );
 }
 
-const moduleOptions = (title: string, theme: any) => ({ navigation }: any) => ({
+const moduleOptions = (title: string, theme: any) => ({ navigation, route }: any) => ({
   title,
   headerShown: true,
   tabBarButton: () => null,
   tabBarItemStyle: { display: 'none' as const },
   headerShadowVisible: false,
-  header: () => <ModuleHeader title={title} navigation={navigation} />,
+  header: () => <ModuleHeader title={title} navigation={navigation} route={route} />,
 });
 
 /**
@@ -145,7 +163,12 @@ function withScreenGuard(Component: React.ComponentType<any>, screenKey: ScreenK
       return (
         <AccessDeniedScreen
           message={result.reason}
-          onGoBack={() => props.navigation?.navigate('Beranda')}
+          onGoBack={() => {
+            const handled = useNavigationHistoryStore.getState().goBackDynamic(props.navigation);
+            if (!handled) {
+              props.navigation?.navigate('Beranda');
+            }
+          }}
         />
       );
     }
@@ -288,6 +311,36 @@ export default function BottomTabs() {
     return unsubscribe;
   }, []);
 
+  const handleNavigationStateChange = useCallback(() => {
+    try {
+      const currentRoute = (navigationRef as any)?.getCurrentRoute?.();
+      if (currentRoute?.name) {
+        useNavigationHistoryStore.getState().pushRoute({
+          name: currentRoute.name,
+          params: currentRoute.params as Record<string, any> | undefined,
+        });
+      }
+    } catch {}
+  }, [navigationRef]);
+
+  // Android hardware back button handler
+  useEffect(() => {
+    const onHardwareBack = () => {
+      try {
+        const currentRoute = (navigationRef as any)?.getCurrentRoute?.();
+        if (!currentRoute?.name || currentRoute.name === 'Beranda') {
+          return false;
+        }
+        return useNavigationHistoryStore.getState().goBackDynamic(navigationRef);
+      } catch {
+        return false;
+      }
+    };
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => sub.remove();
+  }, [navigationRef]);
+
   const isFoundation = isFoundationRole(user?.roles || []);
 
   if (isProfileSyncing) {
@@ -317,10 +370,14 @@ export default function BottomTabs() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={handleNavigationStateChange}
+      onStateChange={handleNavigationStateChange}
+    >
       <Tab.Navigator
         initialRouteName="Beranda"
-        backBehavior="initialRoute"
+        backBehavior="history"
         screenOptions={({ route }) => ({
           headerShown: false,
           tabBarHideOnKeyboard: true,
@@ -469,6 +526,12 @@ export default function BottomTabs() {
           />
         )}
         <Tab.Screen
+          name="Perizinan"
+          component={GuardedAbsensiScreen}
+          initialParams={{ tab: 'permissions' }}
+          options={moduleOptions('Perizinan Santri', theme)}
+        />
+        <Tab.Screen
           name="Kalender"
           component={AcademicCalendarScreen}
           options={moduleOptions('Kalender Akademik', theme)}
@@ -512,7 +575,14 @@ export default function BottomTabs() {
           <Tab.Screen
             name="Komentar"
             component={StudentNotesScreen}
-            options={moduleOptions('Komentar & Catatan Guru', theme)}
+            options={moduleOptions('Buku Penghubung', theme)}
+          />
+        )}
+        {access.parent && (
+          <Tab.Screen
+            name="Tagihan"
+            component={ParentBillsScreen}
+            options={moduleOptions('Tagihan & Pembayaran SPP', theme)}
           />
         )}
         <Tab.Screen

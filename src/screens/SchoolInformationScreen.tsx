@@ -540,7 +540,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
               {(() => {
                 const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
                 const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
-                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || 'Mahad Abu Ja\'far');
+                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || (user as any)?.unit?.name || 'Unit Pendidikan');
                 const avatarUri = getProfileImageUrl(user);
 
                 return (

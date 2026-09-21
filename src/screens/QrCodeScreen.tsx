@@ -18,8 +18,14 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { isParentRole, isStudentRole } from '../utils/roles';
-import { getProfileImageUrl } from '../utils/profile';
+import {
+  getProfileImageUrl,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+} from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { useMobileConfigStore } from '../stores/mobileConfigStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -38,6 +44,7 @@ export default function QrCodeScreen({ navigation }: any) {
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 14);
 
   const user = useAuthStore((state) => state.user);
+  const config = useMobileConfigStore((state) => state.config);
   const roles = user?.roles || [];
   const isParent = isParentRole(roles);
   const isStudent = isStudentRole(roles);
@@ -177,11 +184,15 @@ export default function QrCodeScreen({ navigation }: any) {
     activeChild?.education_unit?.name ||
     activeChild?.unit_name ||
     activeChild?.unit?.name ||
-    'Yayasan Dar El-Iman';
+    config?.branding?.school_name ||
+    'Unit Pendidikan';
 
-  const avatarUrl =
-    getProfileImageUrl(activeChild) ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(childFullName)}&background=18A165&color=FFFFFF&bold=true&size=150`;
+  const childAvatarSource = useMemo(() => {
+    const remote = getProfileImageUrl(activeChild);
+    if (remote) return { uri: remote };
+    const gender = String(activeChild?.gender || activeChild?.jenis_kelamin || '').toLowerCase();
+    return gender.includes('p') || gender.includes('f') ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+  }, [activeChild]);
 
   // QR Code payload: Official backend token stuqr:v1:... (verified for gate & lesson attendance), fallback to NIS
   const qrCodeData = qrToken || (childNis !== '-' ? childNis : String(activeChild?.id || 'SIMSIT-STUDENT'));
@@ -251,10 +262,15 @@ export default function QrCodeScreen({ navigation }: any) {
           <View style={styles.headerContentRow}>
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => navigation?.navigate('Beranda')}
+              onPress={() => {
+                const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+                if (!handled) {
+                  navigation?.navigate('Beranda');
+                }
+              }}
               style={styles.headerBtn}
               accessibilityRole="button"
-              accessibilityLabel="Kembali ke Beranda"
+              accessibilityLabel="Kembali ke halaman sebelumnya"
             >
               <MaterialCommunityIcons name="arrow-left" size={20} color="#18A165" />
             </TouchableOpacity>
@@ -315,9 +331,11 @@ export default function QrCodeScreen({ navigation }: any) {
                 {children.map((child) => {
                   const isSelected = String(child.id) === String(selectedChildId);
                   const name = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-                  const cAvatar =
-                    getProfileImageUrl(child) ||
-                    `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=${isSelected ? '18A165' : 'E2E8F0'}&color=${isSelected ? 'FFFFFF' : '475569'}&bold=true&size=80`;
+                  const remoteAvatar = getProfileImageUrl(child);
+                  const gender = String(child?.gender || child?.jenis_kelamin || '').toLowerCase();
+                  const cAvatarSource = remoteAvatar
+                    ? { uri: remoteAvatar }
+                    : (gender.includes('p') || gender.includes('f') ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR);
 
                   return (
                     <TouchableOpacity
@@ -329,7 +347,7 @@ export default function QrCodeScreen({ navigation }: any) {
                         isSelected && styles.childChipActive,
                       ]}
                     >
-                      <Image source={{ uri: cAvatar }} style={styles.childChipAvatar} />
+                      <Image source={cAvatarSource} style={styles.childChipAvatar} />
                       <Text
                         numberOfLines={1}
                         style={[
@@ -359,7 +377,7 @@ export default function QrCodeScreen({ navigation }: any) {
             {/* STUDENT PROFILE HEADER (AVATAR + DATA ANANDA) */}
             <View style={styles.studentProfileRow}>
               <View style={styles.avatarContainer}>
-                <Image source={{ uri: avatarUrl }} style={styles.studentAvatar} />
+                <Image source={childAvatarSource} style={styles.studentAvatar} />
                 <View style={styles.avatarCheckBadge}>
                   <MaterialCommunityIcons name="shield-check" size={14} color="#FFFFFF" />
                 </View>

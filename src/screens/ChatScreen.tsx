@@ -25,9 +25,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService } from '../services/mobileApiService';
+import { useAuthStore } from '../stores/authStore';
+import { realtimeWs } from '../services/websocketService';
 import { useChatBadgeStore } from '../stores/chatBadgeStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import {
   getProfileImageUrl,
+  DEFAULT_PARENT_AVATAR,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
@@ -267,13 +271,57 @@ export default function ChatScreen({ navigation, route }: any) {
 
     if (!selectedContact) return;
 
-    // Fast-poll active conversation messages every 2s for optimal responsiveness and low CPU
+  // Fast-poll active conversation messages as safe fallback every 8s
     const msgPoll = setInterval(() => {
       loadMessages(true);
-    }, 2000);
+    }, 8000);
 
     return () => clearInterval(msgPoll);
   }, [loadMessages, selectedContact]);
+
+  const myUserId = useAuthStore((state) => state.user?.id);
+
+  // Realtime WebSocket Subscription untuk Chat Zero-Delay
+  useEffect(() => {
+    if (!myUserId) return;
+
+    const channel = `user.${myUserId}`;
+    const unsubscribe = realtimeWs.subscribe(channel, (eventData) => {
+      if (eventData.event === 'chat.message.sent') {
+        const msg = eventData.payload;
+        if (!msg) return;
+
+        // 1. Jika pesan dari kontak yang sedang dibuka, langsung sisipkan ke daftar pesan
+        if (selectedContact && String(selectedContact.user_id) === String(msg.sender_user_id)) {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev;
+            return [
+              ...prev,
+              {
+                id: String(msg.id),
+                sender_user_id: String(msg.sender_user_id),
+                recipient_user_id: String(msg.recipient_user_id),
+                message: String(msg.message || ''),
+                created_at: String(msg.created_at || new Date().toISOString()),
+                read_at: null,
+                attachments: Array.isArray(msg.attachments) ? msg.attachments : [],
+              },
+            ];
+          });
+          setTimeout(() => {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          }, 60);
+        } else {
+          // Jika pesan dari orang lain, refresh kontak agar counter badge bertambah
+          loadContacts(undefined, true);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [myUserId, selectedContact, loadContacts]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -519,9 +567,8 @@ export default function ChatScreen({ navigation, route }: any) {
         } catch {}
       }
     } else {
-      if (navigation?.canGoBack?.() && navigation?.getState?.()?.index > 0) {
-        navigation.goBack();
-      } else {
+      const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+      if (!handled) {
         navigation?.navigate('Beranda');
       }
     }
@@ -536,10 +583,11 @@ export default function ChatScreen({ navigation, route }: any) {
       (selectedContact.teacher_type === 'wali_kelas' || selectedContact.role.toLowerCase().includes('wali'))
   );
 
-  const selectedTeacherAvatarUri = selectedContact
-    ? getProfileImageUrl(selectedContact) ||
-      `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedContact.name || 'Guru')}&background=${isSelectedContactWali ? '18A165' : '0284C7'}&color=FFFFFF&bold=true&size=128`
-    : '';
+  const selectedTeacherAvatarSource = selectedContact
+    ? (getProfileImageUrl(selectedContact)
+        ? { uri: getProfileImageUrl(selectedContact)! }
+        : DEFAULT_PARENT_AVATAR)
+    : DEFAULT_PARENT_AVATAR;
 
   return (
     <View style={styles.rootContainer} onLayout={handleRootLayout}>
@@ -579,7 +627,7 @@ export default function ChatScreen({ navigation, route }: any) {
                 <View style={styles.headerTeacherRow}>
                   <View style={[styles.headerTeacherAvatarBox, isSelectedContactWali && styles.avatarBoxWali]}>
                     <Image
-                      source={{ uri: selectedTeacherAvatarUri }}
+                      source={selectedTeacherAvatarSource}
                       style={styles.headerTeacherAvatarImg}
                       resizeMode="cover"
                     />
@@ -716,9 +764,8 @@ export default function ChatScreen({ navigation, route }: any) {
               renderItem={({ item }) => {
                 const isWali = item.teacher_type === 'wali_kelas' || item.role.toLowerCase().includes('wali');
                 const isOnline = Boolean(item.is_online);
-                const teacherPhotoUri =
-                  getProfileImageUrl(item) ||
-                  `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name || 'Guru')}&background=${isWali ? '18A165' : '0284C7'}&color=FFFFFF&bold=true&size=128`;
+                const photoUrl = getProfileImageUrl(item);
+                const teacherPhotoSource = photoUrl ? { uri: photoUrl } : DEFAULT_PARENT_AVATAR;
 
                 return (
                   <TouchableOpacity
@@ -730,7 +777,7 @@ export default function ChatScreen({ navigation, route }: any) {
                     <View style={styles.avatarContainer}>
                       <View style={[styles.avatarBox, isWali && styles.avatarBoxWali]}>
                         <Image
-                          source={{ uri: teacherPhotoUri }}
+                          source={teacherPhotoSource}
                           style={styles.avatarImg}
                           resizeMode="cover"
                         />
@@ -799,7 +846,7 @@ export default function ChatScreen({ navigation, route }: any) {
               <View style={styles.chatRoomContextHeader}>
                 <View style={[styles.roomHeaderAvatarWrap, isSelectedContactWali && styles.avatarBoxWali]}>
                   <Image
-                    source={{ uri: selectedTeacherAvatarUri }}
+                    source={selectedTeacherAvatarSource}
                     style={styles.roomHeaderAvatarImg}
                     resizeMode="cover"
                   />
@@ -837,7 +884,7 @@ export default function ChatScreen({ navigation, route }: any) {
                     <View style={styles.emptyChatBox}>
                       <View style={[styles.emptyChatAvatarWrap, isSelectedContactWali && styles.avatarBoxWali]}>
                         <Image
-                          source={{ uri: selectedTeacherAvatarUri }}
+                          source={selectedTeacherAvatarSource}
                           style={styles.emptyChatTeacherAvatar}
                           resizeMode="cover"
                         />

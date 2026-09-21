@@ -32,8 +32,10 @@ export default function MaintenanceScreen() {
 
       <Text style={styles.badge}>PEMELIHARAAN SISTEM</Text>
 
-      <Text style={styles.title}>{config.branding?.app_name || 'SIMSIT DAREL-IMAN'}</Text>
-      <Text style={styles.schoolName}>{config.branding?.school_name || 'Yayasan Dar el-Iman'}</Text>
+      <Text style={styles.title}>{config.branding?.app_name || 'SIMSIT'}</Text>
+      {Boolean(config.branding?.school_name) && (
+        <Text style={styles.schoolName}>{config.branding.school_name}</Text>
+      )}
 
       <View style={styles.card}>
         <Text style={styles.message}>{message}</Text>

@@ -26,6 +26,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 import { getApiErrorMessage } from '../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -99,20 +100,22 @@ export default function MutabaahScreen({ route, navigation }: any) {
   const [signComment, setSignComment] = useState('');
   const [signSubmitting, setSignSubmitting] = useState(false);
 
-  // 1. Load Children if Parent with offline cache (Isolasi data 1 anak terpilih jika ada child_id)
+  // 1. Load Children if Parent with offline cache
   useEffect(() => {
     if (!isParent) return;
     const targetChildId = route?.params?.child_id;
+    const isSingleChild = route?.params?.single_child_only === true;
     const childCacheKey = offlineCache.buildKey('mutabaah_children', user?.id);
     void (async () => {
       const cached = await offlineCache.get<any[]>(childCacheKey);
       if (cached && cached.length > 0) {
-        const filteredCached = targetChildId
+        const filteredCached = (isSingleChild && targetChildId)
           ? cached.filter((c) => String(c.id) === String(targetChildId))
           : cached;
-        setChildren(filteredCached.length > 0 ? filteredCached : cached);
+        const safeCached = filteredCached.length > 0 ? filteredCached : cached;
+        setChildren(safeCached);
         if (!selectedChildId) {
-          setSelectedChildId(targetChildId ? String(targetChildId) : String(cached[0].id));
+          setSelectedChildId(targetChildId ? String(targetChildId) : String(safeCached[0].id));
         }
       }
     })();
@@ -121,20 +124,21 @@ export default function MutabaahScreen({ route, navigation }: any) {
       .then((res) => {
         const list = unwrapApiData<any[]>(res) || [];
         if (Array.isArray(list) && list.length > 0) {
-          const filteredList = targetChildId
+          const filteredList = (isSingleChild && targetChildId)
             ? list.filter((c) => String(c.id) === String(targetChildId))
             : list;
-          setChildren(filteredList.length > 0 ? filteredList : list);
+          const safeList = filteredList.length > 0 ? filteredList : list;
+          setChildren(safeList);
           if (targetChildId) {
             setSelectedChildId(String(targetChildId));
           } else if (!selectedChildId) {
-            setSelectedChildId(String(list[0].id));
+            setSelectedChildId(String(safeList[0].id));
           }
           void offlineCache.set(childCacheKey, list);
         }
       })
       .catch(() => {});
-  }, [isParent, user?.id, route?.params?.child_id]);
+  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
 
   // Handle selectedChildId sync with route
   useEffect(() => {
@@ -420,153 +424,51 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </View>
                 )}
               </View>
-
-              <ScrollView
-                ref={studentScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
-                decelerationRate="fast"
-                snapToAlignment="start"
-                onMomentumScrollEnd={handleStudentScrollEnd}
-                style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
-              >
-                {children.map((child, idx) => {
-                  const isSelected = String(child.id) === selectedChildId;
-                  const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-                  const unitTitle = child.education_unit?.name || child.unit_name || child.unit || 'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.class_name || child.classroom?.name || 'Kelas Belum Ditentukan';
-                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                  const avatarUri = getProfileImageUrl(child);
-                  const cardStyle = children.length === 1 ? styles.childCardHeroSizeSingle : styles.childCardHeroSize;
-
-                  return (
-                    <TouchableOpacity
-                      key={String(child.id)}
-                      activeOpacity={0.88}
-                      onPress={() => selectChildWithScroll(String(child.id), idx)}
-                    >
-                      <LinearGradient
-                        colors={['#047857', '#059669', '#10B981']}
-                        locations={[0, 0.55, 1]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[cardStyle, !isSelected && { opacity: 0.9 }]}
-                      >
-                        <View style={styles.cardDecorCircle} />
-
-                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Button */}
-                        <View style={styles.childHeroTopRow}>
-                          <View style={styles.avatarBorderWrapHero}>
-                            {avatarUri ? (
-                              <Image
-                                source={{ uri: avatarUri }}
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            ) : (
-                              <Image
-                                source={
-                                  child?.gender === 'female' ||
-                                  child?.jenis_kelamin === 'P' ||
-                                  child?.jenis_kelamin === 'female' ||
-                                  child?.gender === 'P'
-                                    ? DEFAULT_STUDENT_GIRL_AVATAR
-                                    : DEFAULT_STUDENT_BOY_AVATAR
-                                }
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            )}
-                          </View>
-                          <View style={styles.childInfoCol}>
-                            <View style={styles.studentNameBadgeRow}>
-                              <Text numberOfLines={1} style={styles.studentFullName}>
-                                {childFullName}
-                              </Text>
-                            </View>
-                            <Text style={styles.studentNisText}>
-                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                            </Text>
-                            <View style={styles.studentUnitBadge}>
-                              <MaterialCommunityIcons
-                                name="school"
-                                size={11}
-                                color="#FFFFFF"
-                                style={{ marginRight: 4 }}
-                              />
-                              <Text numberOfLines={1} style={styles.studentUnitText}>
-                                {unitTitle}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Right Action Button */}
-                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                            <MaterialCommunityIcons
-                              name={isSelected ? 'check-circle' : 'gesture-tap'}
-                              size={16}
-                              color={isSelected ? '#18A165' : '#FFFFFF'}
-                            />
-                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                              {isSelected ? 'Terpilih' : 'Pilih'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                        <View style={styles.studentAttributesGrid}>
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Kelas</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {className}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {jenjang}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Presensi</Text>
-                            </View>
-                            <View style={styles.studentPresensiValueRow}>
-                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                                Hadir
-                              </Text>
-                              <View style={styles.presensiGreenDot} />
-                            </View>
-                          </View>
-                        </View>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* DOT INDIKATOR SCROLL SISWA */}
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((c, i) => (
-                    <TouchableOpacity
-                      key={String(c.id || i)}
-                      onPress={() => selectChildWithScroll(String(c.id), i)}
-                      style={[styles.paginationDot, String(c.id) === selectedChildId && styles.paginationDotActive]}
-                    />
-                  ))}
+                           {children.length === 1 ? (
+                <View style={styles.singleHeroCardContainer}>
+                  <StudentHeroCard
+                    child={children[0]}
+                    isSelected={true}
+                    isSingleChild={true}
+                    showActionButtons={false}
+                  />
                 </View>
+              ) : (
+                <>
+                  <ScrollView
+                    ref={studentScrollRef}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={SCREEN_WIDTH - 50 + 12}
+                    decelerationRate="fast"
+                    snapToAlignment="start"
+                    onMomentumScrollEnd={handleStudentScrollEnd}
+                    style={styles.heroCardScrollContainer}
+                    contentContainerStyle={styles.heroCardScroll}
+                  >
+                    {children.map((child, idx) => (
+                      <StudentHeroCard
+                        key={String(child.id || idx)}
+                        child={child}
+                        isSelected={String(child.id) === selectedChildId}
+                        isSingleChild={false}
+                        showActionButtons={false}
+                        onSelect={() => selectChildWithScroll(String(child.id), idx)}
+                      />
+                    ))}
+                  </ScrollView>
+
+                  {/* DOT INDIKATOR SCROLL SISWA */}
+                  <View style={styles.paginationDotsRow}>
+                    {children.map((c, i) => (
+                      <TouchableOpacity
+                        key={String(c.id || i)}
+                        onPress={() => selectChildWithScroll(String(c.id), i)}
+                        style={[styles.paginationDot, String(c.id) === selectedChildId && styles.paginationDotActive]}
+                      />
+                    ))}
+                  </View>
+                </>
               )}
             </View>
           ) : studentData ? (
@@ -577,94 +479,15 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   <Text style={styles.sectionTitle}>Data Ananda</Text>
                 </View>
               </View>
-              {/* Single Hero Card */}
-              <LinearGradient
-                colors={['#047857', '#059669', '#10B981']}
-                locations={[0, 0.55, 1]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.childCardHeroSizeSingle}
-              >
-                <View style={styles.cardDecorCircle} />
-                <View style={styles.childHeroTopRow}>
-                  <View style={styles.avatarBorderWrapHero}>
-                    {getProfileImageUrl(studentData) ? (
-                      <Image
-                        source={{ uri: getProfileImageUrl(studentData) || undefined }}
-                        style={styles.childAvatarImgHero}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <Image
-                        source={
-                          studentData?.gender === 'female' ||
-                          studentData?.jenis_kelamin === 'P' ||
-                          studentData?.jenis_kelamin === 'female' ||
-                          studentData?.gender === 'P'
-                            ? DEFAULT_STUDENT_GIRL_AVATAR
-                            : DEFAULT_STUDENT_BOY_AVATAR
-                        }
-                        style={styles.childAvatarImgHero}
-                        resizeMode="cover"
-                      />
-                    )}
-                  </View>
-                  <View style={styles.childInfoCol}>
-                    <View style={styles.studentNameBadgeRow}>
-                      <Text numberOfLines={1} style={styles.studentFullName}>
-                        {studentData.name || 'Siswa Aktif'}
-                      </Text>
-                    </View>
-                    <Text style={styles.studentNisText}>
-                      NIS: {studentData.nis || '-'} {studentData.nisn ? `· NISN: ${studentData.nisn}` : ''}
-                    </Text>
-                    <View style={styles.studentUnitBadge}>
-                      <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text numberOfLines={1} style={styles.studentUnitText}>
-                        {studentData.unit || 'Unit Sekolah'}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.selectedActionBtnRight}>
-                    <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
-                    <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                  </View>
-                </View>
-                <View style={styles.studentAttributesGrid}>
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Kelas</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>
-                      {studentData.class_name || '—'}
-                    </Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.studentAttrValue}>
-                      {studentData.unit || 'Terpadu'}
-                    </Text>
-                  </View>
-                  <View style={styles.studentAttrDivider} />
-                  <View style={styles.studentAttrBox}>
-                    <View style={styles.studentAttrLabelRow}>
-                      <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                      <Text style={styles.studentAttrLabel}>Presensi</Text>
-                    </View>
-                    <View style={styles.studentPresensiValueRow}>
-                      <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                        Hadir
-                      </Text>
-                      <View style={styles.presensiGreenDot} />
-                    </View>
-                  </View>
-                </View>
-              </LinearGradient>
+
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={studentData}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={false}
+                />
+              </View>
             </View>
           ) : null}
 
@@ -1506,6 +1329,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,

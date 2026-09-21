@@ -19,12 +19,12 @@ export default function MoreScreen({ navigation }: any) {
   const canAttendance = canAccessScreen('attendance', user, mobileConfig).allowed;
 
   const links = [
-    ...(canData ? [['Data', 'database-outline', 'Data & master sekolah']] : []),
-    ...(canTeacher ? [['Guru', 'teach', 'Ruang kerja dan pembelajaran']] : []),
-    ...(canAttendance ? [['Absensi', 'calendar-check-outline', 'Presensi dan kehadiran']] : []),
-    ...(canParent ? [['Orang Tua', 'account-child-outline', 'Perkembangan dan aktivitas anak']] : []),
-    ...(canStudent ? [['Siswa', 'school-outline', 'Jadwal, materi, dan tugas']] : []),
-    ['Profil', 'account-circle-outline', 'Akun dan keamanan'],
+    ...(canData ? [['Data', 'database-outline', 'Data & master sekolah', 'Data']] : []),
+    ...(canTeacher ? [['Guru', 'teach', 'Ruang kerja dan pembelajaran', 'Guru']] : []),
+    ...(canAttendance ? [['Absensi', 'calendar-check-outline', 'Presensi dan kehadiran', 'Absensi']] : []),
+    ...(canParent ? [['Portal Orang Tua', 'account-group', 'Menu khusus untuk kebutuhan orang tua', 'Orang Tua']] : []),
+    ...(canStudent ? [['Siswa', 'school-outline', 'Jadwal, materi, dan tugas', 'Siswa']] : []),
+    ['Profil', 'account-circle-outline', 'Akun dan keamanan', 'Profil'],
   ];
 
   return (
@@ -34,7 +34,7 @@ export default function MoreScreen({ navigation }: any) {
         <Text style={styles.title}>Layanan Lainnya</Text>
         <Text style={styles.subtitle}>Modul ditampilkan sesuai peran dan hak akses akun Anda.</Text>
       </View>
-      {links.map(([route, icon, desc]) => (
+      {links.map(([label, icon, desc, route]) => (
         <TouchableOpacity
           key={route}
           style={styles.item}
@@ -44,7 +44,7 @@ export default function MoreScreen({ navigation }: any) {
             <MaterialCommunityIcons name={icon as never} size={24} color="#087A5A" />
           </View>
           <View style={styles.copy}>
-            <Text style={styles.itemTitle}>{route}</Text>
+            <Text style={styles.itemTitle}>{label}</Text>
             <Text style={styles.itemDesc}>{desc}</Text>
           </View>
           <MaterialCommunityIcons name="chevron-right" size={22} color="#9BA7A3" />

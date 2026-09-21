@@ -243,6 +243,9 @@ export const mobileApiService = {
   getPortalPermissions: async (childId?: string) => (
     await api.get('/portal/permissions', childRequest(childId))
   ).data,
+  getDormitoryPermits: async (childId?: string) => (
+    await api.get('/portal/dormitory-permits', childRequest(childId))
+  ).data,
   getAcademicCalendar: async (params?: { range?: string; date?: string; child_id?: string }) => (
     await api.get('/portal/academic-calendar', { params })
   ).data,
@@ -255,6 +258,13 @@ export const mobileApiService = {
   getPortalStudentNotes: async (childId?: string, page = 1) => {
     const childConfig = childRequest(childId);
     return (await api.get('/portal/student-notes', {
+      ...(childConfig || {}),
+      params: { ...(childConfig?.params || {}), page },
+    })).data;
+  },
+  getPortalBills: async (childId?: string, page = 1) => {
+    const childConfig = childRequest(childId);
+    return (await api.get('/portal/bills', {
       ...(childConfig || {}),
       params: { ...(childConfig?.params || {}), page },
     })).data;
@@ -314,8 +324,8 @@ export const mobileApiService = {
       })
     ).data;
   },
-  startPortalCbtExam: async (examId: string) => (
-    await api.post(`/portal/lms/exams/${examId}/start`)
+  startPortalCbtExam: async (examId: string, childId?: string) => (
+    await api.post(`/portal/lms/exams/${examId}/start`, { ...(childId ? { child_id: childId } : {}) })
   ).data,
   savePortalCbtAnswers: async (sessionId: string, answers: any[]) => (
     await api.post(`/portal/lms/exam-sessions/${sessionId}/answers`, { jawaban: answers })
@@ -374,9 +384,31 @@ export const mobileApiService = {
   getPortalAssignments: async (params: Record<string, any> = {}) => (
     await api.get('/portal/assignments', { params })
   ).data,
-  submitPortalAssignment: async (assignmentId: string, jawaban_teks: string, childId?: string) => (
-    await api.post(`/portal/assignments/${assignmentId}/submit`, { jawaban_teks, child_id: childId })
-  ).data,
+  submitPortalAssignment: async (
+    assignmentId: string,
+    jawaban_teks: string,
+    childId?: string,
+    fileLampiran?: { uri: string; name: string; type: string } | null
+  ) => {
+    if (fileLampiran) {
+      const formData = new FormData();
+      if (jawaban_teks) formData.append('jawaban_teks', jawaban_teks);
+      if (childId) formData.append('child_id', childId);
+      formData.append('file_lampiran', {
+        uri: fileLampiran.uri,
+        name: fileLampiran.name,
+        type: fileLampiran.type,
+      } as any);
+      return (
+        await api.post(`/portal/assignments/${assignmentId}/submit`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (
+      await api.post(`/portal/assignments/${assignmentId}/submit`, { jawaban_teks, child_id: childId })
+    ).data;
+  },
 
   // Communication
   getChatContacts: async (childId?: string) => (

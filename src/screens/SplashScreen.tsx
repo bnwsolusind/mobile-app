@@ -11,6 +11,7 @@ import { Text } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useMobileConfigStore } from '../stores/mobileConfigStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -21,6 +22,7 @@ interface SplashScreenProps {
 
 export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreenProps) {
   const insets = useSafeAreaInsets();
+  const config = useMobileConfigStore((state) => state.config);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.94)).current;
@@ -115,7 +117,7 @@ export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreen
         {/* Title & Organization Name */}
         <Text style={styles.appNameText}>SIMSIT</Text>
         <Text style={styles.subTitleText}>Sistem Manajemen Sekolah Terpadu</Text>
-        <Text style={styles.orgNameText}>Yayasan Dar el-Iman</Text>
+        <Text style={styles.orgNameText}>{config?.branding?.school_name || config?.branding?.app_name || ''}</Text>
 
         {/* Value Tagline Pill Badge */}
         <View style={styles.taglineBadge}>

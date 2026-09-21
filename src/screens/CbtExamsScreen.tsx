@@ -26,6 +26,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 
 import { isParentRole, isStudentRole } from '../utils/roles';
 
@@ -142,15 +143,17 @@ export default function CbtExamsScreen({ route }: any) {
     let isMounted = true;
     if (isParent) {
       const targetChildId = route?.params?.child_id;
+      const isSingleChild = route?.params?.single_child_only === true;
       const childCacheKey = offlineCache.buildKey('cbt_exams_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<any[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          const filteredCached = targetChildId
+          const filteredCached = (isSingleChild && targetChildId)
             ? cached.filter((c) => String(c.id) === String(targetChildId))
             : cached;
-          setChildren(filteredCached.length > 0 ? filteredCached : cached);
-          setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || (cached[0]?.id ? String(cached[0].id) : undefined)));
+          const safeCached = filteredCached.length > 0 ? filteredCached : cached;
+          setChildren(safeCached);
+          setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || (safeCached[0]?.id ? String(safeCached[0].id) : undefined)));
         }
       })();
 
@@ -158,11 +161,12 @@ export default function CbtExamsScreen({ route }: any) {
         .then((res) => {
           const list = unwrapApiData<any[]>(res) || [];
           if (isMounted && list.length > 0) {
-            const filteredList = targetChildId
+            const filteredList = (isSingleChild && targetChildId)
               ? list.filter((c) => String(c.id) === String(targetChildId))
               : list;
-            setChildren(filteredList.length > 0 ? filteredList : list);
-            setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || (list[0]?.id ? String(list[0].id) : undefined)));
+            const safeList = filteredList.length > 0 ? filteredList : list;
+            setChildren(safeList);
+            setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || (safeList[0]?.id ? String(safeList[0].id) : undefined)));
             void offlineCache.set(childCacheKey, list);
           }
         })
@@ -171,7 +175,7 @@ export default function CbtExamsScreen({ route }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, route?.params?.child_id]);
+  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
 
   // 2. Load Real CBT Exams from Backend Database with offline cache
   const loadCbtExams = useCallback(async () => {
@@ -199,24 +203,24 @@ export default function CbtExamsScreen({ route }: any) {
       setExams(records);
 
       const resolvedStudent = response?.student || raw?.student || response?.data?.student;
-      let finalStudent = studentInfo;
       if (resolvedStudent) {
-        finalStudent = resolvedStudent;
         setStudentInfo(resolvedStudent);
+        void offlineCache.set(cacheKey, { exams: records, student: resolvedStudent });
       } else if (isStudent) {
         const currentUser = useAuthStore.getState().user;
-        finalStudent = currentUser?.student || currentUser;
-        setStudentInfo((prev: any) => prev || finalStudent);
+        const currentStudent = currentUser?.student || currentUser;
+        setStudentInfo((prev: any) => prev || currentStudent);
+        void offlineCache.set(cacheKey, { exams: records, student: currentStudent });
+      } else {
+        void offlineCache.set(cacheKey, { exams: records, student: cached?.student || null });
       }
-
-      void offlineCache.set(cacheKey, { exams: records, student: finalStudent });
     } catch (err) {
       if (!cached) {
         setError(getApiErrorMessage(err, 'Jadwal ujian CBT belum berhasil dimuat.'));
         setExams([]);
       }
     }
-  }, [isParent, isStudent, selectedChildId, studentInfo, user?.id]);
+  }, [isParent, isStudent, selectedChildId, user?.id]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -326,7 +330,7 @@ export default function CbtExamsScreen({ route }: any) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [activeExamSession, timeLeft]);
+  }, [activeExamSession?.sesi_id, timeLeft > 0]);
 
   const formatTimer = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -363,18 +367,11 @@ export default function CbtExamsScreen({ route }: any) {
   };
 
   const handleStartExam = async (exam: CbtExamItem) => {
-    if (isParent) {
-      Alert.alert(
-        'Mode Pemantauan Orang Tua',
-        'Pengerjaan ujian CBT hanya dapat dilakukan oleh siswa melalui akun aplikasi/portal siswa masing-masing.'
-      );
-      return;
-    }
-
+    const targetChildId = isParent ? selectedChildId : undefined;
     setInstructionModal(null);
     setStartingId(exam.id);
     try {
-      const startRes = await mobileApiService.startPortalCbtExam(exam.id);
+      const startRes = await mobileApiService.startPortalCbtExam(exam.id, targetChildId);
       const sessionData = unwrapApiData<any>(startRes) || startRes?.data || startRes;
 
       if (!sessionData || !sessionData.sesi_id) {
@@ -490,159 +487,59 @@ export default function CbtExamsScreen({ route }: any) {
                   <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
                   <Text style={styles.sectionTitle}>Data Ananda</Text>
                 </View>
-                {children.length > 1 && (
-                  <View style={styles.studentCardCountBadge}>
-                    <Text style={styles.studentCardCountBadgeText}>
-                      {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
-                    </Text>
-                  </View>
-                )}
               </View>
 
-              <ScrollView
-                ref={studentScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
-                decelerationRate="fast"
-                snapToAlignment="start"
-                onMomentumScrollEnd={handleStudentScrollEnd}
-                style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
-              >
-                {children.map((child, idx) => {
-                  const isSelected = String(child.id) === selectedChildId;
-                  const childFullName = childName(child);
-                  const unitTitle = childUnit(child);
-                  const className = childClass(child);
-                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                  const avatarUri = getProfileImageUrl(child);
-                  const cardStyle = children.length === 1 ? styles.childCardHeroSizeSingle : styles.childCardHeroSize;
-
-                  return (
-                    <TouchableOpacity
-                      key={String(child.id)}
-                      activeOpacity={0.88}
-                      onPress={() => selectChildWithScroll(String(child.id), idx)}
-                    >
-                      <LinearGradient
-                        colors={['#0D6B42', '#18A165', '#2BD988']}
-                        locations={[0, 0.55, 1]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[cardStyle, !isSelected && { opacity: 0.9 }]}
-                      >
-                        <View style={styles.cardDecorCircle} />
-
-                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Button */}
-                        <View style={styles.childHeroTopRow}>
-                          <View style={styles.avatarBorderWrapHero}>
-                            {avatarUri ? (
-                              <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                            ) : (
-                              <Image
-                                source={
-                                  child?.gender === 'female' ||
-                                  child?.jenis_kelamin === 'P' ||
-                                  child?.jenis_kelamin === 'female' ||
-                                  child?.gender === 'P'
-                                    ? DEFAULT_STUDENT_GIRL_AVATAR
-                                    : DEFAULT_STUDENT_BOY_AVATAR
-                                }
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            )}
-                          </View>
-                          <View style={styles.childInfoCol}>
-                            <View style={styles.studentNameBadgeRow}>
-                              <Text numberOfLines={1} style={styles.studentFullName}>
-                                {childFullName}
-                              </Text>
-                            </View>
-                            <Text style={styles.studentNisText}>
-                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                            </Text>
-                            <View style={styles.studentUnitBadge}>
-                              <MaterialCommunityIcons
-                                name="school"
-                                size={11}
-                                color="#FFFFFF"
-                                style={{ marginRight: 4 }}
-                              />
-                              <Text numberOfLines={1} style={styles.studentUnitText}>
-                                {unitTitle}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Right Action Button */}
-                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                            <MaterialCommunityIcons
-                              name={isSelected ? 'check-circle' : 'gesture-tap'}
-                              size={16}
-                              color={isSelected ? '#18A165' : '#FFFFFF'}
-                            />
-                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                              {isSelected ? 'Terpilih' : 'Pilih'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                        <View style={styles.studentAttributesGrid}>
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Kelas</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {className}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {jenjang}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Presensi</Text>
-                            </View>
-                            <View style={styles.studentPresensiValueRow}>
-                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                                Hadir
-                              </Text>
-                              <View style={styles.presensiGreenDot} />
-                            </View>
-                          </View>
-                        </View>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((child, idx) => {
-                    const isSelected = String(child.id) === selectedChildId;
-                    return (
-                      <TouchableOpacity
-                        key={String(child.id)}
-                        onPress={() => selectChildWithScroll(String(child.id), idx)}
-                        style={[styles.paginationDot, isSelected && styles.paginationDotActive]}
-                      />
-                    );
-                  })}
+              {children.length === 1 ? (
+                <View style={styles.singleHeroCardContainer}>
+                  <StudentHeroCard
+                    child={children[0]}
+                    isSelected={true}
+                    isSingleChild={true}
+                    showActionButtons={false}
+                  />
                 </View>
+              ) : (
+                <>
+                  <ScrollView
+                    ref={studentScrollRef}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={SCREEN_WIDTH - 50 + 12}
+                    decelerationRate="fast"
+                    snapToAlignment="start"
+                    onMomentumScrollEnd={handleStudentScrollEnd}
+                    style={styles.heroCardScrollContainer}
+                    contentContainerStyle={styles.heroCardScroll}
+                  >
+                    {children.map((child, idx) => (
+                      <StudentHeroCard
+                        key={String(child.id || idx)}
+                        child={child}
+                        isSelected={String(child.id) === selectedChildId}
+                        isSingleChild={false}
+                        showActionButtons={false}
+                        onSelect={() => selectChildWithScroll(String(child.id), idx)}
+                      />
+                    ))}
+                  </ScrollView>
+
+                  {/* DOT INDIKATOR SCROLL SISWA */}
+                  <View style={styles.paginationDotsRow}>
+                    {children.map((c, i) => {
+                      const isDotActive = String(c.id) === selectedChildId;
+                      return (
+                        <TouchableOpacity
+                          key={String(c.id || i)}
+                          onPress={() => selectChildWithScroll(String(c.id), i)}
+                          style={[
+                            styles.paginationDot,
+                            isDotActive && styles.paginationDotActive,
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                </>
               )}
             </View>
           ) : studentInfo ? (
@@ -654,102 +551,14 @@ export default function CbtExamsScreen({ route }: any) {
                 </View>
               </View>
 
-              {(() => {
-                const s = studentInfo;
-                const studentFullName = s.full_name || s.nama_lengkap || s.name || 'Siswa Aktif';
-                const className = s.kelas?.nama_kelas || s.kelas?.name || s.class || s.class_name || 'Kelas Belum Ditentukan';
-                const unitTitle = s.education_unit?.name || s.kelas?.unit_pendidikan?.name || s.unit || s.unit_name || 'Unit Sekolah';
-                const jenjang = s.kelas?.jenjang || s.education_unit?.level || 'Terpadu';
-                const avatarUri = getProfileImageUrl(s);
-
-                return (
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.childCardHeroSizeSingle}
-                  >
-                    <View style={styles.cardDecorCircle} />
-
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                        ) : (
-                          <Image
-                            source={
-                              s?.gender === 'female' ||
-                              s?.jenis_kelamin === 'P' ||
-                              s?.jenis_kelamin === 'female' ||
-                              s?.gender === 'P'
-                                ? DEFAULT_STUDENT_GIRL_AVATAR
-                                : DEFAULT_STUDENT_BOY_AVATAR
-                            }
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <View style={styles.studentNameBadgeRow}>
-                          <Text numberOfLines={1} style={styles.studentFullName}>
-                            {studentFullName}
-                          </Text>
-                        </View>
-                        <Text style={styles.studentNisText}>
-                          NIS: {s.nis || '-'} {s.nisn ? `· NISN: ${s.nisn}` : ''}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {unitTitle}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.selectedActionBtnRight}>
-                        <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
-                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Kelas</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {className}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {jenjang}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        </View>
-                        <View style={styles.studentPresensiValueRow}>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                            Hadir
-                          </Text>
-                          <View style={styles.presensiGreenDot} />
-                        </View>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                );
-              })()}
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={studentInfo}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={false}
+                />
+              </View>
             </View>
           ) : user ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
@@ -1009,12 +818,6 @@ export default function CbtExamsScreen({ route }: any) {
                       </View>
                       <View style={styles.attrPill}>
                         <MaterialCommunityIcons name="format-list-numbered" size={13} color="#7C3AED" />
-                        <Text style={styles.attrPillText}>
-                          {exam.kisi_kisi?.jumlah_soal ? `${exam.kisi_kisi.jumlah_soal} Soal` : 'Soal Terpadu'}
-                        </Text>
-                      </View>
-                      <View style={styles.attrPill}>
-                        <MaterialCommunityIcons name="target" size={13} color="#059669" />
                         <Text style={styles.attrPillText}>KKM {exam.nilai_kkm}</Text>
                       </View>
                     </View>
@@ -1037,14 +840,35 @@ export default function CbtExamsScreen({ route }: any) {
 
                     {/* Action Button */}
                     {isParent ? (
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={() => setInstructionModal(exam)}
-                        style={styles.actionBtnParent}
-                      >
-                        <MaterialCommunityIcons name="information-outline" size={16} color="#0284C7" />
-                        <Text style={styles.actionBtnParentText}>Lihat Detail & Petunjuk Ujian</Text>
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => setInstructionModal(exam)}
+                          style={[styles.actionBtnParent, { flex: 1 }]}
+                        >
+                          <MaterialCommunityIcons name="information-outline" size={16} color="#0284C7" />
+                          <Text style={styles.actionBtnParentText}>Petunjuk</Text>
+                        </TouchableOpacity>
+                        {isAvailable && (
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            disabled={startingId === exam.id}
+                            onPress={() => setInstructionModal(exam)}
+                            style={[styles.actionBtn, { flex: 1.6 }]}
+                          >
+                            {startingId === exam.id ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <>
+                                <MaterialCommunityIcons name="play-circle" size={16} color="#FFFFFF" />
+                                <Text style={styles.actionBtnText}>
+                                  {exam.availability === 'resume' ? 'Lanjutkan Ujian' : 'Mulai Ujian Ananda'}
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     ) : (
                       <TouchableOpacity
                         activeOpacity={0.8}
@@ -1084,18 +908,26 @@ export default function CbtExamsScreen({ route }: any) {
       </View>
 
       {/* ══════════════════════════════════════════════════════════════
-          MODAL PETUNJUK PENGERJAAN UJIAN
+          MODAL: PETUNJUK & KONFIRMASI MULAI UJIAN CBT
          ══════════════════════════════════════════════════════════════ */}
       <Modal
-        visible={Boolean(instructionModal)}
+        visible={!!instructionModal}
         transparent
         animationType="fade"
         onRequestClose={() => setInstructionModal(null)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalContainer}>
+          <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Petunjuk Pengerjaan Ujian</Text>
+              <View style={styles.modalIconWrap}>
+                <MaterialCommunityIcons name="file-document-edit-outline" size={24} color="#059669" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalHeaderTitle}>Petunjuk Pengerjaan Ujian</Text>
+                <Text numberOfLines={1} style={styles.modalExamTitle}>
+                  {instructionModal?.judul_ujian}
+                </Text>
+              </View>
               <TouchableOpacity
                 onPress={() => setInstructionModal(null)}
                 style={styles.modalCloseBtn}
@@ -1104,8 +936,7 @@ export default function CbtExamsScreen({ route }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalExamTitle}>{instructionModal?.judul_ujian}</Text>
+            <ScrollView style={styles.modalBody}>
               <Text style={styles.modalMetaInfo}>
                 Mata Pelajaran: {instructionModal?.mata_pelajaran || '-'} · Durasi: {instructionModal?.durasi_menit} Menit
               </Text>
@@ -1113,11 +944,11 @@ export default function CbtExamsScreen({ route }: any) {
               {/* Parent Monitoring Info or Student Time Warning */}
               {isParent ? (
                 <View style={styles.parentNoticeBox}>
-                  <MaterialCommunityIcons name="account-eye" size={20} color="#0369A1" style={{ marginRight: 8 }} />
+                  <MaterialCommunityIcons name="shield-check" size={20} color="#0369A1" style={{ marginRight: 8 }} />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.parentNoticeTitle}>Mode Pemantauan Orang Tua</Text>
+                    <Text style={styles.parentNoticeTitle}>Mode Pendampingan Orang Tua</Text>
                     <Text style={styles.parentNoticeText}>
-                      Pengerjaan ujian CBT dilakukan secara mandiri oleh siswa melalui akun siswa. Orang tua dapat memantau jadwal, status kehadiran, dan nilai akhir ujian di halaman ini.
+                      Orang tua dapat mendampingi ananda mengerjakan ujian CBT melalui perangkat ini. Timer ujian akan otomatis berjalan saat tombol mulai ditekan.
                     </Text>
                   </View>
                 </View>
@@ -1145,14 +976,16 @@ export default function CbtExamsScreen({ route }: any) {
               >
                 <Text style={styles.modalCancelBtnText}>{isParent ? 'Tutup' : 'Batal'}</Text>
               </TouchableOpacity>
-              {!isParent && (
+              {instructionModal && ['available', 'resume'].includes(instructionModal.availability) && (
                 <TouchableOpacity
                   onPress={() => instructionModal && handleStartExam(instructionModal)}
                   style={styles.modalStartBtn}
                 >
                   <MaterialCommunityIcons name="play" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
                   <Text style={styles.modalStartBtnText}>
-                    {instructionModal?.availability === 'resume' ? 'Lanjutkan Kerjakan' : 'Mulai Kerjakan'}
+                    {instructionModal?.availability === 'resume'
+                      ? (isParent ? 'Lanjutkan Ujian Ananda' : 'Lanjutkan Kerjakan')
+                      : (isParent ? 'Mulai Ujian Ananda' : 'Mulai Kerjakan')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1672,6 +1505,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#084835',
+  },
+  singleHeroCardContainer: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,
@@ -2214,6 +2051,31 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 10,
     elevation: 8,
+  },
+  modalCard: {
+    width: '100%',
+    maxHeight: '80%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  modalIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  modalHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0F172A',
   },
   modalHeader: {
     flexDirection: 'row',
