@@ -44,8 +44,14 @@ export default function ParentBillsScreen({ route, navigation }: any) {
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 16);
   const studentScrollRef = useRef<ScrollView>(null);
 
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
   const [children, setChildren] = useState<any[]>([]);
-  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(route?.params?.child_id);
+  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(() => {
+    const fromRoute = route?.params?.child_id || route?.params?.student_id;
+    if (fromRoute) return String(fromRoute);
+    const fromStore = useActiveChildStore.getState().activeChildId;
+    return fromStore ? String(fromStore) : undefined;
+  });
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
   const [bills, setBills] = useState<any[]>([]);
   const [meta, setMeta] = useState<any>({ current_page: 1, last_page: 1, total: 0 });
@@ -54,6 +60,7 @@ export default function ParentBillsScreen({ route, navigation }: any) {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const mobileConfig = useMobileConfigStore((state) => state.config);
 
   const studentCardWidth = useMemo(() => {
@@ -68,28 +75,37 @@ export default function ParentBillsScreen({ route, navigation }: any) {
 
   const loadChildren = useCallback(async () => {
     const isSingleChild = route?.params?.single_child_only === true;
-    const targetChildId = route?.params?.child_id || useActiveChildStore.getState().activeChildId;
+    const targetChildId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
     const response = await mobileApiService.getPortalChildren();
     const list = unwrapApiData<any[]>(response);
     const safeList = Array.isArray(list) ? list : [];
     const displayList =
-      isSingleChild && targetChildId ? safeList.filter((c) => String(c.id) === String(targetChildId)) : safeList;
+      isSingleChild && targetChildId ? safeList.filter((c) => String(c.id || c.student_id) === String(targetChildId)) : safeList;
     const finalChildren = displayList.length > 0 ? displayList : safeList;
     setChildren(finalChildren);
     useActiveChildStore.getState().setChildren(safeList);
     const resolvedId =
       targetChildId ||
       useActiveChildStore.getState().activeChildId ||
-      (finalChildren[0]?.id ? String(finalChildren[0].id) : undefined);
+      (finalChildren[0]?.id || finalChildren[0]?.student_id ? String(finalChildren[0].id || finalChildren[0].student_id) : undefined);
     if (resolvedId) {
       setSelectedChildId(String(resolvedId));
       useActiveChildStore.getState().setActiveChildId(String(resolvedId));
     }
-  }, [route?.params?.child_id, route?.params?.single_child_only]);
+  }, [route?.params?.child_id, route?.params?.student_id, route?.params?.single_child_only, globalActiveChildId]);
+
+  // Handle selectedChildId sync with route and globalActiveChildId
+  useEffect(() => {
+    const incomingId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
+    if (incomingId && String(incomingId) !== String(selectedChildId)) {
+      setSelectedChildId(String(incomingId));
+    }
+  }, [route?.params?.child_id, route?.params?.student_id, globalActiveChildId]);
 
   const loadBills = useCallback(async (page = 1) => {
     if (!selectedChildId) return;
     try {
+      setError(null);
       const response = await mobileApiService.getPortalBills(selectedChildId, page);
       const payload = unwrapApiData<any>(response) || {};
       const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
@@ -99,8 +115,8 @@ export default function ParentBillsScreen({ route, navigation }: any) {
       if (payInfo) {
         setPaymentInfo(payInfo);
       }
-    } catch (err) {
-      // ignore
+    } catch (err: any) {
+      setError(getApiErrorMessage(err, 'Daftar tagihan dan pembayaran belum berhasil dimuat.'));
     }
   }, [selectedChildId]);
 
@@ -122,7 +138,7 @@ export default function ParentBillsScreen({ route, navigation }: any) {
 
   useEffect(() => {
     if (selectedChildId && children.length > 0) {
-      const idx = children.findIndex((c) => String(c.id) === String(selectedChildId));
+      const idx = children.findIndex((c) => String(c.id || c.student_id) === String(selectedChildId));
       if (idx !== -1 && idx !== activeChildIndex) {
         setActiveChildIndex(idx);
         studentScrollRef.current?.scrollTo({ x: idx * studentSnapInterval, animated: true });
@@ -203,15 +219,18 @@ export default function ParentBillsScreen({ route, navigation }: any) {
               }}
               scrollEventThrottle={16}
             >
-              {children.map((child, index) => (
-                <StudentHeroCard
-                  key={String(child.id)}
-                  child={child}
-                  isSelected={String(child.id) === selectedChildId}
-                  cardWidth={studentCardWidth}
-                  onSelect={() => selectChildWithScroll(String(child.id), index)}
-                />
-              ))}
+              {children.map((child, index) => {
+                const childId = String(child.id || child.student_id);
+                return (
+                  <StudentHeroCard
+                    key={childId}
+                    child={child}
+                    isSelected={childId === String(selectedChildId)}
+                    cardWidth={studentCardWidth}
+                    onSelect={() => selectChildWithScroll(childId, index)}
+                  />
+                );
+              })}
             </ScrollView>
 
             {/* Pagination Dots for Multiple Children */}
@@ -248,6 +267,17 @@ export default function ParentBillsScreen({ route, navigation }: any) {
               <Text style={styles.sectionSub}>Rincian biaya pendidikan dan histori kuitansi resmi.</Text>
             </View>
           </View>
+
+          {/* Error Banner */}
+          {error ? (
+            <View style={styles.errorBannerBox}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#E11D48" />
+              <Text style={styles.errorBannerText}>{error}</Text>
+              <TouchableOpacity onPress={() => void loadBills(1)} style={styles.errorRetryBtn}>
+                <Text style={styles.errorRetryText}>Coba Lagi</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {/* Stats Bar */}
           <View style={styles.statsRow}>
@@ -400,6 +430,33 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1E293B' },
   sectionSub: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  errorBannerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1.5,
+    borderColor: '#FECDD3',
+    borderRadius: 14,
+    padding: 10,
+    gap: 10,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#9F1239',
+  },
+  errorRetryBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#E11D48',
+  },
+  errorRetryText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   statsRow: { flexDirection: 'row', gap: 8 },
   statBox: { flex: 1, borderRadius: 12, borderWidth: 1, padding: 8 },
   statLabel: { fontSize: 9, fontWeight: '700', color: '#64748B' },
@@ -415,17 +472,17 @@ const styles = StyleSheet.create({
   rekeningText: { fontSize: 11, color: '#064E3B' },
   filterRow: { flexDirection: 'row', gap: 8 },
   filterChip: {
-    paddingVertical: 5,
+    paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
+    borderRadius: 12,
     backgroundColor: '#F1F5F9',
   },
-  filterChipActive: { backgroundColor: '#0E5C44' },
+  filterChipActive: { backgroundColor: '#059669' },
   filterChipText: { fontSize: 11, fontWeight: '700', color: '#475569' },
   filterChipTextActive: { color: '#FFFFFF' },
   billCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     padding: 14,

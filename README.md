@@ -344,3 +344,42 @@ npm run dev
   # atau
   npx expo start -c
   ```
+
+---
+
+## 11. Kredensial Akun Uji Coba Multi-Role (Mobile App)
+
+Aplikasi mobile kini mendukung navigasi multi-role adaptif. Berikut adalah daftar lengkap akun uji coba (*development & testing fixture*) yang dapat digunakan untuk login ke aplikasi mobile:
+
+### A. Rumpun Tenaga Pendidik & Keasramaan
+| Peran / Role | Identifier / Email | Kata Sandi (Password) | Tampilan Dashboard Mobile |
+| :--- | :--- | :--- | :--- |
+| **Guru Mata Pelajaran** | `guru@dareliman.sch.id` | `Guru@2026!` | Header Pegawai + Kartu KPI Guru (Jadwal Hari Ini, Tugas Belum Dinilai, Tahfizh Hari Ini, Mutaba'ah Pending) + Daftar Jadwal Mengajar Hari Ini |
+| **Guru Tahfizh** | `guru.tahfizh@dareliman.sch.id` | `Tahfizh@2026!` | Header Pegawai + Menu Khusus Halaqah, Setoran & Penilaian Tahfizh |
+| **Wali Kelas** | `wali.kelas@dareliman.sch.id` | `Password123!` | Header Pegawai + Akses Presensi Kelas & Leger Nilai |
+| **Musyrif Asrama** | `musyrif@dareliman.sch.id` | `Musyrif@2026!` | Header Pegawai + Menu Perizinan Santri & Mutaba'ah Asrama |
+
+### B. Rumpun Pimpinan Sekolah & Administrasi
+| Peran / Role | Identifier / Email | Kata Sandi (Password) | Tampilan Dashboard Mobile |
+| :--- | :--- | :--- | :--- |
+| **Kepala Sekolah** | `kepsek@dareliman.sch.id` | `Kepsek@2026!` | Header Pegawai + Kartu Supervisi Kepsek (Tingkat Presensi Siswa/Guru, Total Siswa, Rombel Aktif) + Shortcut Laporan Bulanan |
+| **Wakil Kepala Sekolah** | `wakil.kepala.sekolah@dareliman.sch.id` | `Password123!` | Header Pegawai + Monitoring Kesiswaan & Kurikulum |
+| **Tata Usaha (TU)** | `tu@dareliman.sch.id` | `TU@2026!` | Header Pegawai + Kartu Operasional TU (Presensi Gerbang, Agenda Persuratan, Verifikasi Berkas) |
+| **Operator Sekolah** | `operator@dareliman.sch.id` | `Password123!` | Header Pegawai + Data Pokok Pendidikan & Sinkronisasi |
+
+### C. Rumpun Yayasan & Manajemen Eksekutif
+| Peran / Role | Identifier / Email | Kata Sandi (Password) | Tampilan Dashboard Mobile |
+| :--- | :--- | :--- | :--- |
+| **Super Admin** | `superadmin@dareliman.sch.id`<br>*(Alias: `super.admin@dareliman.sch.id`)* | `SuperAdmin@2026!`<br>*(Alias: `Password123!`)* | Header Pegawai + Executive Overview (Total Santri Lintas Unit, Total Guru & Karyawan, 10 Unit Pendidikan) + Manajemen Global |
+| **Pengurus / Ketua Yayasan** | `yayasan@dareliman.sch.id`<br>*(Alias: `role.ketua.yayasan@dareliman.sch.id`)* | `Yayasan@2026!`<br>*(Alias: `Password123!`)* | Header Pegawai + Executive Overview Yayasan (Monev Lintas Unit, Monitoring Presensi & Keuangan) |
+
+### D. Rumpun Portal Keluarga & Siswa
+| Peran / Role | Identifier / Email | Kata Sandi (Password) | Tampilan Dashboard Mobile |
+| :--- | :--- | :--- | :--- |
+| **Orang Tua / Wali Santri** | `orangtua@dareliman.sch.id` | `OrangTua@2026!` | Kartu Carousel Santri (Foto, NIS, Kelas, Unit) + Tab 360 Hub + Timeline Mutaba'ah Rumah + Tugas & Jadwal Anak |
+| **Siswa / Santri Aktif** | `siswa@dareliman.sch.id` | `Siswa@2026!` | Portal Siswa Mandiri + Jadwal Pelajaran + LMS Materi & Tugas + CBT Ujian Online + Kartu Digital Santri |
+| **Alumni** | `alumni@dareliman.sch.id` | `Password123!` | Portal Alumni + Tracer Study & Legalisir Digital |
+
+> **Tips Cepat Login di Mobile App**: 
+> Pada layar Login aplikasi mobile, Anda juga dapat mengetuk tombol **"Pilih Akun Demo / Uji Coba Role"** di bawah tombol Masuk untuk mengisi otomatis identifier & password role yang diinginkan secara instan tanpa perlu mengetik manual.
+

@@ -383,7 +383,7 @@ echo "Model   : ${MODEL:-Unknown}"
 echo "Android : ${ANDROID_VERSION:-Unknown}"
 echo "IP      : $DEVICE_IP"
 echo "Metro   : http://localhost:$METRO_PORT"
-echo "API     : ${API_URL:-Tidak ditemukan}"
+echo "API     : ${TARGET_API_URL:-Tidak ditemukan}"
 echo ""
 
 # Background worker: Menunggu Metro hidup, lalu membuka aplikasi di HP fisik

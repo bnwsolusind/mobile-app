@@ -35,11 +35,13 @@ interface ActiveChildState {
   setActiveChildId: (id: string | number | null | undefined) => void;
   setChildren: (children: Child[]) => void;
   getActiveChild: () => Child | null;
+  clear: () => void;
 }
 
 export const useActiveChildStore = create<ActiveChildState>((set, get) => ({
   activeChildId: null,
   children: [],
+  clear: () => set({ activeChildId: null, children: [] }),
   setActiveChildId: (id) => {
     const nextId = id != null ? String(id) : null;
     set({ activeChildId: nextId });

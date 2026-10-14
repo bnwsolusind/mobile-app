@@ -67,7 +67,8 @@ class NavigationHistoryManager {
 
 export const navigationHistory = new NavigationHistoryManager();
 
-// Maintain backward compatibility for getState() callers
-export const useNavigationHistoryStore = {
+// Maintain backward compatibility for both hook callers and getState() callers
+const baseNavigationHistoryHook = () => navigationHistory;
+export const useNavigationHistoryStore = Object.assign(baseNavigationHistoryHook, {
   getState: () => navigationHistory,
-};
+});

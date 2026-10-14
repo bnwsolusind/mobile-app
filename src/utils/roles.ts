@@ -154,6 +154,15 @@ export const isStudentRole = (roles: unknown[]): boolean =>
 export const isAlumniRole = (roles: unknown[]): boolean =>
   hasAnyRole(roles, ROLES.ALUMNI);
 
+export const isAboveTuRole = (roles: unknown[]): boolean =>
+  isSuperAdminRole(roles) ||
+  isAdminRole(roles) ||
+  isFoundationRole(roles) ||
+  isDivisiRole(roles) ||
+  isPrincipalRole(roles) ||
+  isWakaKurikulumRole(roles) ||
+  isWakaKesiswaanRole(roles);
+
 export const isStaffRole = (roles: unknown[]): boolean =>
   isSuperAdminRole(roles) ||
   isAdminRole(roles) ||
@@ -192,6 +201,7 @@ export const homeLayoutKeyForRoles = (roles: unknown[]): string => {
   if (isSuperAdminRole(roles)) return 'super_admin';
   if (isFoundationRole(roles)) return 'foundation';
   if (isPrincipalRole(roles)) return 'principal';
+  if (isTuRole(roles)) return 'tu';
   if (isTeacherRole(roles)) return 'teacher';
   if (isParentRole(roles)) return 'parent';
   if (isStudentRole(roles)) return 'student';
@@ -202,8 +212,8 @@ export const dashboardEndpointForRoles = (roles: unknown[]): string => {
   if (isSuperAdminRole(roles)) return '/dashboard/super-admin';
   if (isFoundationRole(roles)) return '/foundation/dashboard';
   if (isPrincipalRole(roles)) return '/dashboard/kepala-sekolah';
+  if (isTuRole(roles)) return '/dashboard/tata-usaha';
   if (isTeacherRole(roles)) return '/teacher/dashboard';
-  if (hasAnyRole(roles, ROLES.TATA_USAHA)) return '/dashboard/tata-usaha';
   if (hasAnyRole(roles, ROLES.OPERATOR)) return '/dashboard/operator';
   if (hasAnyRole(roles, ROLES.WAKA_KURIKULUM)) return '/dashboard/waka-kurikulum';
   if (hasAnyRole(roles, ROLES.WAKA_KESISWAAN)) return '/dashboard/waka-kesiswaan';

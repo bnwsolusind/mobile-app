@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Animated,
   Dimensions,
   Easing,
   Image,
+  Pressable,
   StyleSheet,
   View,
 } from 'react-native';
@@ -20,29 +21,30 @@ interface SplashScreenProps {
   duration?: number;
 }
 
-export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreenProps) {
+export default function SplashScreen({ onFinish, duration = 1600 }: SplashScreenProps) {
   const insets = useSafeAreaInsets();
   const config = useMobileConfigStore((state) => state.config);
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.94)).current;
+  const subContentAnim = useRef(new Animated.Value(0)).current;
   const [progressPercent, setProgressPercent] = useState(0);
+  const didFinishRef = useRef(false);
+
+  const triggerFinish = useCallback(() => {
+    if (!didFinishRef.current) {
+      didFinishRef.current = true;
+      progressAnim.stopAnimation();
+      setProgressPercent(100);
+      if (onFinish) onFinish();
+    }
+  }, [onFinish, progressAnim]);
 
   useEffect(() => {
-    // Entrance animations
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 700,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        friction: 8,
-        tension: 40,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    // Smooth fade-in for subtitles and progress bar while logo remains stable
+    Animated.timing(subContentAnim, {
+      toValue: 1,
+      duration: 400,
+      useNativeDriver: true,
+    }).start();
 
     // Track percentage in real-time
     const listenerId = progressAnim.addListener(({ value }) => {
@@ -50,14 +52,6 @@ export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreen
     });
 
     // Progress bar animation
-    let didFinish = false;
-    const triggerFinish = () => {
-      if (!didFinish) {
-        didFinish = true;
-        if (onFinish) onFinish();
-      }
-    };
-
     Animated.timing(progressAnim, {
       toValue: 1,
       duration,
@@ -67,16 +61,16 @@ export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreen
       triggerFinish();
     });
 
-    // Unconditional safety timer to guarantee transition
+    // Unconditional safety timer to guarantee transition (never hangs)
     const safetyTimer = setTimeout(() => {
       triggerFinish();
-    }, duration + 150);
+    }, duration + 100);
 
     return () => {
       progressAnim.removeListener(listenerId);
       clearTimeout(safetyTimer);
     };
-  }, [duration, onFinish, progressAnim]);
+  }, [duration, triggerFinish, progressAnim, subContentAnim]);
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 1],
@@ -84,28 +78,26 @@ export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreen
   });
 
   return (
-    <LinearGradient
-      colors={['#10A368', '#0B8A4D', '#087340']}
+    <Pressable
       style={styles.container}
-      start={{ x: 0.5, y: 0 }}
-      end={{ x: 0.5, y: 1 }}
+      onPress={triggerFinish}
+      accessibilityRole="button"
+      accessibilityLabel="Lanjutkan ke aplikasi"
     >
+      <LinearGradient
+        colors={['#10A368', '#0B8A4D', '#087340']}
+        style={StyleSheet.absoluteFill}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+      />
       {/* Soft Decorative Ambient Circles (Exact match to reference design) */}
-      <View style={styles.topRightDecorCircle} pointerEvents="none" />
-      <View style={styles.bottomLeftDecorCircle} pointerEvents="none" />
-      <View style={styles.midRightDecorDot} pointerEvents="none" />
+      <View style={styles.topRightDecorCircle} />
+      <View style={styles.bottomLeftDecorCircle} />
+      <View style={styles.midRightDecorDot} />
 
       {/* Center Branding Content */}
-      <Animated.View
-        style={[
-          styles.content,
-          {
-            opacity: fadeAnim,
-            transform: [{ scale: scaleAnim }],
-          },
-        ]}
-      >
-        {/* White Rounded Card with Yayasan Dar el-Iman Logo */}
+      <View style={styles.content}>
+        {/* White Rounded Card with Yayasan Dar el-Iman Logo (Matching native splash icon) */}
         <View style={styles.logoCardOuter}>
           <Image
             source={require('../../assets/launcher_source.png')}
@@ -114,30 +106,35 @@ export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreen
           />
         </View>
 
-        {/* Title & Organization Name */}
-        <Text style={styles.appNameText}>SIMSIT</Text>
-        <Text style={styles.subTitleText}>Sistem Manajemen Sekolah Terpadu</Text>
-        <Text style={styles.orgNameText}>{config?.branding?.school_name || config?.branding?.app_name || ''}</Text>
+        {/* Title, Organization Name & Tagline fade in smoothly */}
+        <Animated.View style={[styles.subTextContainer, { opacity: subContentAnim }]}>
+          <Text style={styles.appNameText}>SIMSIT</Text>
+          <Text style={styles.subTitleText}>Sistem Manajemen Sekolah Terpadu</Text>
+          <Text style={styles.orgNameText}>{config?.branding?.school_name || config?.branding?.app_name || ''}</Text>
 
-        {/* Value Tagline Pill Badge */}
-        <View style={styles.taglineBadge}>
-          <MaterialCommunityIcons
-            name="creation"
-            size={16}
-            color="#FFFFFF"
-            style={styles.taglineBadgeIcon}
-          />
-          <Text style={styles.taglineBadgeText}>
-            Islami · Pendidikan · Berkarakter
-          </Text>
-        </View>
-      </Animated.View>
+          {/* Value Tagline Pill Badge */}
+          <View style={styles.taglineBadge}>
+            <MaterialCommunityIcons
+              name="creation"
+              size={16}
+              color="#FFFFFF"
+              style={styles.taglineBadgeIcon}
+            />
+            <Text style={styles.taglineBadgeText}>
+              Islami · Pendidikan · Berkarakter
+            </Text>
+          </View>
+        </Animated.View>
+      </View>
 
-      {/* Bottom Loading Progress Section */}
-      <View
+      {/* Bottom Loading Progress Section (Active only in final splash phase) */}
+      <Animated.View
         style={[
           styles.bottomSection,
-          { paddingBottom: Math.max(insets.bottom, 24) },
+          {
+            paddingBottom: Math.max(insets.bottom, 24),
+            opacity: subContentAnim,
+          },
         ]}
       >
         <View style={styles.progressHeaderRow}>
@@ -152,8 +149,8 @@ export default function SplashScreen({ onFinish, duration = 2400 }: SplashScreen
 
         {/* App Version Info */}
         <Text style={styles.versionText}>Versi 1.0.0</Text>
-      </View>
-    </LinearGradient>
+      </Animated.View>
+    </Pressable>
   );
 }
 
@@ -173,6 +170,7 @@ const styles = StyleSheet.create({
     height: 330,
     borderRadius: 165,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    pointerEvents: 'none',
   },
   bottomLeftDecorCircle: {
     position: 'absolute',
@@ -182,6 +180,7 @@ const styles = StyleSheet.create({
     height: 270,
     borderRadius: 135,
     backgroundColor: 'rgba(255, 255, 255, 0.07)',
+    pointerEvents: 'none',
   },
   midRightDecorDot: {
     position: 'absolute',
@@ -191,11 +190,16 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    pointerEvents: 'none',
   },
   content: {
     alignItems: 'center',
     paddingHorizontal: 24,
     marginTop: -30,
+  },
+  subTextContainer: {
+    alignItems: 'center',
+    width: '100%',
   },
   logoCardOuter: {
     width: 176,

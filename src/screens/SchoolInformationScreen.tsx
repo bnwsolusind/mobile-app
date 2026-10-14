@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Dimensions,
   Image,
   Modal,
@@ -20,30 +21,268 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isStaffRole } from '../utils/roles';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { StudentHeroCard } from '../components/StudentHeroCard';
+import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
+import { TeacherStickyHeader } from '../components/TeacherStickyHeader';
+import { TeacherHeroCard } from '../components/TeacherHeroCard';
+import { StudentIdCardModal } from '../components/StudentIdCardModal';
+import { StudentQrModal } from '../components/StudentQrModal';
+import { StudentMenuModal } from '../components/StudentMenuModal';
+import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
+import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import { EmptyStateCard } from '../components/EmptyStateCard';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 type Child = Record<string, any>;
 type InfoItem = Record<string, any>;
 
+export const normalizeInfoItem = (item: any): InfoItem => {
+  const meta = item?.data_tambahan || {};
+  const rawCat = item?.category || meta.kategori || item?.type || 'Pengumuman';
+  const rawType = item?.type || meta.tipe || 'announcement';
+  const rawPriority = String(item?.priority || meta.prioritas || 'umum').toLowerCase();
+  const rawDate = item?.published_at || item?.mulai_tampil || item?.created_at;
+  const rawUnit = item?.education_unit || meta.unit_name || meta.unit || 'Seluruh Yayasan';
+  const rawImage = item?.cover || item?.image_url || item?.gambar_url || meta.gambar_url || meta.cover || null;
+  const rawContent = item?.content || item?.isi_pengumuman || item?.isi || item?.summary || '';
+  const rawSummary = item?.summary || meta.ringkasan || (typeof rawContent === 'string' ? rawContent.replace(/<[^>]+>/g, '').slice(0, 160) : '');
+
+  return {
+    ...item,
+    id: String(item?.id ?? item?.slug ?? item?.title ?? item?.judul ?? 'info-item'),
+    title: item?.title || item?.judul_pengumuman || item?.judul || 'Informasi Sekolah',
+    summary: rawSummary,
+    content: rawContent,
+    category: rawCat,
+    type: rawType,
+    priority: rawPriority,
+    education_unit: rawUnit,
+    publisher: item?.publisher || meta.penerbit || 'Pengelola Sekolah',
+    published_at: rawDate,
+    image_url: rawImage,
+    attachments: item?.attachments || meta.lampiran || [],
+    is_read: Boolean(item?.is_read),
+    is_bookmarked: Boolean(item?.is_bookmarked),
+  };
+};
+
+export const getCategoryTheme = (categoryOrType: string) => {
+  const c = String(categoryOrType || '').toLowerCase();
+  if (c.includes('berita') || c === 'news') {
+    return {
+      label: 'Berita',
+      color: '#7C3AED',
+      badgeBg: '#F5F3FF',
+      badgeBorder: '#DDD6FE',
+      cardBorder: '#DDD6FE',
+      stripeBg: '#7C3AED',
+      icon: 'newspaper',
+      iconBg: '#EDE9FE',
+    };
+  }
+  if (c.includes('agenda') || c === 'event') {
+    return {
+      label: 'Agenda',
+      color: '#2563EB',
+      badgeBg: '#EFF6FF',
+      badgeBorder: '#BFDBFE',
+      cardBorder: '#BFDBFE',
+      stripeBg: '#2563EB',
+      icon: 'calendar-star',
+      iconBg: '#DBEAFE',
+    };
+  }
+  if (c.includes('edaran') || c === 'circular') {
+    return {
+      label: 'Surat Edaran',
+      color: '#EA580C',
+      badgeBg: '#FFF7ED',
+      badgeBorder: '#FED7AA',
+      cardBorder: '#FED7AA',
+      stripeBg: '#EA580C',
+      icon: 'email-newsletter',
+      iconBg: '#FFEDD5',
+    };
+  }
+  if (c.includes('prestasi') || c === 'achievement') {
+    return {
+      label: 'Prestasi',
+      color: '#D97706',
+      badgeBg: '#FEF3C7',
+      badgeBorder: '#FDE68A',
+      cardBorder: '#FDE68A',
+      stripeBg: '#D97706',
+      icon: 'trophy',
+      iconBg: '#FEF3C7',
+    };
+  }
+  if (c.includes('akademik')) {
+    return {
+      label: 'Akademik',
+      color: '#0284C7',
+      badgeBg: '#F0F9FF',
+      badgeBorder: '#BAE6FD',
+      cardBorder: '#BAE6FD',
+      stripeBg: '#0284C7',
+      icon: 'school',
+      iconBg: '#E0F2FE',
+    };
+  }
+  if (c.includes('ppdb')) {
+    return {
+      label: 'PPDB',
+      color: '#059669',
+      badgeBg: '#ECFDF5',
+      badgeBorder: '#A7F3D0',
+      cardBorder: '#A7F3D0',
+      stripeBg: '#059669',
+      icon: 'account-plus-outline',
+      iconBg: '#D1FAE5',
+    };
+  }
+  if (c.includes('kalender') || c === 'calendar') {
+    return {
+      label: 'Kalender',
+      color: '#0D9488',
+      badgeBg: '#F0FDFA',
+      badgeBorder: '#99F6E4',
+      cardBorder: '#99F6E4',
+      stripeBg: '#0D9488',
+      icon: 'calendar-month-outline',
+      iconBg: '#CCFBF1',
+    };
+  }
+  if (c.includes('galeri') || c === 'gallery') {
+    return {
+      label: 'Galeri',
+      color: '#E11D48',
+      badgeBg: '#FFF1F2',
+      badgeBorder: '#FECDD3',
+      cardBorder: '#FECDD3',
+      stripeBg: '#E11D48',
+      icon: 'image-multiple-outline',
+      iconBg: '#FFE4E6',
+    };
+  }
+  return {
+    label: 'Pengumuman',
+    color: '#18A165',
+    badgeBg: '#EBF8F2',
+    badgeBorder: '#A7F3D0',
+    cardBorder: '#D1FAE5',
+    stripeBg: '#18A165',
+    icon: 'bullhorn',
+    iconBg: '#DEF7EC',
+  };
+};
+
+export const getPriorityTheme = (priority: string) => {
+  const p = String(priority || '').toLowerCase();
+  if (p === 'mendesak') {
+    return {
+      label: 'Mendesak',
+      color: '#DC2626',
+      bg: '#FEF2F2',
+      border: '#FCA5A5',
+      icon: 'alert-decagram',
+    };
+  }
+  if (p === 'penting') {
+    return {
+      label: 'Penting',
+      color: '#D97706',
+      bg: '#FEF3C7',
+      border: '#FCD34D',
+      icon: 'star',
+    };
+  }
+  return {
+    label: 'Umum',
+    color: '#059669',
+    bg: '#ECFDF5',
+    border: '#A7F3D0',
+    icon: 'information-outline',
+  };
+};
+
 export default function SchoolInformationScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 16);
   const modalBottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 48 : 20) + 16;
   const user = useAuthStore((state) => state.user);
-  const isParent = isParentRole(user?.roles || []);
+  const roles = useAuthStore((state) => state.roles);
+  const userRoles = useMemo(() => (roles?.length ? roles : user?.roles || []), [roles, user?.roles]);
+  const isParent = isParentRole(userRoles);
+  const isTeacher = isTeacherRole(userRoles) || isStaffRole(userRoles);
+  const isTeacherOnly = Boolean(
+    isTeacher && (!isParent || route?.params?.from_teacher_portal || !route?.params?.from_child_portal)
+  );
+
+  // ── Sticky header bersama (StudentStickyHeader, sama dengan Tugas/Jadwal/Materi/Nilai) ──
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
+  const { scrollY, handleMainScroll } = useStickyScroll();
+  const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
+
+  const handleBack = () => {
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    if (handled) return;
+    const childId = route?.params?.child_id || route?.params?.student_id;
+    if (route?.params?.from_child_portal && childId) {
+      navigation?.navigate('Beranda');
+      return;
+    }
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+    } else {
+      navigation?.navigate('Beranda');
+    }
+  };
 
   const [children, setChildren] = useState<Child[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string | undefined>(route?.params?.child_id);
   const [studentInfo, setStudentInfo] = useState<any>(null);
   const studentScrollRef = useRef<ScrollView>(null);
+
+  const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
+  const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
+  const [selectedMenuStudent, setSelectedMenuStudent] = useState<any>(null);
+  const [selectedWeeklyStudent, setSelectedWeeklyStudent] = useState<any>(null);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    visible: boolean;
+    type?: FeedbackType;
+    title: string;
+    message?: string;
+  } | null>(null);
+
+  // Tombol Kartu Siswa -> modal KTS; tombol QR -> modal QR khusus
+  const openIdCard = (student: any) => {
+    setSelectedIdCardStudent(student);
+  };
+  const openQrCard = (student: any) => {
+    setSelectedQrStudent(student);
+  };
+
+  // Tombol Jadwal pada sticky header & body card (disamakan dengan halaman Jadwal)
+  const openScheduleForStudent = useCallback((student: any) => {
+    const sid = student?.id || student?.student_id;
+    if (sid) {
+      const idStr = String(sid);
+      navigation?.navigate('Jadwal', { child_id: idStr, student_id: idStr });
+    } else {
+      navigation?.navigate('Jadwal');
+    }
+  }, [navigation]);
 
   const handleStudentScrollEnd = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
@@ -64,6 +303,30 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
       animated: true,
     });
   };
+
+  // Siswa aktif untuk sticky header & hero (anak terpilih -> info siswa -> profil -> user)
+  const headerStudent = useMemo(() => {
+    if (children && children.length > 0) {
+      const found = children.find(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (found) return found;
+      return children[0];
+    }
+    if (studentInfo) return studentInfo;
+    return (user as any)?.student || user || null;
+  }, [children, selectedChildId, studentInfo, user]);
+
+  // Nama depan + fallback tahun ajaran untuk subtitle hero statis
+  const heroFirstName = useMemo(
+    () => resolveStudentDisplay(headerStudent, user).firstName,
+    [headerStudent, user]
+  );
+  const heroSubtitleFallback = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
+  }, []);
 
   // States
   const [loading, setLoading] = useState<boolean>(true);
@@ -106,11 +369,17 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
 
   // 2. Load summary from backend
   const loadSummary = useCallback(async () => {
+    if (isTeacherOnly) {
+      return;
+    }
     try {
       const res = await mobileApiService.getPortalSchoolInformationSummary({
         child_id: selectedChildId,
       });
       const data = unwrapApiData<any>(res) || {};
+      if (Array.isArray(data?.important)) {
+        data.important = data.important.map(normalizeInfoItem);
+      }
       setSummary(data);
       if (res?.student || data?.student) {
         setStudentInfo(res?.student || data?.student);
@@ -118,7 +387,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     } catch {
       // safe fallback if offline
     }
-  }, [selectedChildId]);
+  }, [isTeacherOnly, selectedChildId]);
 
   // 3. Load items from database API
   const loadItems = useCallback(async (targetPage = 1) => {
@@ -133,33 +402,50 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     }
     // 2. Fetch dari backend
     try {
-      const params: Record<string, any> = {
-        child_id: selectedChildId,
-        type: selectedTab === 'all' ? undefined : selectedTab,
-        search: searchQuery.trim() || undefined,
-        bookmarked: showBookmarkedOnly ? true : undefined,
-        per_page: 15,
-        page: targetPage,
-      };
+      let list: InfoItem[] = [];
+      let total = 0;
 
-      const res = await mobileApiService.getPortalSchoolInformation(params);
-      const data = unwrapApiData<any>(res) || {};
-      const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-      setItems(list);
-      const total = data?.total || list.length;
-      setTotalItems(total);
-      setPage(targetPage);
-      if (res?.student || data?.student) {
-        setStudentInfo(res?.student || data?.student);
+      if (isTeacherOnly) {
+        const res = await mobileApiService.getTeacherAnnouncements({
+          type: selectedTab === 'all' ? undefined : selectedTab,
+          search: searchQuery.trim() || undefined,
+          per_page: 15,
+          page: targetPage,
+        });
+        const data = unwrapApiData<any>(res) || res?.data || res || [];
+        list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        total = data?.total || list.length;
+      } else {
+        const params: Record<string, any> = {
+          child_id: selectedChildId,
+          type: selectedTab === 'all' ? undefined : selectedTab,
+          search: searchQuery.trim() || undefined,
+          bookmarked: showBookmarkedOnly ? true : undefined,
+          per_page: 15,
+          page: targetPage,
+        };
+
+        const res = await mobileApiService.getPortalSchoolInformation(params);
+        const data = unwrapApiData<any>(res) || {};
+        list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        total = data?.total || list.length;
+        if (res?.student || data?.student) {
+          setStudentInfo(res?.student || data?.student);
+        }
       }
+
+      const normalizedList = list.map(normalizeInfoItem);
+      setItems(normalizedList);
+      setTotalItems(total || normalizedList.length);
+      setPage(targetPage);
       // 3. Simpan ke cache saat halaman pertama tanpa filter
-      if (targetPage === 1 && !searchQuery.trim() && selectedTab === 'all' && !showBookmarkedOnly && list.length > 0) {
-        void offlineCache.set(cacheKey, { items: list, total });
+      if (targetPage === 1 && !searchQuery.trim() && selectedTab === 'all' && !showBookmarkedOnly && normalizedList.length > 0) {
+        void offlineCache.set(cacheKey, { items: normalizedList, total: total || normalizedList.length });
       }
     } catch {
       // Offline: data cache sudah tampil dari step 1
     }
-  }, [selectedChildId, selectedTab, searchQuery, showBookmarkedOnly, user?.id]);
+  }, [isTeacherOnly, selectedChildId, selectedTab, searchQuery, showBookmarkedOnly, user?.id]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -181,10 +467,20 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   const handleMarkAllRead = async () => {
     try {
       await mobileApiService.markAllSchoolInformationRead(selectedChildId);
-      Alert.alert('Sukses', 'Seluruh informasi telah ditandai sebagai dibaca.');
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Berhasil Menandai',
+        message: 'Seluruh informasi telah ditandai sebagai dibaca.',
+      });
       void loadAll();
     } catch {
-      Alert.alert('Gagal', 'Terjadi kendala saat menandai dibaca.');
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menandai',
+        message: 'Terjadi kendala saat menandai seluruh informasi telah dibaca.',
+      });
     }
   };
 
@@ -223,22 +519,95 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   };
 
   const counts = summary?.counts || {};
-  const importantItems: InfoItem[] = Array.isArray(summary?.important) ? summary.important : [];
+  const importantItems: InfoItem[] = useMemo(() => {
+    if (Array.isArray(summary?.important) && summary.important.length > 0) {
+      return summary.important.map(normalizeInfoItem);
+    }
+    return items.filter((i) => i.priority === 'mendesak' || i.priority === 'penting').slice(0, 3);
+  }, [summary?.important, items]);
   const unreadCount = summary?.unread_count ?? 0;
   const bookmarkedCount = summary?.bookmarked_count ?? 0;
 
-  const categoryTabs = [
-    { key: 'all', label: 'Semua', count: counts.all ?? totalItems },
-    { key: 'announcement', label: 'Pengumuman', count: counts.announcement ?? 0 },
-    { key: 'event', label: 'Agenda', count: counts.event ?? 0 },
-    { key: 'news', label: 'Berita', count: counts.news ?? 0 },
-    { key: 'circular', label: 'Surat Edaran', count: counts.circular ?? 0 },
-    { key: 'calendar', label: 'Kalender', count: counts.calendar ?? 0 },
-    { key: 'gallery', label: 'Galeri', count: counts.gallery ?? 0 },
-  ];
+  const categoryCounts = useMemo(() => {
+    const rawAll = totalItems || items.length;
+    const pengumuman = items.filter((i) => {
+      const c = String(i.category || i.type || '').toLowerCase();
+      return c.includes('announcement') || c.includes('pengumuman') || c.includes('ppdb') || c.includes('umum');
+    }).length;
+    const berita = items.filter((i) => {
+      const c = String(i.category || i.type || '').toLowerCase();
+      return c.includes('news') || c.includes('berita') || c.includes('prestasi');
+    }).length;
+    const agenda = items.filter((i) => {
+      const c = String(i.category || i.type || '').toLowerCase();
+      return c.includes('event') || c.includes('agenda') || c.includes('kegiatan') || c.includes('kalender');
+    }).length;
+    return {
+      all: counts.all ?? rawAll,
+      announcement: counts.announcement ?? (pengumuman || 0),
+      news: counts.news ?? (berita || 0),
+      event: counts.event ?? (agenda || 0),
+      circular: counts.circular ?? 0,
+      calendar: counts.calendar ?? 0,
+      gallery: counts.gallery ?? 0,
+    };
+  }, [items, totalItems, counts]);
+
+  const categoryTabs = useMemo(() => [
+    { key: 'all', label: 'Semua', count: categoryCounts.all, icon: 'bullhorn-outline', color: '#059669', activeGradient: ['#059669', '#10B981'] },
+    { key: 'announcement', label: 'Pengumuman', count: categoryCounts.announcement, icon: 'bullhorn', color: '#0284C7', activeGradient: ['#0284C7', '#38BDF8'] },
+    { key: 'news', label: 'Berita', count: categoryCounts.news, icon: 'newspaper', color: '#7C3AED', activeGradient: ['#7C3AED', '#A855F7'] },
+    { key: 'event', label: 'Agenda', count: categoryCounts.event, icon: 'calendar-star', color: '#D97706', activeGradient: ['#D97706', '#FBBF24'] },
+    { key: 'circular', label: 'Surat Edaran', count: categoryCounts.circular, icon: 'email-newsletter', color: '#EA580C', activeGradient: ['#EA580C', '#FB923C'] },
+    { key: 'calendar', label: 'Kalender', count: categoryCounts.calendar, icon: 'calendar-month-outline', color: '#0D9488', activeGradient: ['#0D9488', '#2DD4BF'] },
+    { key: 'gallery', label: 'Galeri', count: categoryCounts.gallery, icon: 'image-multiple-outline', color: '#E11D48', activeGradient: ['#E11D48', '#FB7185'] },
+  ], [categoryCounts]);
 
   return (
     <View style={styles.rootContainer}>
+      {/* 0. STICKY HEADER BERSAMA */}
+      {isTeacherOnly ? (
+        <TeacherStickyHeader
+          scrollY={scrollY}
+          topInset={topInset}
+          title="Informasi Sekolah"
+          subtitle="Agenda & Pengumuman Sekolah"
+          navigation={navigation}
+          route={route}
+          user={user}
+          chips={[
+            { label: 'Semua', active: selectedTab === 'all', onPress: () => setSelectedTab('all') },
+            { label: 'Pengumuman', active: selectedTab === 'announcement', onPress: () => setSelectedTab('announcement') },
+            { label: 'Agenda', active: selectedTab === 'event', onPress: () => setSelectedTab('event') },
+            { label: 'Berita', active: selectedTab === 'news', onPress: () => setSelectedTab('news') },
+          ]}
+        />
+      ) : (
+        <StudentStickyHeader
+          scrollY={scrollY}
+          topInset={topInset}
+          title="Informasi Sekolah"
+          navigation={navigation}
+          route={route}
+          student={headerStudent}
+          user={user}
+          childrenList={children}
+          selectedChildId={selectedChildId}
+          onSelectChild={(cid, idx) => {
+            selectChildWithScroll(cid, idx);
+            useActiveChildStore.getState().setActiveChildId(cid);
+          }}
+          middleAction={{
+            label: 'Jadwal',
+            icon: 'calendar-clock',
+            onPress: () => openScheduleForStudent(headerStudent),
+          }}
+          onOpenIdCard={(s) => openIdCard(s)}
+          onOpenQr={(s) => openQrCard(s)}
+          onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
+          onOpenMenu={(s) => setSelectedMenuStudent(s)}
+        />
+      )}
       <View style={styles.sheetContainer}>
         <LinearGradient
           colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
@@ -247,494 +616,562 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
           style={StyleSheet.absoluteFill}
         />
 
-        <ScrollView
+        <Animated.ScrollView
           style={styles.screen}
-          contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 30 }]}
+          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
+          onScroll={handleMainScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} progressViewOffset={topInset + 10} />
           }
         >
-          {/* 1. CONTAINER DATA SISWA & UNIT PENDIDIKAN */}
-          {children.length > 0 ? (
-            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
-                </View>
-                {children.length > 1 && (
-                  <View style={styles.studentCardCountBadge}>
-                    <Text style={styles.studentCardCountBadgeText}>
-                      {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
-                    </Text>
-                  </View>
-                )}
+          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
+          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
+            <LinearGradient
+              colors={['#047857', '#059669', '#10B981']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.heroDecorCircle1} />
+            <View style={styles.heroDecorCircle2} />
+
+            <View style={styles.staticTopBarRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleBack}
+                style={styles.heroSquircleBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Kembali"
+              >
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+              </TouchableOpacity>
+
+              <View style={styles.heroTitleCenterCol}>
+                <Text numberOfLines={1} style={styles.heroModuleTitle}>
+                  Informasi Sekolah
+                </Text>
+                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
+                  {isTeacherOnly
+                    ? 'Agenda, Berita & Pengumuman'
+                    : (isParent && heroFirstName
+                        ? `Ananda ${heroFirstName}`
+                        : (heroFirstName || heroSubtitleFallback))}
+                </Text>
               </View>
 
-              <ScrollView
-                ref={studentScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
-                decelerationRate="fast"
-                onMomentumScrollEnd={handleStudentScrollEnd}
-                style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => navigation?.navigate('Notifikasi')}
+                style={styles.heroSquircleBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Notifikasi"
               >
-                {children.map((child, idx) => {
-                  const isSelected = String(child.id) === selectedChildId;
-                  const childFullName = child.full_name || child.nama_lengkap || child.name || 'Siswa';
-                  const unitTitle = child.education_unit?.name || child.unit_name || 'Unit Sekolah';
-                  const className = child.kelas?.name || child.kelas?.nama_kelas || child.classroom?.name || child.class_name || 'Kelas Belum Ditentukan';
-                  const jenjang = child.kelas?.jenjang || child.education_unit?.level || 'Terpadu';
-                  const avatarUri = getProfileImageUrl(child);
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+              </TouchableOpacity>
+            </View>
+          </View>
 
+          {/* Badan Halaman Konten */}
+          <View style={styles.bodyContentWrapper}>
+            {/* 1. RINGKASAN KPI INFORMASI & BERITA (WARNA GRADASI MODERN) */}
+            <View style={styles.kpiCardsGrid}>
+              {/* Card 1: Total Informasi */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setSelectedTab('all')}
+                style={[styles.kpiCard, styles.kpiCardEmerald, selectedTab === 'all' && styles.kpiCardActive]}
+              >
+                <View style={styles.kpiTopRow}>
+                  <View style={[styles.kpiIconWrap, { backgroundColor: '#DEF7EC' }]}>
+                    <MaterialCommunityIcons name="bullhorn" size={17} color="#059669" />
+                  </View>
+                  <View style={[styles.kpiBadge, { backgroundColor: '#DEF7EC' }]}>
+                    <Text style={[styles.kpiBadgeText, { color: '#047857' }]}>Semua</Text>
+                  </View>
+                </View>
+                <Text numberOfLines={1} style={[styles.kpiValue, { color: '#064E3B' }]}>
+                  {categoryCounts.all}
+                </Text>
+                <Text numberOfLines={1} style={[styles.kpiLabel, { color: '#047857' }]}>
+                  Total Info & Warta
+                </Text>
+              </TouchableOpacity>
+
+              {/* Card 2: Pengumuman Resmi */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setSelectedTab('announcement')}
+                style={[styles.kpiCard, styles.kpiCardSky, selectedTab === 'announcement' && styles.kpiCardActive]}
+              >
+                <View style={styles.kpiTopRow}>
+                  <View style={[styles.kpiIconWrap, { backgroundColor: '#E0F2FE' }]}>
+                    <MaterialCommunityIcons name="newspaper-variant-outline" size={17} color="#0284C7" />
+                  </View>
+                  <View style={[styles.kpiBadge, { backgroundColor: '#E0F2FE' }]}>
+                    <Text style={[styles.kpiBadgeText, { color: '#0369A1' }]}>Resmi</Text>
+                  </View>
+                </View>
+                <Text numberOfLines={1} style={[styles.kpiValue, { color: '#0C4A6E' }]}>
+                  {categoryCounts.announcement}
+                </Text>
+                <Text numberOfLines={1} style={[styles.kpiLabel, { color: '#0284C7' }]}>
+                  Pengumuman
+                </Text>
+              </TouchableOpacity>
+
+              {/* Card 3: Berita Sekolah */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setSelectedTab('news')}
+                style={[styles.kpiCard, styles.kpiCardPurple, selectedTab === 'news' && styles.kpiCardActive]}
+              >
+                <View style={styles.kpiTopRow}>
+                  <View style={[styles.kpiIconWrap, { backgroundColor: '#EDE9FE' }]}>
+                    <MaterialCommunityIcons name="newspaper" size={17} color="#7C3AED" />
+                  </View>
+                  <View style={[styles.kpiBadge, { backgroundColor: '#EDE9FE' }]}>
+                    <Text style={[styles.kpiBadgeText, { color: '#6D28D9' }]}>Publikasi</Text>
+                  </View>
+                </View>
+                <Text numberOfLines={1} style={[styles.kpiValue, { color: '#4C1D95' }]}>
+                  {categoryCounts.news}
+                </Text>
+                <Text numberOfLines={1} style={[styles.kpiLabel, { color: '#6D28D9' }]}>
+                  Berita Sekolah
+                </Text>
+              </TouchableOpacity>
+
+              {/* Card 4: Agenda Terpadu */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setSelectedTab('event')}
+                style={[styles.kpiCard, styles.kpiCardAmber, selectedTab === 'event' && styles.kpiCardActive]}
+              >
+                <View style={styles.kpiTopRow}>
+                  <View style={[styles.kpiIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                    <MaterialCommunityIcons name="calendar-star" size={17} color="#D97706" />
+                  </View>
+                  <View style={[styles.kpiBadge, { backgroundColor: '#FEF3C7' }]}>
+                    <Text style={[styles.kpiBadgeText, { color: '#B45309' }]}>Kegiatan</Text>
+                  </View>
+                </View>
+                <Text numberOfLines={1} style={[styles.kpiValue, { color: '#78350F' }]}>
+                  {categoryCounts.event}
+                </Text>
+                <Text numberOfLines={1} style={[styles.kpiLabel, { color: '#B45309' }]}>
+                  Agenda Terpadu
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* 2. CATEGORY TABS HORIZONTAL SCROLL (WARNA WARNI & DINAMIS) */}
+            <View style={styles.tabsSection}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
+                {categoryTabs.map((tab) => {
+                  const isActive = selectedTab === tab.key;
                   return (
                     <TouchableOpacity
-                      key={String(child.id)}
-                      activeOpacity={0.88}
-                      onPress={() => selectChildWithScroll(String(child.id), idx)}
+                      key={tab.key}
+                      activeOpacity={0.78}
+                      onPress={() => setSelectedTab(tab.key)}
+                      style={[
+                        styles.categoryTab,
+                        isActive
+                          ? { backgroundColor: tab.color, borderColor: tab.color }
+                          : { borderColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
+                      ]}
                     >
-                      <LinearGradient
-                        colors={['#0D6B42', '#18A165', '#2BD988']}
-                        locations={[0, 0.55, 1]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[styles.childCardHeroSize, !isSelected && { opacity: 0.9 }]}
+                      <MaterialCommunityIcons
+                        name={tab.icon as any}
+                        size={15}
+                        color={isActive ? '#FFFFFF' : tab.color}
+                      />
+                      <Text
+                        style={[
+                          styles.categoryTabText,
+                          isActive ? { color: '#FFFFFF', fontWeight: '900' } : { color: '#334155' },
+                        ]}
                       >
-                        <View style={styles.cardDecorCircle} />
-
-                        {/* Top Row: Avatar + Info (Name, NIS, Unit Pill) + Right Button */}
-                        <View style={styles.childHeroTopRow}>
-                          <View style={styles.avatarBorderWrapHero}>
-                            {avatarUri ? (
-                              <Image
-                                source={{ uri: avatarUri }}
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            ) : (
-                              <Image
-                                source={
-                                  child?.gender === 'female' ||
-                                  child?.jenis_kelamin === 'P' ||
-                                  child?.jenis_kelamin === 'female' ||
-                                  child?.gender === 'P'
-                                    ? DEFAULT_STUDENT_GIRL_AVATAR
-                                    : DEFAULT_STUDENT_BOY_AVATAR
-                                }
-                                style={styles.childAvatarImgHero}
-                                resizeMode="cover"
-                              />
-                            )}
-                          </View>
-                          <View style={styles.childInfoCol}>
-                            <View style={styles.studentNameBadgeRow}>
-                              <Text numberOfLines={1} style={styles.studentFullName}>
-                                {childFullName}
-                              </Text>
-                            </View>
-                            <Text style={styles.studentNisText}>
-                              NIS: {child.nis || '-'} {child.nisn ? `· NISN: ${child.nisn}` : ''}
-                            </Text>
-                            <View style={styles.studentUnitBadge}>
-                              <MaterialCommunityIcons
-                                name="school"
-                                size={11}
-                                color="#FFFFFF"
-                                style={{ marginRight: 4 }}
-                              />
-                              <Text numberOfLines={1} style={styles.studentUnitText}>
-                                {unitTitle}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Right Action Button */}
-                          <View style={[styles.selectedActionBtnRight, !isSelected && styles.selectedActionBtnRightInactive]}>
-                            <MaterialCommunityIcons
-                              name={isSelected ? 'check-circle' : 'gesture-tap'}
-                              size={16}
-                              color={isSelected ? '#18A165' : '#FFFFFF'}
-                            />
-                            <Text style={[styles.selectedActionBtnText, !isSelected && styles.selectedActionBtnTextInactive]}>
-                              {isSelected ? 'Terpilih' : 'Pilih'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Middle Attributes Bar: Kelas | Jenjang | Presensi */}
-                        <View style={styles.studentAttributesGrid}>
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Kelas</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {className}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.studentAttrValue}>
-                              {jenjang}
-                            </Text>
-                          </View>
-                          <View style={styles.studentAttrDivider} />
-                          <View style={styles.studentAttrBox}>
-                            <View style={styles.studentAttrLabelRow}>
-                              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                              <Text style={styles.studentAttrLabel}>Presensi</Text>
-                            </View>
-                            <View style={styles.studentPresensiValueRow}>
-                              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                                Hadir
-                              </Text>
-                              <View style={styles.presensiGreenDot} />
-                            </View>
-                          </View>
-                        </View>
-                      </LinearGradient>
+                        {tab.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.tabCountPill,
+                          isActive
+                            ? { backgroundColor: 'rgba(255, 255, 255, 0.28)' }
+                            : { backgroundColor: '#F1F5F9' },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.tabCountText,
+                            isActive ? { color: '#FFFFFF' } : { color: '#64748B' },
+                          ]}
+                        >
+                          {tab.count}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 })}
               </ScrollView>
-
-              {/* DOT INDIKATOR SCROLL SISWA */}
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((c, i) => {
-                    const isDotActive = String(c.id) === selectedChildId;
-                    return (
-                      <TouchableOpacity
-                        key={String(c.id || i)}
-                        onPress={() => selectChildWithScroll(String(c.id), i)}
-                        style={[
-                          styles.paginationDot,
-                          isDotActive && styles.paginationDotActive,
-                        ]}
-                      />
-                    );
-                  })}
-                </View>
-              )}
             </View>
-          ) : studentInfo ? (
-            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
-                </View>
-              </View>
 
-              {(() => {
-                const s = studentInfo;
-                const studentName = s.full_name || s.nama_lengkap || s.name || 'Siswa Aktif';
-                const studentClass = s.kelas?.nama_kelas || s.kelas?.name || s.class || s.class_name || 'Kelas Belum Ditentukan';
-                const studentUnit = s.education_unit?.name || s.unit || s.unit_name || 'Unit Pendidikan';
-                const jenjang = s.kelas?.jenjang || s.education_unit?.level || 'Terpadu';
-                const avatarUri = getProfileImageUrl(s);
-
-                return (
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.childCardHeroSizeSingle}
-                  >
-                    <View style={styles.cardDecorCircle} />
-
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image
-                            source={{ uri: avatarUri }}
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <Image
-                            source={
-                              s?.gender === 'female' ||
-                              s?.jenis_kelamin === 'P' ||
-                              s?.jenis_kelamin === 'female' ||
-                              s?.gender === 'P'
-                                ? DEFAULT_STUDENT_GIRL_AVATAR
-                                : DEFAULT_STUDENT_BOY_AVATAR
-                            }
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <View style={styles.studentNameBadgeRow}>
-                          <Text numberOfLines={1} style={styles.studentFullName}>
-                            {studentName}
-                          </Text>
-                        </View>
-                        <Text style={styles.studentNisText}>
-                          NIS: {s.nis || '-'} {s.nisn ? `· NISN: ${s.nisn}` : ''}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {studentUnit}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.selectedActionBtnRight}>
-                        <MaterialCommunityIcons name="check-circle" size={16} color="#18A165" />
-                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Kelas</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{studentClass}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{jenjang}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        </View>
-                        <View style={styles.studentPresensiValueRow}>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Hadir</Text>
-                          <View style={styles.presensiGreenDot} />
-                        </View>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                );
-              })()}
-            </View>
-          ) : user ? (
-            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Pengguna & Unit</Text>
-                </View>
-              </View>
-
-              {(() => {
-                const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
-                const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
-                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || (user as any)?.unit?.name || 'Unit Pendidikan');
-                const avatarUri = getProfileImageUrl(user);
-
-                return (
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.childCardHeroSizeSingle}
-                  >
-                    <View style={styles.cardDecorCircle} />
-
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image
-                            source={{ uri: avatarUri }}
-                            style={styles.childAvatarImgHero}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <Text numberOfLines={1} style={styles.childNameHero}>
-                          {userName}
-                        </Text>
-                        <Text style={styles.childSubInfoHero}>
-                          Status: {userRole}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {userUnit}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.selectedActionBtnRight}>
-                        <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
-                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Peran</Text>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{userRole}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Unit</Text>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{userUnit}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Status</Text>
-                        <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Terverifikasi</Text>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                );
-              })()}
-            </View>
-          ) : null}
-
-          {/* 2. CATEGORY TABS */}
-          <View style={styles.tabsSection}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
-              {categoryTabs.map((tab) => {
-                const isActive = selectedTab === tab.key;
-                return (
-                  <TouchableOpacity
-                    key={tab.key}
-                    activeOpacity={0.75}
-                    onPress={() => setSelectedTab(tab.key)}
-                    style={[styles.categoryTab, isActive && styles.categoryTabActive]}
-                  >
-                    <Text style={[styles.categoryTabText, isActive && styles.categoryTabTextActive]}>
-                      {tab.label}
-                    </Text>
+            {/* 3. PENCARIAN & QUICK FILTER ACTION ROW */}
+            <View style={styles.searchSection}>
+              <View style={styles.searchBox}>
+                <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Cari judul berita, topik, atau isi pengumuman..."
+                  placeholderTextColor="#94A3B8"
+                  style={styles.searchInput}
+                  returnKeyType="search"
+                />
+                {searchQuery.length > 0 ? (
+                  <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
                   </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
+                ) : null}
+              </View>
 
-          {/* 3. SEARCH BAR */}
-          <View style={styles.searchSection}>
-            <View style={styles.searchBox}>
-              <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" />
-              <TextInput
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Cari informasi, pengumuman..."
-                placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
-                returnKeyType="search"
-              />
-              {searchQuery.length > 0 ? (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                </TouchableOpacity>
-              ) : (
+              {/* Action Chips Row */}
+              <View style={styles.quickFilterBar}>
+                {/* Chip Bookmark */}
                 <TouchableOpacity
-                  activeOpacity={0.7}
+                  activeOpacity={0.75}
                   onPress={() => setShowBookmarkedOnly(!showBookmarkedOnly)}
+                  style={[
+                    styles.quickFilterChip,
+                    showBookmarkedOnly
+                      ? { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }
+                      : { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' },
+                  ]}
                 >
                   <MaterialCommunityIcons
-                    name="tune-variant"
-                    size={20}
-                    color={showBookmarkedOnly ? '#18A165' : '#94A3B8'}
+                    name={showBookmarkedOnly ? 'bookmark' : 'bookmark-outline'}
+                    size={15}
+                    color={showBookmarkedOnly ? '#D97706' : '#64748B'}
                   />
+                  <Text
+                    style={[
+                      styles.quickFilterChipText,
+                      showBookmarkedOnly ? { color: '#B45309', fontWeight: '900' } : { color: '#475569' },
+                    ]}
+                  >
+                    Tersimpan {bookmarkedCount > 0 ? `(${bookmarkedCount})` : ''}
+                  </Text>
                 </TouchableOpacity>
+
+                {/* Tombol Tandai Semua Dibaca */}
+                {unreadCount > 0 && !isTeacherOnly && (
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={handleMarkAllRead}
+                    style={[styles.quickFilterChip, { backgroundColor: '#EBF8F2', borderColor: '#A7F3D0' }]}
+                  >
+                    <MaterialCommunityIcons name="check-all" size={15} color="#18A165" />
+                    <Text style={[styles.quickFilterChipText, { color: '#065F46' }]}>
+                      Tandai Dibaca ({unreadCount})
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Tombol Reset Filter */}
+                {(searchQuery.trim().length > 0 || selectedTab !== 'all' || showBookmarkedOnly) && (
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={handleResetFilter}
+                    style={[styles.quickFilterChip, { backgroundColor: '#F8FAFC', borderColor: '#CBD5E1' }]}
+                  >
+                    <MaterialCommunityIcons name="filter-remove-outline" size={15} color="#64748B" />
+                    <Text style={[styles.quickFilterChipText, { color: '#64748B' }]}>Reset</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* 4. INFORMASI PRIORITAS & MENDESAK (HIGHLIGHT CARD) */}
+            {selectedTab === 'all' && !searchQuery.trim() && !showBookmarkedOnly && importantItems.length > 0 && (
+              <View style={styles.importantSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={styles.sectionHeaderTitleWrap}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={17} color="#D97706" />
+                    <Text style={styles.sectionTitle}>Penting & Mendesak</Text>
+                  </View>
+                  <View style={styles.importantCountBadge}>
+                    <Text style={styles.importantCountBadgeText}>{importantItems.length} Pengumuman</Text>
+                  </View>
+                </View>
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.importantScroll}>
+                  {importantItems.map((item, idx) => {
+                    const theme = getCategoryTheme(item.category || item.type);
+                    const priorityTheme = getPriorityTheme(item.priority);
+                    return (
+                      <TouchableOpacity
+                        key={item.id || idx}
+                        activeOpacity={0.88}
+                        onPress={() => handleOpenDetail(item)}
+                        style={styles.importantCard}
+                      >
+                        <View style={styles.importantCardHeader}>
+                          <View style={[styles.priorityBadge, { backgroundColor: priorityTheme.bg, borderColor: priorityTheme.border }]}>
+                            <MaterialCommunityIcons name={priorityTheme.icon as any} size={11} color={priorityTheme.color} />
+                            <Text style={[styles.priorityBadgeText, { color: priorityTheme.color }]}>
+                              {priorityTheme.label}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            onPress={() => handleToggleBookmark(item)}
+                            style={styles.cardBookmarkBtn}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <MaterialCommunityIcons
+                              name={item.is_bookmarked ? 'bookmark' : 'bookmark-outline'}
+                              size={18}
+                              color={item.is_bookmarked ? '#F59E0B' : '#94A3B8'}
+                            />
+                          </TouchableOpacity>
+                        </View>
+
+                        <Text numberOfLines={2} style={styles.importantTitle}>
+                          {item.title}
+                        </Text>
+                        <Text numberOfLines={2} style={styles.importantSummary}>
+                          {item.summary}
+                        </Text>
+
+                        <View style={styles.importantFooter}>
+                          <MaterialCommunityIcons name="school-outline" size={12} color="#059669" />
+                          <Text numberOfLines={1} style={styles.importantFooterText}>
+                            {item.education_unit || 'Seluruh Yayasan'}
+                          </Text>
+                          <MaterialCommunityIcons name="chevron-right" size={16} color="#D97706" />
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* 5. FEED BERITA & INFORMASI DENGAN STYLING WARNA-WARNI KAYA */}
+            <View style={styles.listSection}>
+              <View style={styles.feedHeaderRow}>
+                <View style={styles.feedHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="format-list-bulleted" size={17} color="#18A165" />
+                  <Text style={styles.sectionTitle}>
+                    {selectedTab === 'all'
+                      ? 'Daftar Informasi & Berita'
+                      : `Daftar ${categoryTabs.find((t) => t.key === selectedTab)?.label || 'Informasi'}`}
+                  </Text>
+                </View>
+                <View style={styles.itemTotalBadge}>
+                  <Text style={styles.itemTotalBadgeText}>{items.length} Data</Text>
+                </View>
+              </View>
+
+              {loading ? (
+                <View style={styles.loadingWrap}>
+                  <ActivityIndicator color="#18A165" size="large" />
+                  <Text style={styles.loadingText}>Memuat data informasi & berita sekolah...</Text>
+                </View>
+              ) : items.length > 0 ? (
+                items.map((item, idx) => {
+                  const theme = getCategoryTheme(item.category || item.type);
+                  const priorityTheme = getPriorityTheme(item.priority);
+                  const isImportant = item.priority === 'penting' || item.priority === 'mendesak';
+                  const dateStr = item.published_at
+                    ? new Date(item.published_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                    : 'Terbaru';
+
+                  return (
+                    <TouchableOpacity
+                      key={item.id || idx}
+                      activeOpacity={0.88}
+                      onPress={() => handleOpenDetail(item)}
+                      style={[
+                        styles.modernItemCard,
+                        { borderLeftColor: theme.stripeBg },
+                        !item.is_read && styles.modernItemCardUnread,
+                      ]}
+                    >
+                      {/* Optional Cover/Image Preview Banner */}
+                      {item.image_url ? (
+                        <View style={styles.cardCoverWrap}>
+                          <Image
+                            source={{ uri: item.image_url }}
+                            style={styles.cardCoverImage}
+                            resizeMode="cover"
+                          />
+                          <LinearGradient
+                            colors={['transparent', 'rgba(15, 23, 42, 0.65)']}
+                            style={StyleSheet.absoluteFill}
+                          />
+                          <View style={styles.coverCategoryBadgeWrap}>
+                            <View style={[styles.coverCategoryBadge, { backgroundColor: theme.color }]}>
+                              <MaterialCommunityIcons name={theme.icon as any} size={12} color="#FFFFFF" />
+                              <Text style={styles.coverCategoryBadgeText}>{theme.label}</Text>
+                            </View>
+                          </View>
+                        </View>
+                      ) : null}
+
+                      <View style={styles.cardBodyPadding}>
+                        {/* Top Badges Row */}
+                        <View style={styles.cardTopBadgeRow}>
+                          <View style={styles.cardBadgesGroup}>
+                            {!item.image_url && (
+                              <View
+                                style={[
+                                  styles.categoryBadgePill,
+                                  { backgroundColor: theme.badgeBg, borderColor: theme.badgeBorder },
+                                ]}
+                              >
+                                <MaterialCommunityIcons name={theme.icon as any} size={12} color={theme.color} />
+                                <Text style={[styles.categoryBadgeText, { color: theme.color }]}>
+                                  {theme.label}
+                                </Text>
+                              </View>
+                            )}
+
+                            {isImportant && (
+                              <View
+                                style={[
+                                  styles.priorityBadgePill,
+                                  { backgroundColor: priorityTheme.bg, borderColor: priorityTheme.border },
+                                ]}
+                              >
+                                <MaterialCommunityIcons name={priorityTheme.icon as any} size={11} color={priorityTheme.color} />
+                                <Text style={[styles.priorityBadgeText, { color: priorityTheme.color }]}>
+                                  {priorityTheme.label}
+                                </Text>
+                              </View>
+                            )}
+
+                            {item.education_unit && (
+                              <View style={styles.unitBadgePill}>
+                                <MaterialCommunityIcons name="school-outline" size={11} color="#64748B" />
+                                <Text numberOfLines={1} style={styles.unitBadgeText}>
+                                  {item.education_unit}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.cardActionsRight}>
+                            {!item.is_read && (
+                              <View style={styles.newBadgePill}>
+                                <View style={styles.newBadgeDot} />
+                                <Text style={styles.newBadgeText}>Baru</Text>
+                              </View>
+                            )}
+
+                            <TouchableOpacity
+                              activeOpacity={0.7}
+                              onPress={() => handleToggleBookmark(item)}
+                              style={styles.bookmarkIconBtn}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              accessibilityRole="button"
+                              accessibilityLabel={item.is_bookmarked ? 'Hapus Simpan' : 'Simpan'}
+                            >
+                              <MaterialCommunityIcons
+                                name={item.is_bookmarked ? 'bookmark' : 'bookmark-outline'}
+                                size={19}
+                                color={item.is_bookmarked ? '#F59E0B' : '#94A3B8'}
+                              />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        {/* Title */}
+                        <Text numberOfLines={2} style={styles.modernCardTitle}>
+                          {item.title}
+                        </Text>
+
+                        {/* Summary Excerpt */}
+                        {item.summary ? (
+                          <Text numberOfLines={2} style={styles.modernCardSummary}>
+                            {item.summary}
+                          </Text>
+                        ) : null}
+
+                        {/* Card Footer Metadata */}
+                        <View style={styles.modernCardFooter}>
+                          <View style={styles.cardMetaLeft}>
+                            <View style={styles.cardMetaItem}>
+                              <MaterialCommunityIcons name="account-outline" size={13} color="#94A3B8" />
+                              <Text numberOfLines={1} style={styles.cardMetaText}>
+                                {item.publisher}
+                              </Text>
+                            </View>
+                            <View style={styles.cardMetaDot} />
+                            <View style={styles.cardMetaItem}>
+                              <MaterialCommunityIcons name="calendar-outline" size={13} color="#94A3B8" />
+                              <Text style={styles.cardMetaText}>{dateStr}</Text>
+                            </View>
+                            {item.attachments && item.attachments.length > 0 && (
+                              <>
+                                <View style={styles.cardMetaDot} />
+                                <View style={styles.cardMetaItem}>
+                                  <MaterialCommunityIcons name="paperclip" size={13} color="#059669" />
+                                  <Text style={[styles.cardMetaText, { color: '#059669', fontWeight: '800' }]}>
+                                    {item.attachments.length} Berkas
+                                  </Text>
+                                </View>
+                              </>
+                            )}
+                          </View>
+
+                          <View style={styles.readMorePill}>
+                            <Text style={[styles.readMoreText, { color: theme.color }]}>Detail</Text>
+                            <MaterialCommunityIcons name="chevron-right" size={15} color={theme.color} />
+                          </View>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              ) : (
+                <EmptyStateCard
+                  icon="bullhorn-outline"
+                  title="Belum Ada Informasi"
+                  description="Tidak ditemukan berita atau pengumuman untuk filter kategori ini."
+                />
               )}
             </View>
           </View>
-
-          {/* 4. INFORMATION ITEMS LIST */}
-          <View style={styles.listSection}>
-            {loading ? (
-              <ActivityIndicator color="#18A165" style={{ marginVertical: 36 }} />
-            ) : items.length > 0 ? (
-              items.map((item, idx) => {
-                const isImportant = item.priority === 'penting' || item.priority === 'mendesak';
-                const cat = (item.category || item.type || 'announcement').toLowerCase();
-                const iconMap: Record<string, { name: string; bg: string; color: string }> = {
-                  announcement: { name: 'bullhorn', bg: '#EBF8F2', color: '#18A165' },
-                  pengumuman:   { name: 'bullhorn', bg: '#EBF8F2', color: '#18A165' },
-                  event:        { name: 'calendar-star', bg: '#EFF6FF', color: '#2563EB' },
-                  agenda:       { name: 'calendar-star', bg: '#EFF6FF', color: '#2563EB' },
-                  news:         { name: 'newspaper', bg: '#F5F3FF', color: '#7C3AED' },
-                  berita:       { name: 'newspaper', bg: '#F5F3FF', color: '#7C3AED' },
-                  circular:     { name: 'email-newsletter', bg: '#FFF7ED', color: '#EA580C' },
-                  'surat edaran': { name: 'email-newsletter', bg: '#FFF7ED', color: '#EA580C' },
-                  achievement:  { name: 'trophy', bg: '#ECFDF5', color: '#059669' },
-                  prestasi:     { name: 'trophy', bg: '#ECFDF5', color: '#059669' },
-                  payment:      { name: 'cash', bg: '#F0FDF4', color: '#16A34A' },
-                  pembayaran:   { name: 'cash', bg: '#F0FDF4', color: '#16A34A' },
-                  report:       { name: 'file-document', bg: '#F0F9FF', color: '#0284C7' },
-                  rapor:        { name: 'file-document', bg: '#F0F9FF', color: '#0284C7' },
-                };
-                const iconInfo = iconMap[cat] || { name: 'bell-outline', bg: '#F1F5F9', color: '#64748B' };
-                const dateStr = item.published_at
-                  ? new Date(item.published_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
-                  : 'Terbaru';
-                return (
-                  <TouchableOpacity
-                    key={item.id || idx}
-                    activeOpacity={0.85}
-                    onPress={() => handleOpenDetail(item)}
-                    style={[styles.itemCard, isImportant && styles.itemCardImportant]}
-                  >
-                    <View style={styles.itemCardRow}>
-                      {/* Left Icon */}
-                      <View style={[styles.itemIconBox, { backgroundColor: iconInfo.bg }]}>
-                        <MaterialCommunityIcons name={iconInfo.name as any} size={22} color={iconInfo.color} />
-                      </View>
-
-                      {/* Center Content */}
-                      <View style={styles.itemContentCol}>
-                        <View style={styles.itemTitleRow}>
-                          <Text numberOfLines={2} style={styles.itemTitle}>{item.title}</Text>
-                          <Text style={styles.itemDateText}>{dateStr}</Text>
-                        </View>
-                        <Text numberOfLines={2} style={styles.itemSummary}>
-                          {item.summary || item.content || ''}
-                        </Text>
-                      </View>
-
-                      {/* Right Arrow */}
-                      <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E1" />
-                    </View>
-                    {!item.is_read && (
-                      <View style={[styles.unreadDot, {
-                        position: 'absolute', top: 10, right: 10,
-                      }]} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })
-            ) : (
-              <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name="bullhorn-outline" size={48} color="#94A3B8" />
-                <Text style={styles.emptyTitle}>Tidak ada informasi</Text>
-                <Text style={styles.emptyText}>
-                  Tidak ditemukan pengumuman atau agenda untuk kategori ini.
-                </Text>
-              </View>
-            )}
-          </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </View>
+
+      {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
+      <StudentIdCardModal
+        visible={Boolean(selectedIdCardStudent)}
+        student={selectedIdCardStudent}
+        onClose={() => setSelectedIdCardStudent(null)}
+      />
+      <StudentQrModal
+        visible={Boolean(selectedQrStudent)}
+        student={selectedQrStudent}
+        onClose={() => setSelectedQrStudent(null)}
+      />
+      <StudentMenuModal
+        visible={Boolean(selectedMenuStudent)}
+        student={selectedMenuStudent}
+        onClose={() => setSelectedMenuStudent(null)}
+        navigation={navigation}
+      />
+      <StudentWeeklyReportModal
+        visible={Boolean(selectedWeeklyStudent)}
+        student={selectedWeeklyStudent}
+        onClose={() => setSelectedWeeklyStudent(null)}
+      />
 
       {/* 7. FULL DETAIL MODAL */}
       <Modal
@@ -746,83 +1183,153 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
       >
         <View style={styles.modalOverlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSelectedItem(null)} />
-          <View style={[styles.modalContent, { paddingBottom: modalBottomInset }]}>
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <View style={styles.priorityBadge}>
-                    <Text style={styles.priorityBadgeText}>
-                      {selectedItem?.priority || 'Informasi'}
-                    </Text>
-                  </View>
-                  <View style={styles.categoryPill}>
-                    <Text style={styles.categoryPillText}>
-                      {selectedItem?.category || selectedItem?.type}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.modalTitle}>{selectedItem?.title}</Text>
-              </View>
+          <View style={[styles.modalContent, { paddingBottom: Math.max(modalBottomInset, 20) }]}>
+            {selectedItem && (() => {
+              const modalTheme = getCategoryTheme(selectedItem.category || selectedItem.type);
+              const modalPriorityTheme = getPriorityTheme(selectedItem.priority);
+              const isImportant = selectedItem.priority === 'penting' || selectedItem.priority === 'mendesak';
+              const coverUrl = selectedItem.image_url || selectedItem.cover;
 
-              <TouchableOpacity
-                onPress={() => setSelectedItem(null)}
-                style={styles.modalCloseIconBtn}
-              >
-                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
+              return (
+                <>
+                  <View style={styles.modalHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                        <View
+                          style={[
+                            styles.categoryBadgePill,
+                            { backgroundColor: modalTheme.badgeBg, borderColor: modalTheme.badgeBorder },
+                          ]}
+                        >
+                          <MaterialCommunityIcons name={modalTheme.icon as any} size={12} color={modalTheme.color} />
+                          <Text style={[styles.categoryBadgeText, { color: modalTheme.color }]}>
+                            {modalTheme.label}
+                          </Text>
+                        </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {selectedItem?.cover && (
-                <Image
-                  source={{ uri: selectedItem.cover }}
-                  style={styles.modalCoverImage}
-                  resizeMode="cover"
-                />
-              )}
+                        {isImportant && (
+                          <View
+                            style={[
+                              styles.priorityBadgePill,
+                              { backgroundColor: modalPriorityTheme.bg, borderColor: modalPriorityTheme.border },
+                            ]}
+                          >
+                            <MaterialCommunityIcons name={modalPriorityTheme.icon as any} size={11} color={modalPriorityTheme.color} />
+                            <Text style={[styles.priorityBadgeText, { color: modalPriorityTheme.color }]}>
+                              {modalPriorityTheme.label}
+                            </Text>
+                          </View>
+                        )}
 
-              <View style={styles.modalMetaRow}>
-                <View style={styles.modalMetaItem}>
-                  <MaterialCommunityIcons name="domain" size={14} color="#18A165" />
-                  <Text style={styles.modalMetaText}>{selectedItem?.education_unit || 'Seluruh Yayasan'}</Text>
-                </View>
-                <View style={styles.modalMetaItem}>
-                  <MaterialCommunityIcons name="calendar" size={14} color="#18A165" />
-                  <Text style={styles.modalMetaText}>
-                    {selectedItem?.published_at ? new Date(selectedItem.published_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Terbaru'}
-                  </Text>
-                </View>
-              </View>
+                        {selectedItem.education_unit && (
+                          <View style={styles.unitBadgePill}>
+                            <MaterialCommunityIcons name="school-outline" size={11} color="#64748B" />
+                            <Text numberOfLines={1} style={styles.unitBadgeText}>
+                              {selectedItem.education_unit}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
 
-              <Text style={styles.modalFullContent}>
-                {selectedItem?.content || selectedItem?.summary || 'Tidak ada detail teks.'}
-              </Text>
-
-              {Array.isArray(selectedItem?.attachments) && selectedItem.attachments.length > 0 && (
-                <View style={styles.attachmentBox}>
-                  <Text style={styles.attachmentBoxTitle}>Lampiran Dokumen / Berkas:</Text>
-                  {selectedItem.attachments.map((att: any, idx: number) => (
-                    <View key={idx} style={styles.attachmentItem}>
-                      <MaterialCommunityIcons name="paperclip" size={16} color="#18A165" />
-                      <Text numberOfLines={1} style={styles.attachmentItemText}>
-                        {att.nama || att.name || 'Dokumen Pendukung'}
-                      </Text>
+                      <Text style={styles.modalTitle}>{selectedItem.title}</Text>
                     </View>
-                  ))}
-                </View>
-              )}
-            </ScrollView>
 
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => setSelectedItem(null)}
-              style={styles.modalCloseBtn}
-            >
-              <Text style={styles.modalCloseBtnText}>Tutup Informasi</Text>
-            </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => handleToggleBookmark(selectedItem)}
+                        style={styles.modalBookmarkBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <MaterialCommunityIcons
+                          name={selectedItem.is_bookmarked ? 'bookmark' : 'bookmark-outline'}
+                          size={22}
+                          color={selectedItem.is_bookmarked ? '#F59E0B' : '#94A3B8'}
+                        />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setSelectedItem(null)}
+                        style={styles.modalCloseIconBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                    {coverUrl && (
+                      <View style={styles.modalCoverWrap}>
+                        <Image
+                          source={{ uri: coverUrl }}
+                          style={styles.modalCoverImage}
+                          resizeMode="cover"
+                        />
+                      </View>
+                    )}
+
+                    <View style={styles.modalMetaRow}>
+                      <View style={styles.modalMetaItem}>
+                        <MaterialCommunityIcons name="account-outline" size={14} color="#64748B" />
+                        <Text style={styles.modalMetaPublisher}>{selectedItem.publisher || 'Pengelola Sekolah'}</Text>
+                      </View>
+                      <View style={styles.cardMetaDot} />
+                      <View style={styles.modalMetaItem}>
+                        <MaterialCommunityIcons name="calendar-clock-outline" size={14} color="#64748B" />
+                        <Text style={styles.modalMetaDate}>
+                          {selectedItem.published_at ? new Date(selectedItem.published_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Terbaru'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.modalFullContent}>
+                      {selectedItem.content || selectedItem.summary || 'Tidak ada detail teks.'}
+                    </Text>
+
+                    {Array.isArray(selectedItem.attachments) && selectedItem.attachments.length > 0 && (
+                      <View style={styles.attachmentBox}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                          <MaterialCommunityIcons name="paperclip" size={16} color="#059669" />
+                          <Text style={styles.attachmentBoxTitle}>
+                            Lampiran Dokumen ({selectedItem.attachments.length}):
+                          </Text>
+                        </View>
+                        {selectedItem.attachments.map((att: any, idx: number) => (
+                          <View key={idx} style={styles.attachmentItem}>
+                            <MaterialCommunityIcons name="file-document-outline" size={16} color="#059669" />
+                            <Text numberOfLines={1} style={styles.attachmentItemText}>
+                              {att.nama || att.name || 'Dokumen Pendukung'}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </ScrollView>
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setSelectedItem(null)}
+                    style={[styles.modalCloseBtn, { backgroundColor: modalTheme.color }]}
+                  >
+                    <Text style={styles.modalCloseBtnText}>Tutup Informasi</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
           </View>
         </View>
       </Modal>
+
+      {/* Universal Feedback Modal */}
+      {feedbackModal && (
+        <AppFeedbackModal
+          visible={feedbackModal.visible}
+          type={feedbackModal.type || 'info'}
+          title={feedbackModal.title}
+          message={feedbackModal.message}
+          onClose={() => setFeedbackModal(null)}
+        />
+      )}
     </View>
   );
 }
@@ -837,474 +1344,259 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   screen: { flex: 1, backgroundColor: 'transparent' },
-  content: { padding: 16, paddingTop: Platform.OS === 'android' ? 20 : 16 },
-  studentContainerBlock: {
-    marginBottom: 10,
+  // Struktur scroll + hero statis disamakan plek dengan Tugas/Jadwal/Materi/Nilai
+  mainScrollContent: {
+    flexGrow: 1,
   },
-  childrenSection: {
-    marginBottom: 14,
-  },
-  childrenLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#18A165',
-    letterSpacing: 0.8,
-    marginBottom: 8,
-  },
-  childrenScroll: {
-    gap: 10,
-    paddingRight: 10,
-  },
-  childCardLarge: {
-    width: (SCREEN_WIDTH - 42) / 2,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#18A165',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
-  },
-  childCardLargeActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  childCardTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  avatarBorderWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
-    overflow: 'hidden',
-    backgroundColor: '#EBF8F2',
-  },
-  avatarBorderWrapActive: {
-    borderColor: '#FFFFFF',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  childAvatarImgLarge: {
-    width: '100%',
-    height: '100%',
-  },
-  childStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  childStatusBadgeActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  childStatusBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  childStatusBadgeTextActive: {
-    color: '#FFFFFF',
-  },
-  childCardInfo: {
-    marginTop: 2,
-  },
-  childNameTextLarge: {
-    fontSize: 13.5,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  childUnitTextLarge: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  childChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  childChipActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  childAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#EBF8F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  childAvatarActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  childNameText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0F172A',
-    maxWidth: 130,
-  },
-  childUnitText: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  childTextActive: {
-    color: '#FFFFFF',
-  },
-  containerBlock: {
-    marginBottom: 16,
-  },
-  studentCardCountBadge: {
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  studentCardCountBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#084835',
-  },
-  sectionHeaderTitleWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  heroCardScrollContainer: {
-    marginHorizontal: -16,
-  },
-  heroCardScroll: {
+  bodyContentWrapper: {
     paddingHorizontal: 16,
-    gap: 12,
-    paddingBottom: 4,
+    paddingTop: 14,
   },
-  childCardHeroSize: {
-    width: SCREEN_WIDTH - 50,
-    minHeight: 148,
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-    shadowColor: '#0D6B42',
-    shadowOpacity: 0.22,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  childCardHeroSizeSingle: {
+  staticTopBarWrapper: {
     width: '100%',
-    minHeight: 148,
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-    shadowColor: '#0D6B42',
-    shadowOpacity: 0.22,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-    overflow: 'hidden',
     position: 'relative',
+    overflow: 'hidden',
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
+    paddingBottom: 14,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  childCardHeroSizeInactive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E2E8F0',
-    shadowOpacity: 0.06,
-    elevation: 2,
-  },
-  cardDecorCircle: {
+  heroDecorCircle1: {
     position: 'absolute',
-    top: -24,
-    right: -24,
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    zIndex: 0,
+    top: -30,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
-  childHeroTopRow: {
+  heroDecorCircle2: {
+    position: 'absolute',
+    bottom: -20,
+    left: 20,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  staticTopBarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 1,
-  },
-  avatarBorderWrapHero: {
-    width: 62,
-    height: 62,
-    borderRadius: 22,
-    borderWidth: 2.5,
-    borderColor: 'rgba(255, 255, 255, 0.95)',
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  avatarBorderWrapHeroInactive: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#EBF8F2',
-  },
-  childAvatarImgHero: {
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
     width: '100%',
-    height: '100%',
   },
-  avatarInitialText: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#084835',
-  },
-  childInfoCol: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  studentNameBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  studentFullName: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -0.2,
-  },
-  childNameHero: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  childSubInfoHero: {
-    fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.85)',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  studentNisText: {
-    fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.85)',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  studentUnitBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  studentUnitBadgeInactive: {
-    backgroundColor: '#E7F7EF',
-    borderColor: '#A7F3D0',
-  },
-  studentUnitText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    maxWidth: SCREEN_WIDTH - 220,
-  },
-  selectedActionBtnRight: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+  heroSquircleBtn: {
+    width: 38,
+    height: 38,
     borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
     elevation: 3,
-    marginLeft: 8,
-    minWidth: 46,
+    position: 'relative',
   },
-  selectedActionBtnRightInactive: {
-    backgroundColor: '#F1F5F9',
-    elevation: 1,
-  },
-  selectedActionBtnText: {
-    fontSize: 8.5,
-    fontWeight: '800',
-    color: '#18A165',
-    marginTop: 2,
-  },
-  selectedActionBtnTextInactive: {
-    color: '#64748B',
-  },
-  studentAttributesGrid: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(4, 47, 30, 0.35)',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    marginTop: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    zIndex: 1,
-  },
-  studentAttributesGridInactive: {
-    backgroundColor: '#F1F8F4',
-    borderColor: '#D1E8DC',
-  },
-  studentAttrBox: {
+  heroTitleCenterCol: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
   },
-  studentAttrLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  studentAttrLabel: {
-    fontSize: 9,
-    color: '#A7F3D0',
+  heroModuleTitle: {
+    fontSize: 16,
     fontWeight: '700',
-  },
-  studentAttrValue: {
-    fontSize: 11,
-    fontWeight: '800',
+    fontFamily: 'Poppins_700Bold',
     color: '#FFFFFF',
+    textAlign: 'center',
+    letterSpacing: -0.2,
   },
-  studentPresensiValueRow: {
+  heroModuleSubtitle: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    marginTop: 1,
+  },
+  heroBellDot: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  // 1. KPI Cards Grid & Styles
+  kpiCardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  kpiCard: {
+    width: (SCREEN_WIDTH - 32 - 10) / 2,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.2,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  kpiCardEmerald: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  kpiCardSky: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+  },
+  kpiCardPurple: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
+  },
+  kpiCardAmber: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  kpiCardActive: {
+    borderWidth: 2,
+    borderColor: '#059669',
+  },
+  kpiTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
-  presensiGreenDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#34D399',
-    marginLeft: 4,
-  },
-  studentAttrDivider: {
-    width: 1,
-    height: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  inactiveText: {
-    color: '#0F172A',
-  },
-  inactiveSubText: {
-    color: '#64748B',
-  },
-  paginationDotsRow: {
-    flexDirection: 'row',
+  kpiIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    marginTop: 8,
   },
-  paginationDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#CBD5E1',
+  kpiBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
-  paginationDotActive: {
-    width: 16,
-    backgroundColor: '#18A165',
+  kpiBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
   },
-  heroCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: 'rgba(24, 161, 101, 0.25)',
-    shadowColor: '#18A165',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-    marginBottom: 16,
+  kpiValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    marginBottom: 1,
   },
-  heroHeaderRow: {
+  kpiLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // 2. Tabs Section
+  tabsSection: {
+    marginBottom: 12,
+  },
+  tabsScroll: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  categoryTab: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
   },
-  heroTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: 0.2,
+  categoryTabActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
   },
-  heroSubtitle: {
+  categoryTabText: {
     fontSize: 11.5,
-    color: '#64748B',
-    lineHeight: 16,
-    marginTop: 4,
+    fontWeight: '800',
   },
-  actionBar: {
+  tabCountPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 8,
+  },
+  tabCountText: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  // 3. Search & Quick Filters
+  searchSection: {
+    marginBottom: 14,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'android' ? 7 : 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#0F172A',
+    marginLeft: 8,
+    padding: 0,
+    fontWeight: '600',
+  },
+  quickFilterBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    marginTop: 8,
+    flexWrap: 'wrap',
   },
-  actionBtn: {
+  quickFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#EBF8F2',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(24, 161, 101, 0.3)',
   },
-  actionBtnActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  actionBtnText: {
+  quickFilterChipText: {
     fontSize: 11,
-    fontWeight: '800',
-    color: '#18A165',
+    fontWeight: '700',
   },
-  actionBtnTextActive: {
-    color: '#FFFFFF',
-  },
-  unreadBadge: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginLeft: 'auto',
-  },
-  unreadBadgeText: {
-    fontSize: 10.5,
-    fontWeight: '900',
-    color: '#DC2626',
-  },
+
+  // 4. Important / Urgent Section
   importantSection: {
     marginBottom: 16,
   },
@@ -1312,13 +1604,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 6,
     marginBottom: 10,
+  },
+  sectionHeaderTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   sectionTitle: {
     fontSize: 13.5,
     fontWeight: '900',
     color: '#0F172A',
+  },
+  importantCountBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  importantCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
   },
   importantScroll: {
     gap: 12,
@@ -1327,7 +1636,7 @@ const styles = StyleSheet.create({
   importantCard: {
     width: SCREEN_WIDTH * 0.76,
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 14,
     borderWidth: 1.5,
     borderColor: '#FCD34D',
@@ -1344,9 +1653,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   priorityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#FDE68A',
@@ -1354,7 +1666,6 @@ const styles = StyleSheet.create({
   priorityBadgeText: {
     fontSize: 9.5,
     fontWeight: '900',
-    color: '#D97706',
     textTransform: 'uppercase',
   },
   cardBookmarkBtn: {
@@ -1388,234 +1699,237 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
   },
-  searchSection: {
-    marginBottom: 12,
-  },
-  searchLabel: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#18A165',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 8,
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 50,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === 'android' ? 6 : 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 12,
-    color: '#0F172A',
-    marginLeft: 6,
-    padding: 0,
-  },
-  filterActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  filterTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#EBF8F2',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  filterTagText: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#18A165',
-  },
-  resetBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  resetBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  tabsSection: {
-    marginBottom: 14,
-  },
-  tabsScroll: {
-    gap: 8,
-    paddingRight: 10,
-  },
-  categoryTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  categoryTabActive: {
-    backgroundColor: '#18A165',
-    borderColor: '#18A165',
-  },
-  categoryTabText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  categoryTabTextActive: {
-    color: '#FFFFFF',
-  },
-  tabCountPill: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 8,
-  },
-  tabCountPillActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.28)',
-  },
-  tabCountText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#475569',
-  },
-  tabCountTextActive: {
-    color: '#FFFFFF',
-  },
+
+  // 5. Feed List Section & Modern Cards
   listSection: {
     gap: 12,
   },
-  itemCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    shadowColor: '#64748B',
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-    overflow: 'hidden',
-  },
-  itemCardImportant: {
-    borderColor: '#FCD34D',
-    borderLeftWidth: 3,
-    borderLeftColor: '#F59E0B',
-  },
-  itemCardRow: {
+  feedHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  itemIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  itemContentCol: {
-    flex: 1,
-  },
-  itemTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 3,
+    marginBottom: 6,
   },
-  categoryPill: {
+  feedHeaderTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  itemTotalBadge: {
     backgroundColor: '#EBF8F2',
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
-  categoryPillText: {
-    fontSize: 9.5,
+  itemTotalBadgeText: {
+    fontSize: 10,
     fontWeight: '800',
-    color: '#18A165',
-    textTransform: 'uppercase',
+    color: '#047857',
   },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#EF4444',
+  loadingWrap: {
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
   },
-  itemTitle: {
-    fontSize: 12.5,
+  loadingText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modernItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderLeftWidth: 4,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  modernItemCardUnread: {
+    backgroundColor: '#FCFDFE',
+    borderColor: '#CBD5E1',
+  },
+  cardCoverWrap: {
+    width: '100%',
+    height: 130,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  cardCoverImage: {
+    width: '100%',
+    height: '100%',
+  },
+  coverCategoryBadgeWrap: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+  },
+  coverCategoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  coverCategoryBadgeText: {
+    fontSize: 10,
     fontWeight: '800',
-    color: '#0F172A',
-    lineHeight: 17,
+    color: '#FFFFFF',
+  },
+  cardBodyPadding: {
+    padding: 14,
+  },
+  cardTopBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  cardBadgesGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
     flex: 1,
   },
-  itemSummary: {
-    fontSize: 11,
-    color: '#64748B',
-    lineHeight: 15,
-    marginTop: 1,
+  categoryBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
   },
-  itemFooter: {
+  categoryBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  priorityBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  unitBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    maxWidth: 140,
+  },
+  unitBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  cardActionsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  newBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  newBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EF4444',
+  },
+  newBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '900',
+    color: '#DC2626',
+  },
+  bookmarkIconBtn: {
+    padding: 3,
+  },
+  modernCardTitle: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#0F172A',
+    lineHeight: 19,
+    marginBottom: 5,
+  },
+  modernCardSummary: {
+    fontSize: 11.5,
+    color: '#475569',
+    lineHeight: 16,
+    marginBottom: 10,
+  },
+  modernCardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F8FAFC',
+    borderTopColor: '#F1F5F9',
   },
-  itemFooterLeft: {
+  cardMetaLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 4,
     flex: 1,
   },
-  itemFooterText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  itemDateText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#94A3B8',
-  },
-  emptyContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 36,
+  cardMetaItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    gap: 3,
   },
-  emptyTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginTop: 10,
-  },
-  emptyText: {
-    fontSize: 11.5,
+  cardMetaText: {
+    fontSize: 10,
     color: '#64748B',
-    textAlign: 'center',
-    marginTop: 4,
-    lineHeight: 16,
+    fontWeight: '600',
   },
+  cardMetaDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: '#CBD5E1',
+    marginHorizontal: 2,
+  },
+  readMorePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingLeft: 6,
+  },
+  readMoreText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  // 6. Detail Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
@@ -1626,7 +1940,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 20,
-    maxHeight: '85%',
+    maxHeight: '88%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1643,6 +1957,9 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     lineHeight: 20,
   },
+  modalBookmarkBtn: {
+    padding: 4,
+  },
   modalCloseIconBtn: {
     padding: 4,
   },
@@ -1650,27 +1967,38 @@ const styles = StyleSheet.create({
     maxHeight: Dimensions.get('window').height * 0.55,
     marginBottom: 12,
   },
-  modalCoverImage: {
+  modalCoverWrap: {
     width: '100%',
     height: 160,
     borderRadius: 14,
+    overflow: 'hidden',
     marginBottom: 12,
+  },
+  modalCoverImage: {
+    width: '100%',
+    height: '100%',
   },
   modalMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 8,
     marginBottom: 12,
+    flexWrap: 'wrap',
   },
   modalMetaItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
-  modalMetaText: {
+  modalMetaPublisher: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#18A165',
+    color: '#475569',
+  },
+  modalMetaDate: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
   },
   modalFullContent: {
     fontSize: 13,
@@ -1685,29 +2013,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     marginTop: 6,
+    marginBottom: 10,
   },
   attachmentBoxTitle: {
     fontSize: 11,
     fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 8,
   },
   attachmentItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 4,
+    paddingVertical: 5,
   },
   attachmentItemText: {
     fontSize: 11.5,
-    color: '#18A165',
+    color: '#059669',
     fontWeight: '700',
   },
   modalCloseBtn: {
-    backgroundColor: '#18A165',
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
   },
   modalCloseBtnText: {
     fontSize: 13,

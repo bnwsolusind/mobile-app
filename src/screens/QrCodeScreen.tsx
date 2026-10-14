@@ -17,7 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isStudentRole } from '../utils/roles';
+import { isParentRole, isStudentRole, isTeacherRole, isStaffRole } from '../utils/roles';
+import TeacherQrAttendanceHub from '../components/attendance/TeacherQrAttendanceHub';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
@@ -26,21 +27,30 @@ import {
 import { offlineCache } from '../utils/offlineCache';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useActiveChildStore } from '../stores/activeChildStore';
+import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const getSafeInsets = (insetsHook?: () => any) => {
-  try {
-    if (typeof insetsHook === 'function') {
-      const res = insetsHook();
-      if (res && typeof res === 'object') return res;
-    }
-  } catch {}
-  return { top: 0, bottom: 0, left: 0, right: 0 };
-};
+export default function QrCodeScreen(props: any) {
+  const user = useAuthStore((state) => state.user);
+  const roles = user?.roles || [];
+  const isParent = isParentRole(roles);
+  const isStudent = isStudentRole(roles);
+  const isTeacher = isTeacherRole(roles);
+  const isStaff = isStaffRole(roles);
+  const isEducator = isTeacher || (!isParent && !isStudent && isStaff);
 
-export default function QrCodeScreen({ navigation }: any) {
-  const insets = getSafeInsets(typeof useSafeAreaInsets === 'function' ? useSafeAreaInsets : undefined);
+  if (isEducator) {
+    return <TeacherQrAttendanceHub {...props} user={user} />;
+  }
+
+  return <StudentQrCodeScreenContent {...props} />;
+}
+
+function StudentQrCodeScreenContent({ route, navigation }: any) {
+  // Hook harus dipanggil langsung (Rules of Hooks).
+  const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 14);
 
   const user = useAuthStore((state) => state.user);
@@ -48,25 +58,42 @@ export default function QrCodeScreen({ navigation }: any) {
   const roles = user?.roles || [];
   const isParent = isParentRole(roles);
   const isStudent = isStudentRole(roles);
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
 
   // Parent & Student Data State
   const [children, setChildren] = useState<any[]>([]);
-  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(undefined);
+  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(() => {
+    const fromRoute = route?.params?.child_id || route?.params?.student_id;
+    if (fromRoute) return String(fromRoute);
+    const fromStore = useActiveChildStore.getState().activeChildId;
+    return fromStore ? String(fromStore) : undefined;
+  });
   const [studentInfo, setStudentInfo] = useState<any>(null);
   const [qrToken, setQrToken] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshingQr, setRefreshingQr] = useState<boolean>(false);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    visible: boolean;
+    type?: FeedbackType;
+    title: string;
+    message?: string;
+  } | null>(null);
 
   // 1. Initial Load: Fetch children if parent or portal profile if student with offline cache
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
+      const targetChildId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
       const childCacheKey = offlineCache.buildKey('qr_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<any[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
           setChildren(cached);
-          setSelectedChildId((prev) => prev || String(cached[0].id));
+          if (targetChildId) {
+            setSelectedChildId(String(targetChildId));
+          } else {
+            setSelectedChildId((prev) => prev || String(cached[0].id || cached[0].student_id));
+          }
           setLoading(false);
         }
       })();
@@ -77,7 +104,11 @@ export default function QrCodeScreen({ navigation }: any) {
           const list = unwrapApiData<any[]>(res) || [];
           if (isMounted && list.length > 0) {
             setChildren(list);
-            setSelectedChildId((prev) => prev || String(list[0].id));
+            if (targetChildId) {
+              setSelectedChildId(String(targetChildId));
+            } else {
+              setSelectedChildId((prev) => prev || String(list[0].id || list[0].student_id));
+            }
             void offlineCache.set(childCacheKey, list);
           }
         })
@@ -117,6 +148,14 @@ export default function QrCodeScreen({ navigation }: any) {
     };
   }, [isParent, isStudent, user?.id]);
 
+  // Handle selectedChildId sync with route and globalActiveChildId
+  useEffect(() => {
+    const incomingId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
+    if (incomingId && String(incomingId) !== String(selectedChildId)) {
+      setSelectedChildId(String(incomingId));
+    }
+  }, [route?.params?.child_id, route?.params?.student_id, globalActiveChildId]);
+
   // 2. Fetch authoritative attendance QR token when selected child changes with offline cache
   useEffect(() => {
     let isMounted = true;
@@ -154,7 +193,7 @@ export default function QrCodeScreen({ navigation }: any) {
   const activeChild = useMemo(() => {
     if (isParent) {
       if (selectedChildId) {
-        const found = children.find((c) => String(c.id) === String(selectedChildId));
+        const found = children.find((c) => String(c.id || c.student_id) === String(selectedChildId));
         if (found) return found;
       }
       return children[0] || null;
@@ -232,12 +271,27 @@ export default function QrCodeScreen({ navigation }: any) {
       const qrData = unwrapApiData<any>(qrRes) || qrRes?.data || qrRes;
       if (qrData?.qr_token) {
         setQrToken(qrData.qr_token);
-        Alert.alert('Sukses', 'Kode QR presensi berhasil diperbarui dari server.');
+        setFeedbackModal({
+          visible: true,
+          type: 'success',
+          title: 'QR Diperbarui',
+          message: 'Kode QR presensi berhasil diperbarui dari server sekolah.',
+        });
       } else {
-        Alert.alert('Info', 'Kode QR telah siap digunakan.');
+        setFeedbackModal({
+          visible: true,
+          type: 'info',
+          title: 'Kode QR Siap',
+          message: 'Kode QR presensi aktif dan siap digunakan untuk pemindaian.',
+        });
       }
     } catch {
-      Alert.alert('Info', 'Kode QR siap digunakan.');
+      setFeedbackModal({
+        visible: true,
+        type: 'info',
+        title: 'Kode QR Siap Digunakan',
+        message: 'Kode QR presensi aktif dari penyimpanan perangkat dan siap digunakan.',
+      });
     } finally {
       setRefreshingQr(false);
     }
@@ -329,7 +383,8 @@ export default function QrCodeScreen({ navigation }: any) {
                 contentContainerStyle={styles.childChipsScroll}
               >
                 {children.map((child) => {
-                  const isSelected = String(child.id) === String(selectedChildId);
+                  const childId = String(child.id || child.student_id);
+                  const isSelected = childId === String(selectedChildId);
                   const name = child.full_name || child.nama_lengkap || child.name || 'Siswa';
                   const remoteAvatar = getProfileImageUrl(child);
                   const gender = String(child?.gender || child?.jenis_kelamin || '').toLowerCase();
@@ -339,9 +394,12 @@ export default function QrCodeScreen({ navigation }: any) {
 
                   return (
                     <TouchableOpacity
-                      key={String(child.id)}
+                      key={childId}
                       activeOpacity={0.8}
-                      onPress={() => setSelectedChildId(String(child.id))}
+                      onPress={() => {
+                        setSelectedChildId(childId);
+                        useActiveChildStore.getState().setActiveChildId(childId);
+                      }}
                       style={[
                         styles.childChip,
                         isSelected && styles.childChipActive,
@@ -479,6 +537,17 @@ export default function QrCodeScreen({ navigation }: any) {
           </View>
         </ScrollView>
       </View>
+
+      {/* Universal Feedback Modal */}
+      {feedbackModal && (
+        <AppFeedbackModal
+          visible={feedbackModal.visible}
+          type={feedbackModal.type || 'info'}
+          title={feedbackModal.title}
+          message={feedbackModal.message}
+          onClose={() => setFeedbackModal(null)}
+        />
+      )}
     </View>
   );
 }

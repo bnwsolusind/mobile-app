@@ -16,6 +16,7 @@ import {
   hasAnyRole,
   isSuperAdminRole,
   isFoundationRole,
+  isDivisiRole,
   isPrincipalRole,
   isTeacherRole,
   isParentRole,
@@ -34,10 +35,16 @@ export type ScreenKey =
   | 'teacher'
   | 'parent'
   | 'student'
-  | 'attendance';
+  | 'attendance'
+  | 'rekapPresensiGuru'
+  | 'laporanBulanan'
+  | 'prestasiSiswa'
+  | 'monitoringSiswa'
+  | 'alumniTracer'
+  | 'mutasiSiswa';
 
 export type ActionType = 'read' | 'create' | 'update' | 'delete' | 'verify' | 'export';
-export type ResourceType = 'employees' | 'students' | 'units' | 'classes' | 'attendance' | 'tahfizh';
+export type ResourceType = 'employees' | 'students' | 'units' | 'classes' | 'attendance' | 'tahfizh' | 'positions';
 
 export interface AccessResult {
   allowed: boolean;
@@ -147,7 +154,7 @@ export const canAccessScreen = (
       if (isSuperAdmin) return { allowed: true };
 
       const isParent = isParentRole(roles);
-      const hasParentPermission = can(user, 'portal.view', 'parent.portal.view');
+      const hasParentPermission = can(user, 'parent.portal.view');
 
       if (isParent || hasParentPermission) {
         return { allowed: true };
@@ -162,7 +169,7 @@ export const canAccessScreen = (
       if (isSuperAdmin) return { allowed: true };
 
       const isStudent = isStudentRole(roles);
-      const hasStudentPermission = can(user, 'portal.view', 'student.portal.view');
+      const hasStudentPermission = can(user, 'student.portal.view');
 
       if (isStudent || hasStudentPermission) {
         return { allowed: true };
@@ -201,6 +208,68 @@ export const canAccessScreen = (
       };
     }
 
+    case 'rekapPresensiGuru': {
+      if (isSuperAdmin) return { allowed: true };
+
+      const isAllowedRole =
+        isPrincipalRole(roles) ||
+        isTuRole(roles) ||
+        isDivisiRole(roles) ||
+        isFoundationRole(roles) ||
+        hasAnyRole(roles, ROLES.ADMIN);
+
+      const hasAttendancePermission = can(
+        user,
+        'attendance.view',
+        'attendance.manage',
+        'employee_attendance.view',
+        'kehadiran.pegawai.monitoring'
+      );
+
+      if (isAllowedRole || hasAttendancePermission) {
+        return { allowed: true };
+      }
+      return {
+        allowed: false,
+        reason: 'Rekap presensi guru hanya dapat diakses oleh Kepala Sekolah, Divisi Pendidikan, Tata Usaha, dan Administrator.',
+      };
+    }
+
+    case 'laporanBulanan': {
+      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || can(user, 'divisi.laporan_bulanan', 'dashboard.kepala-sekolah.view')) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: 'Laporan bulanan hanya dapat diakses oleh Kepala Sekolah dan Pimpinan Yayasan.' };
+    }
+
+    case 'prestasiSiswa': {
+      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTeacherRole(roles) || can(user, 'dashboard.pemantauan.lihat', 'kesiswaan.prestasi_rekapitulasi', 'report.prestasi.view')) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: 'Rekapitulasi prestasi siswa hanya dapat diakses oleh pengawas, pimpinan, dan guru.' };
+    }
+
+    case 'monitoringSiswa': {
+      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'divisi.monitoring', 'kehadiran.siswa.monitoring')) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: 'Monitoring siswa hanya dapat diakses oleh Kepala Sekolah dan Staf Berwenang.' };
+    }
+
+    case 'alumniTracer': {
+      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'alumni.view', 'kesiswaan.alumni_tujuan_lanjut', 'kesiswaan.kelulusan_per_tahun')) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: 'Data kelulusan dan tracer study alumni hanya dapat diakses oleh pimpinan dan TU.' };
+    }
+
+    case 'mutasiSiswa': {
+      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'kesiswaan.laporan_mutasi', 'student.mutation.view')) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: 'Data mutasi siswa masuk dan keluar hanya dapat diakses oleh pimpinan dan staf terkait.' };
+    }
+
     default:
       return { allowed: false, reason: 'Layanan tidak dikenal atau tidak tersedia.' };
   }
@@ -217,9 +286,11 @@ export const canPerformAction = (
   if (!user) return false;
   const roles = user.roles || [];
   if (isSuperAdminRole(roles)) return true;
+  const isPrincipal = isPrincipalRole(roles);
 
   switch (resource) {
     case 'employees':
+      if (isPrincipal && ['read', 'create', 'update', 'delete'].includes(action)) return true;
       if (action === 'read') return can(user, 'employee.view', 'employee.view_all', 'sistem.master_data');
       if (action === 'create') return can(user, 'employee.create', 'sistem.master_data');
       if (action === 'update') return can(user, 'employee.update', 'employee.edit', 'sistem.master_data');
@@ -227,6 +298,7 @@ export const canPerformAction = (
       return false;
 
     case 'students':
+      if (isPrincipal && ['read', 'create', 'update', 'delete'].includes(action)) return true;
       if (action === 'read') return can(user, 'student.view', 'student.view_all', 'sistem.master_data', 'kesiswaan.data_lengkap_siswa');
       if (action === 'create') return can(user, 'student.create', 'sistem.master_data');
       if (action === 'update') return can(user, 'student.update', 'student.edit', 'sistem.master_data');
@@ -241,10 +313,19 @@ export const canPerformAction = (
       return false;
 
     case 'classes':
+      if (isPrincipal && ['read', 'create', 'update', 'delete'].includes(action)) return true;
       if (action === 'read') return can(user, 'master.view', 'academic.schedule.view', 'sistem.master_data');
       if (action === 'create') return can(user, 'master.create', 'academic.schedule.create', 'sistem.master_data');
       if (action === 'update') return can(user, 'master.update', 'academic.schedule.update', 'sistem.master_data');
       if (action === 'delete') return can(user, 'master.delete', 'academic.schedule.delete', 'sistem.master_data');
+      return false;
+
+    case 'positions':
+      if (isPrincipal && action === 'read') return true;
+      if (action === 'read') return can(user, 'master.view', 'employee.position.manage', 'sistem.master_data');
+      if (action === 'create') return can(user, 'master.create', 'employee.position.manage', 'sistem.master_data');
+      if (action === 'update') return can(user, 'master.update', 'employee.position.manage', 'sistem.master_data');
+      if (action === 'delete') return can(user, 'master.delete', 'employee.position.manage', 'sistem.master_data');
       return false;
 
     case 'attendance':
@@ -325,4 +406,25 @@ export const canAccessSchoolInfo = (
   config?: MobileAppConfig | null
 ): boolean => {
   return config?.features?.school_info !== false;
+};
+
+/**
+ * Billing Access Guard
+ * TU dapat mengakses ringkasan tagihan siswa (read-only monitoring).
+ * Orang tua juga bisa akses tagihan anak mereka sendiri.
+ */
+export const canAccessBilling = (
+  user: AuthUser | null,
+  config?: MobileAppConfig | null
+): boolean => {
+  if (!user) return false;
+  if (config?.features?.billing === false) return false;
+  const roles = user.roles || [];
+  if (isSuperAdminRole(roles)) return true;
+  // TU dan Operator bisa lihat rekap tagihan (monitoring)
+  if (isTuRole(roles) || isOperatorRole(roles)) return true;
+  // Orang tua bisa lihat tagihan anak
+  if (isParentRole(roles)) return true;
+  // Permission-based fallback
+  return can(user, 'billing.view', 'keuangan.tagihan.view', 'payment.view');
 };

@@ -80,7 +80,7 @@ export default function NetworkStatusBar() {
   const isRed = !isOnline;
 
   return (
-    <View style={styles.floatingWrapper} pointerEvents="box-none">
+    <View style={[styles.floatingWrapper, { pointerEvents: 'box-none' }]}>
       <Animated.View
         style={[
           styles.compactPill,

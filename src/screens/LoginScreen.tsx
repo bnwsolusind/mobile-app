@@ -24,14 +24,20 @@ import { mobileApiService } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { biometricService, BiometricSessionData } from '../services/biometricService';
+import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import ServerSwitchModal from '../components/ServerSwitchModal';
+import { useServerConfigStore, SERVER_PRESETS } from '../stores/serverConfigStore';
 
 let CameraViewComponent: any = null;
+let useCameraPermissionsHook: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const cam = require('expo-camera');
   CameraViewComponent = cam.CameraView || null;
+  useCameraPermissionsHook = cam.useCameraPermissions || null;
 } catch {
   CameraViewComponent = null;
+  useCameraPermissionsHook = null;
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -55,9 +61,54 @@ export default function LoginScreen() {
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const currentEnv = useServerConfigStore((state) => state.currentEnv);
+  const activeUrl = useServerConfigStore((state) => state.activeUrl);
+  const [serverModalVisible, setServerModalVisible] = useState(false);
+  const [logoTapCount, setLogoTapCount] = useState(0);
+  const lastLogoTapRef = React.useRef(0);
+
+  const handleLogoTap = () => {
+    const now = Date.now();
+    if (now - lastLogoTapRef.current > 3000) {
+      setLogoTapCount(1);
+    } else {
+      const nextCount = logoTapCount + 1;
+      setLogoTapCount(nextCount);
+      if (nextCount >= 5) {
+        setLogoTapCount(0);
+        setServerModalVisible(true);
+      }
+    }
+    lastLogoTapRef.current = now;
+  };
+
+  const currentPreset = SERVER_PRESETS.find((p) => p.id === currentEnv);
+  const currentEnvLabel = currentPreset ? currentPreset.badge : 'LOCAL';
+
   const [storedBiometric, setStoredBiometric] = useState<BiometricSessionData | null>(null);
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [manualCode, setManualCode] = useState('');
+
+  // Camera permissions hook & auto-request
+  const [camPermission, requestCamPermission] = useCameraPermissionsHook
+    ? useCameraPermissionsHook()
+    : [null, async () => ({ granted: true })];
+
+  useEffect(() => {
+    if (qrModalVisible && useCameraPermissionsHook && (!camPermission || !camPermission.granted)) {
+      requestCamPermission();
+    }
+  }, [qrModalVisible, camPermission, requestCamPermission]);
+
+  const [feedbackModal, setFeedbackModal] = useState<{
+    visible: boolean;
+    type?: FeedbackType;
+    title: string;
+    message?: string;
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+  } | null>(null);
 
   useEffect(() => {
     async function checkBiometrics() {
@@ -74,11 +125,12 @@ export default function LoginScreen() {
 
   const handleBiometricLogin = async () => {
     if (!storedBiometric) {
-      Alert.alert(
-        'Login Biometrik',
-        'Silakan masukkan Email / Username dan Password Anda sekali ini terlebih dahulu untuk mengaktifkan akses sidik jari / Face ID pada perangkat ini.',
-        [{ text: 'Mengerti' }]
-      );
+      setFeedbackModal({
+        visible: true,
+        type: 'info',
+        title: 'Login Biometrik',
+        message: 'Silakan masukkan Email / Username dan Password Anda sekali ini terlebih dahulu untuk mengaktifkan akses sidik jari / Face ID pada perangkat ini.',
+      });
       return;
     }
 
@@ -146,10 +198,12 @@ export default function LoginScreen() {
       }
 
       setIdentifier(trimmed);
-      Alert.alert(
-        'Kode Berhasil Dipindai',
-        `Kode ID kartu ${trimmed} telah dimasukkan. Silakan masukkan kata sandi untuk masuk.`
-      );
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Kode Berhasil Dipindai',
+        message: `Kode ID kartu ${trimmed} telah dimasukkan. Silakan masukkan kata sandi untuk masuk.`,
+      });
     } catch {
       setIdentifier(scannedData.trim());
     }
@@ -209,37 +263,38 @@ export default function LoginScreen() {
   };
 
   const handleForgotPassword = () => {
-    Alert.alert(
-      'Lupa Kata Sandi',
-      'Silakan hubungi administrator sekolah atau wali kelas untuk melakukan reset kata sandi akun Anda.',
-      [{ text: 'Mengerti', style: 'default' }]
-    );
+    setFeedbackModal({
+      visible: true,
+      type: 'info',
+      title: 'Lupa Kata Sandi',
+      message: 'Silakan hubungi administrator sekolah atau wali kelas untuk melakukan reset kata sandi akun Anda.',
+    });
   };
 
   const handleContactAdmin = () => {
     const adminPhone = (branding as any).admin_whatsapp || (branding as any).contact_phone || (branding as any).phone || '';
     if (!adminPhone) {
-      Alert.alert(
-        'Bantuan Pendaftaran',
-        'Pendaftaran akun dilakukan oleh pihak Tata Usaha / Admin Sekolah. Silakan hubungi tata usaha sekolah Anda.',
-        [{ text: 'Mengerti', style: 'default' }]
-      );
+      setFeedbackModal({
+        visible: true,
+        type: 'info',
+        title: 'Bantuan Pendaftaran',
+        message: 'Pendaftaran akun dilakukan oleh pihak Tata Usaha / Admin Sekolah. Silakan hubungi tata usaha sekolah Anda.',
+      });
       return;
     }
-    Alert.alert(
-      'Bantuan Pendaftaran',
-      'Pendaftaran akun dilakukan oleh pihak Tata Usaha / Admin Sekolah. Hubungi admin sekarang?',
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hubungi WhatsApp',
-          onPress: () => {
-            const clean = adminPhone.replace(/[^0-9]/g, '');
-            void Linking.openURL(`https://wa.me/${clean}?text=Assalamu'alaikum%20Admin,%20saya%20butuh%20bantuan%20akun%20SIMSIT`);
-          },
-        },
-      ]
-    );
+    setFeedbackModal({
+      visible: true,
+      type: 'confirm',
+      title: 'Bantuan Pendaftaran',
+      message: 'Pendaftaran akun dilakukan oleh pihak Tata Usaha / Admin Sekolah. Hubungi admin via WhatsApp sekarang?',
+      confirmText: 'Hubungi WhatsApp',
+      cancelText: 'Batal',
+      onConfirm: () => {
+        setFeedbackModal(null);
+        const clean = adminPhone.replace(/[^0-9]/g, '');
+        void Linking.openURL(`https://wa.me/${clean}?text=Assalamu'alaikum%20Admin,%20saya%20butuh%20bantuan%20akun%20SIMSIT`);
+      },
+    });
   };
 
   const loginLogoUrl = branding.logo_login_url || branding.logo_url;
@@ -272,7 +327,11 @@ export default function LoginScreen() {
         {/* Header Branding Container */}
         <View style={styles.brandingSection}>
           {/* Circular Badge with current logo */}
-          <View style={styles.logoHalo}>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={handleLogoTap}
+            style={styles.logoHalo}
+          >
             <View style={styles.logoGoldRing}>
               <View style={styles.logoInnerCircle}>
                 {loginLogoUrl ? (
@@ -291,7 +350,7 @@ export default function LoginScreen() {
                 )}
               </View>
             </View>
-          </View>
+          </TouchableOpacity>
 
           {/* School Name Typography */}
           <Text style={styles.brandTitle}>{appName}</Text>
@@ -448,6 +507,20 @@ export default function LoginScreen() {
               <Text style={styles.footerLink}>Hubungi Admin</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Server Config Switcher Trigger */}
+          <TouchableOpacity
+            style={styles.serverStatusButton}
+            onPress={() => setServerModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.serverStatusDot} />
+            <MaterialCommunityIcons name="server-network" size={13} color="#059669" />
+            <Text numberOfLines={1} style={styles.serverStatusText}>
+              Server: {currentEnvLabel} ({activeUrl.replace(/^https?:\/\//, '').replace(/\/api$/, '')})
+            </Text>
+            <MaterialCommunityIcons name="cog-outline" size={13} color="#64748B" />
+          </TouchableOpacity>
         </View>
 
         {/* Bottom Curved Wave Accent */}
@@ -481,7 +554,7 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.qrBody}>
-            {CameraViewComponent ? (
+            {CameraViewComponent && camPermission?.granted ? (
               <View style={styles.cameraFrame}>
                 <CameraViewComponent
                   style={StyleSheet.absoluteFill}
@@ -497,6 +570,29 @@ export default function LoginScreen() {
                   <View style={[styles.corner, styles.bottomLeft]} />
                   <View style={[styles.corner, styles.bottomRight]} />
                 </View>
+              </View>
+            ) : CameraViewComponent && !camPermission?.granted ? (
+              <View style={styles.qrPlaceholderBox}>
+                <MaterialCommunityIcons name="camera-lock-outline" size={70} color="#084835" />
+                <Text style={styles.qrNoticeTitle}>Izin Kamera Diperlukan</Text>
+                <Text style={styles.qrNoticeText}>
+                  Izinkan akses kamera di perangkat Anda untuk memindai QR Code kartu secara otomatis.
+                </Text>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#059669',
+                    paddingHorizontal: 18,
+                    paddingVertical: 9,
+                    borderRadius: 10,
+                    marginTop: 14,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                  }}
+                  onPress={() => requestCamPermission()}
+                >
+                  <MaterialCommunityIcons name="camera" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>Aktifkan Kamera</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.qrPlaceholderBox}>
@@ -535,6 +631,37 @@ export default function LoginScreen() {
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* Universal Feedback Modal */}
+      {feedbackModal && (
+        <AppFeedbackModal
+          visible={feedbackModal.visible}
+          type={feedbackModal.type || 'info'}
+          title={feedbackModal.title}
+          message={feedbackModal.message}
+          confirmText={feedbackModal.confirmText}
+          cancelText={feedbackModal.cancelText}
+          onConfirm={feedbackModal.onConfirm}
+          onClose={() => setFeedbackModal(null)}
+        />
+      )}
+
+      {/* Dynamic Server Switcher Modal */}
+      <ServerSwitchModal
+        visible={serverModalVisible}
+        onClose={() => setServerModalVisible(false)}
+        onSuccess={(newUrl) => {
+          setError('');
+          setFeedbackModal({
+            visible: true,
+            type: 'success',
+            title: 'Server Diperbarui',
+            message: `Koneksi API berhasil dialihkan ke:\n${newUrl}`,
+            confirmText: 'OK',
+            onConfirm: () => setFeedbackModal(null),
+          });
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -961,5 +1088,31 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  serverStatusButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginTop: 14,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignSelf: 'center',
+  },
+  serverStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  serverStatusText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '600',
+    maxWidth: SCREEN_WIDTH * 0.65,
   },
 });

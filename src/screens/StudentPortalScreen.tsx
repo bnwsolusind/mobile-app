@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -14,6 +13,8 @@ import { getApiErrorMessage } from '../services/api';
 import { mobileApiService } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { offlineCache } from '../utils/offlineCache';
+import AppFeedbackModal, { FeedbackType } from '../components/AppFeedbackModal';
+import EmptyStateCard from '../components/EmptyStateCard';
 
 type RecordItem = {
   id: string;
@@ -37,6 +38,12 @@ export default function StudentPortalScreen() {
   const [error, setError] = useState('');
   const [answer, setAnswer] = useState('');
   const [assignmentId, setAssignmentId] = useState<string>();
+  const [feedbackModal, setFeedbackModal] = useState<{
+    visible: boolean;
+    type?: FeedbackType;
+    title: string;
+    message?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -81,10 +88,20 @@ export default function StudentPortalScreen() {
       await mobileApiService.submitPortalAssignment(assignmentId, answer.trim());
       setAnswer('');
       setAssignmentId(undefined);
-      Alert.alert('Berhasil', 'Tugas telah berhasil dikumpulkan.');
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Tugas Terkirim! 🌟',
+        message: 'Jawaban tugas Anda telah berhasil dikirimkan ke dewan guru.',
+      });
       await load();
     } catch (err: any) {
-      Alert.alert('Gagal', getApiErrorMessage(err, 'Tugas belum berhasil dikumpulkan.'));
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Mengirim Tugas',
+        message: getApiErrorMessage(err, 'Tugas belum berhasil dikumpulkan. Silakan coba kembali.'),
+      });
     }
   };
 
@@ -161,9 +178,11 @@ export default function StudentPortalScreen() {
             </View>
           ))}
           {!records.length && (
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>Belum ada data yang tersedia.</Text>
-            </View>
+            <EmptyStateCard
+              icon={tab === 'schedules' ? 'calendar-clock' : tab === 'materials' ? 'book-open-outline' : 'clipboard-text-outline'}
+              title={tab === 'schedules' ? 'Belum Ada Jadwal' : tab === 'materials' ? 'Belum Ada Materi' : 'Belum Ada Tugas'}
+              description={`Tidak ada data ${tab === 'schedules' ? 'jadwal pelajaran' : tab === 'materials' ? 'materi pembelajaran' : 'tugas'} untuk kelas Anda.`}
+            />
           )}
 
           {assignmentId && (
@@ -185,6 +204,16 @@ export default function StudentPortalScreen() {
             </View>
           )}
         </View>
+      )}
+
+      {feedbackModal && (
+        <AppFeedbackModal
+          visible={feedbackModal.visible}
+          type={feedbackModal.type}
+          title={feedbackModal.title}
+          message={feedbackModal.message}
+          onClose={() => setFeedbackModal(null)}
+        />
       )}
     </ScrollView>
   );
@@ -208,11 +237,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#fff',
   },
-  tab: { flex: 1, padding: 10, alignItems: 'center', borderRadius: 10 },
-  tabActive: { backgroundColor: '#0E5C44' },
+  tab: { flex: 1, padding: 10, alignItems: 'center', borderRadius: 12 },
+  tabActive: { backgroundColor: '#059669' },
   tabText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
   tabTextActive: { color: '#fff' },
-  content: { paddingHorizontal: 16, paddingBottom: 30, gap: 12 },
+  content: { paddingHorizontal: 16, paddingBottom: 94, gap: 12 },
   card: {
     padding: 16,
     borderRadius: 16,
@@ -241,12 +270,13 @@ const styles = StyleSheet.create({
   outlineButton: {
     marginTop: 10,
     borderWidth: 1,
-    borderColor: '#0E5C44',
-    borderRadius: 10,
-    padding: 9,
+    borderColor: '#059669',
+    borderRadius: 14,
+    padding: 10,
     alignItems: 'center',
+    backgroundColor: '#F0FDF4',
   },
-  outlineText: { fontSize: 12, fontWeight: '800', color: '#0E5C44' },
+  outlineText: { fontSize: 12, fontWeight: '800', color: '#059669' },
   input: {
     minHeight: 90,
     marginTop: 10,
@@ -258,10 +288,15 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 10,
-    backgroundColor: '#0E5C44',
-    borderRadius: 12,
+    backgroundColor: '#059669',
+    borderRadius: 14,
     padding: 13,
     alignItems: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   buttonText: { color: '#fff', fontWeight: '800' },
   cancel: { textAlign: 'center', marginTop: 12, fontSize: 12, color: '#64748B' },

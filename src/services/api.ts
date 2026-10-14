@@ -77,7 +77,32 @@ export const normalizeApiUrl = (
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 export const hasConfiguredApiUrl = Boolean(configuredApiUrl);
 
+/**
+ * Resolusi base URL yang TIDAK PERNAH throw saat import-time.
+ * Alasan: api.ts diimpor di rantai startup (App -> BottomTabs -> mobileApiService -> api).
+ * Throw di sini = crash sebelum App.mount = native splash stuck selamanya tanpa pesan error.
+ * Kegagalan konfigurasi dilaporkan via console.warn; request yang gagal tetap ditangani
+ * oleh interceptor + fallback offline di tiap screen.
+ */
+export const resolveBaseUrlSafe = (): string => {
+  try {
+    return getBaseUrl();
+  } catch (err) {
+    if (__DEV__) {
+      console.log(`[API] Konfigurasi URL bermasalah, pakai fallback: ${(err as Error)?.message}`);
+    }
+    return 'http://127.0.0.1:8000/api';
+  }
+};
+
 export const getBaseUrl = (): string => {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window?.location?.hostname) {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://127.0.0.1:8000/api';
+    }
+  }
+
   if (configuredApiUrl) {
     return normalizeApiUrl(configuredApiUrl);
   }
@@ -95,12 +120,12 @@ export const getBaseUrl = (): string => {
   throw new Error('EXPO_PUBLIC_API_URL environment variable is required in production');
 };
 
-export const API_BASE_URL = getBaseUrl();
+export const API_BASE_URL = resolveBaseUrlSafe();
 
 // Deterministic candidate URL policy:
 // If EXPO_PUBLIC_API_URL is explicitly configured, it is the sole source of truth.
 // Runtime failover to other hosts is strictly prohibited when an explicit URL is provided.
-const getMetroHostIp = (): string | null => {
+export const getMetroHostIp = (): string | null => {
   try {
     const { NativeModules } = require('react-native');
     const scriptURL = NativeModules?.SourceCode?.scriptURL;
@@ -117,30 +142,24 @@ const getMetroHostIp = (): string | null => {
 };
 
 const getCandidateUrls = (): string[] => {
-  if (hasConfiguredApiUrl) {
-    return [API_BASE_URL];
-  }
-
   const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
   if (!isDev) {
     return [API_BASE_URL];
   }
 
-  // Development-only fallback candidates when EXPO_PUBLIC_API_URL is absent
+  // Development-only fallback candidates
   const metroHostIp = getMetroHostIp();
   const metroApiUrl = metroHostIp ? `http://${metroHostIp}:8000/api` : null;
 
-  const rawCandidates: (string | null)[] = Platform.OS === 'android'
-    ? [
-        API_BASE_URL,
-        metroApiUrl,
-        'http://127.0.0.1:8000/api',
-      ]
-    : [
-        API_BASE_URL,
-        metroApiUrl,
-        'http://10.0.2.2:8000/api',
-      ];
+  const rawCandidates: (string | null)[] = [
+    API_BASE_URL,
+    Platform.OS === 'web' || Platform.OS === 'ios'
+      ? 'http://127.0.0.1:8000/api'
+      : 'http://10.0.2.2:8000/api',
+    'http://127.0.0.1:8000/api',
+    'http://localhost:8000/api',
+    metroApiUrl,
+  ];
 
   return rawCandidates
     .filter((url): url is string => Boolean(url))
@@ -150,6 +169,43 @@ const getCandidateUrls = (): string[] => {
 export const candidateUrls: string[] = getCandidateUrls();
 
 let activeBaseUrl = API_BASE_URL;
+
+export const getActiveBaseUrl = (): string => activeBaseUrl;
+
+export const setActiveBaseUrl = (url: string): void => {
+  const normalized = normalizeApiUrl(url);
+  activeBaseUrl = normalized;
+  api.defaults.baseURL = normalized;
+  if (!candidateUrls.includes(normalized)) {
+    candidateUrls.unshift(normalized);
+  }
+  if (__DEV__) {
+    console.log(`[API] activeBaseUrl dynamically switched to: ${normalized}`);
+  }
+};
+
+export const pingApiUrl = async (
+  url: string,
+  timeoutMs: number = 4000
+): Promise<{ ok: boolean; status?: number; error?: string }> => {
+  try {
+    const normalized = normalizeApiUrl(url);
+    const testClient = axios.create({ timeout: timeoutMs });
+    const response = await testClient.get(`${normalized}/mobile/config`);
+    return { ok: response.status >= 200 && response.status < 400, status: response.status };
+  } catch (err: any) {
+    const errorMsg =
+      err.code === 'ECONNABORTED'
+        ? 'Waktu koneksi habis (Timeout)'
+        : err.response?.status
+        ? `Server merespons kode HTTP ${err.response.status}`
+        : 'Gagal terhubung ke host (ERR_NETWORK / Host tidak dapat dijangkau)';
+    return {
+      ok: false,
+      error: errorMsg,
+    };
+  }
+};
 
 if (__DEV__) {
   console.log(`[API] Primary base URL: ${API_BASE_URL}`);
@@ -187,19 +243,31 @@ api.interceptors.request.use((config) => {
 // Interceptor response handler enforcing session, deterministic active URL, & logging contracts
 api.interceptors.response.use(
   (response) => {
+    const respBase = (response.config as any)?.baseURL;
+    if (respBase && respBase !== activeBaseUrl && candidateUrls.includes(respBase)) {
+      activeBaseUrl = respBase;
+      api.defaults.baseURL = activeBaseUrl;
+      if (__DEV__) {
+        console.log(`[API_FALLBACK] Switched activeBaseUrl to: ${activeBaseUrl}`);
+      }
+    }
+
     const startTime = (response.config as any)?.metadata?.startTime || Date.now();
     const duration = Date.now() - startTime;
     const isLogin = response.config.url?.includes('/auth/login');
-    const isAuthMe = response.config.url?.includes('/auth/me') || response.config.url?.includes('/auth/profile');
 
-    if (__DEV__ && (isLogin || isAuthMe)) {
+    // Hanya trace login sukses. Trace /auth/profile & /auth/me sukses dimatikan:
+    // endpoint itu dipanggil berkali-kali (polling BottomTabs/HomeScreen/ProfilScreen)
+    // dan menumpuk puluhan ribu baris log yang memperlambat Metro + device.
+    // Kegagalan auth tetap di-trace di error handler di bawah.
+    if (__DEV__ && isLogin) {
       const state = useAuthStore.getState();
       const rawUrl = response.config.url || '';
       const normUrl = rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`;
       console.log(`[LOGIN_TRACE] endpoint: ${response.config.method?.toUpperCase()} ${normUrl}`);
       console.log(`[LOGIN_TRACE] status: ${response.status}`);
       console.log(`[LOGIN_TRACE] duration: ${duration}ms`);
-      console.log(`[LOGIN_TRACE] stage: ${isLogin ? 'POST_LOGIN_SUCCESS' : 'AUTH_ME_SUCCESS'}`);
+      console.log(`[LOGIN_TRACE] stage: POST_LOGIN_SUCCESS`);
       console.log(`[LOGIN_TRACE] token_present: ${Boolean(state.token || response.data?.token)}`);
       console.log(`[LOGIN_TRACE] user_present: ${Boolean(state.user || response.data?.user)}`);
       console.log(`[LOGIN_TRACE] role_count: ${state.roles?.length ?? 0}`);
@@ -222,19 +290,10 @@ api.interceptors.response.use(
     const isLogin = originalConfig?.url?.includes('/auth/login');
     const isAuthMe = originalConfig?.url?.includes('/auth/me') || originalConfig?.url?.includes('/auth/profile');
 
-    // Multi-candidate fallback only for unconfigured development environments.
-    // Never failover if an explicit EXPO_PUBLIC_API_URL is configured.
-    // Never failover for authenticated requests.
-    const isAuthRequest = Boolean(
-      originalConfig?.headers?.Authorization ||
-      useAuthStore.getState().token
-    );
-
     const canAttemptFallback = (
       __DEV__ &&
-      !hasConfiguredApiUrl &&
-      !isAuthRequest &&
       !error.response &&
+      (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) &&
       originalConfig &&
       candidateUrls.length > 1
     );
@@ -245,7 +304,7 @@ api.interceptors.response.use(
 
       if (nextCandidateIndex < candidateUrls.length) {
         const nextUrl = candidateUrls[nextCandidateIndex];
-        console.warn(
+        console.log(
           `[API_FALLBACK] Connection to ${activeBaseUrl} failed (${error.code || 'NETWORK_ERROR'}). Attempting candidate [${nextCandidateIndex + 1}/${candidateUrls.length}]: ${nextUrl}...`
         );
         const retryConfig = {
@@ -310,7 +369,7 @@ export const getApiErrorMessage = (error: unknown, fallback: string): string => 
         if (typeof firstError === 'string') return firstError;
       }
 
-      return payload?.message || 'Identitas atau kata sandi tidak sesuai.';
+      return payload?.message || 'Data yang dikirimkan tidak valid atau belum lengkap.';
     }
 
     if (status === 403) {

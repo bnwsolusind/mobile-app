@@ -93,11 +93,22 @@ export default function InAppNotificationBanner({ onPressNotification }: InAppNo
               resizeMode="cover"
             />
           ) : (
-            <View style={styles.defaultAvatar}>
-              <MaterialCommunityIcons name="chat-processing" size={20} color="#FFFFFF" />
+            <View style={[
+              styles.defaultAvatar,
+              currentNotif.type === 'schedule_10m' && { backgroundColor: '#059669' },
+              currentNotif.type === 'schedule_5m' && { backgroundColor: '#D97706' },
+            ]}>
+              <MaterialCommunityIcons
+                name={(currentNotif.type === 'schedule_10m' ? 'clock-alert-outline' : currentNotif.type === 'schedule_5m' ? 'timer-sand' : 'chat-processing') as any}
+                size={22}
+                color="#FFFFFF"
+              />
             </View>
           )}
-          <View style={styles.dotIndicator} />
+          <View style={[
+            styles.dotIndicator,
+            currentNotif.type === 'schedule_5m' && { backgroundColor: '#F59E0B' },
+          ]} />
         </View>
 
         {/* Center: Text Content */}
@@ -106,7 +117,15 @@ export default function InAppNotificationBanner({ onPressNotification }: InAppNo
             <Text numberOfLines={1} style={styles.senderTitle}>
               {currentNotif.title}
             </Text>
-            <Text style={styles.timeTag}>Baru saja</Text>
+            <Text style={[
+              styles.timeTag,
+              (currentNotif.type === 'schedule_10m' || currentNotif.type === 'schedule_5m') && {
+                color: currentNotif.type === 'schedule_5m' ? '#D97706' : '#059669',
+                fontWeight: '700',
+              },
+            ]}>
+              {currentNotif.type === 'schedule_10m' ? '10 mnt lagi' : currentNotif.type === 'schedule_5m' ? '5 mnt lagi' : 'Baru saja'}
+            </Text>
           </View>
           <Text numberOfLines={2} style={styles.bodyText}>
             {currentNotif.body}

@@ -28,7 +28,7 @@ export default function MinimalPageBackground({
   direction = 'diagonal',
 }: Props) {
   return (
-    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: baseColor }]}>
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: baseColor, pointerEvents: 'none' }]}>
       {enabled ? (
         <LinearGradient
           colors={[gradientStart, gradientEnd]}

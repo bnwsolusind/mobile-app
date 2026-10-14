@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from './activeChildStore';
 
 export interface UserScope {
   unit_id?: string | number | null;
@@ -206,6 +207,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearSession: () => {
     set({ token: null, user: null, roles: [], permissions: [], portal: null, scope: null });
     persistSession(null);
+    useActiveChildStore.getState().clear();
     // Hapus semua cache data screen saat logout
     void offlineCache.clearAll();
   },

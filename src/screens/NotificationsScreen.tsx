@@ -1,23 +1,37 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Surface, Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApiService, unwrapCollection } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { offlineCache } from '../utils/offlineCache';
+import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import { EmptyStateCard } from '../components/EmptyStateCard';
 
 export default function NotificationsScreen({ navigation }: any) {
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    visible: boolean;
+    type?: FeedbackType;
+    title: string;
+    message?: string;
+  } | null>(null);
   const userId = useAuthStore((state) => state.user?.id);
 
   const load = useCallback(async () => {
@@ -32,21 +46,50 @@ export default function NotificationsScreen({ navigation }: any) {
     try {
       const res = await mobileApiService.getNotifications({ per_page: 50 });
       const fresh = unwrapCollection(res);
-      setItems(Array.isArray(fresh) ? fresh : []);
+      const list = Array.isArray(fresh) ? fresh : [];
+      setItems(list);
+      const unread = list.filter((item: any) => !item.read_at && !item.is_read).length;
+      try {
+        const countRes: any = await mobileApiService.getUnreadNotificationCount();
+        const serverCount = Number(
+          countRes?.data?.unread_count ??
+          countRes?.unread_count ??
+          (typeof countRes === 'number' ? countRes : 0)
+        );
+        useNotificationBadgeStore.getState().setUnreadNotificationCount(Math.max(unread, serverCount));
+      } catch {
+        useNotificationBadgeStore.getState().setUnreadNotificationCount(unread);
+      }
       // 3. Simpan ke cache
-      if (Array.isArray(fresh) && fresh.length > 0) {
-        void offlineCache.set(cacheKey, fresh);
+      if (list.length > 0) {
+        void offlineCache.set(cacheKey, list);
       }
     } catch {
-      // Offline: tetap tampilkan cache dari step 1
+      // Fetch daftar gagal (mis. timeout tunnel): jangan biarkan dot merah basi.
+      // Validasi ulang badge langsung dari endpoint count server (best-effort;
+      // kalau ikut gagal berarti offline -> badge dibiarkan apa adanya).
+      try {
+        const countRes: any = await mobileApiService.getUnreadNotificationCount();
+        const count =
+          countRes?.unread_count ?? (typeof countRes === 'number' ? countRes : null);
+        if (typeof count === 'number') {
+          useNotificationBadgeStore.getState().setUnreadNotificationCount(count);
+        }
+      } catch {
+        // Offline: tetap tampilkan cache dari step 1
+      }
     } finally {
       setLoading(false);
     }
   }, [userId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Muat ulang setiap kali tab dibuka (bottom-tab tidak me-remount screen),
+  // sekaligus merekonsiliasi dot badge dengan isi daftar terkini.
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load])
+  );
 
   const unreadCount = items.filter((item) => !item.read_at && !item.is_read).length;
 
@@ -68,9 +111,15 @@ export default function NotificationsScreen({ navigation }: any) {
           is_read: true,
         }))
       );
+      useNotificationBadgeStore.getState().clearUnread();
     } catch (err) {
       console.log('Error marking all notifications as read:', err);
-      Alert.alert('Info', 'Gagal menandai semua notifikasi. Silakan coba lagi.');
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menandai Dibaca',
+        message: 'Gagal menandai semua notifikasi. Silakan periksa koneksi internet Anda dan coba lagi.',
+      });
     } finally {
       setMarkingAll(false);
     }
@@ -88,6 +137,8 @@ export default function NotificationsScreen({ navigation }: any) {
               : i
           )
         );
+        const cur = useNotificationBadgeStore.getState().unreadNotificationCount;
+        useNotificationBadgeStore.getState().setUnreadNotificationCount(Math.max(0, cur - 1));
       } catch (err) {
         console.log('Error marking item as read:', err);
       }
@@ -127,9 +178,14 @@ export default function NotificationsScreen({ navigation }: any) {
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingTop: topInset + 18 }]}
       refreshControl={
-        <RefreshControl refreshing={loading} onRefresh={load} colors={['#087A5A']} />
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={load}
+          colors={['#059669']}
+          progressViewOffset={topInset + 10}
+        />
       }
     >
       {/* Header with Title and "Baca Semua" Action */}
@@ -152,10 +208,10 @@ export default function NotificationsScreen({ navigation }: any) {
             activeOpacity={0.8}
           >
             {markingAll ? (
-              <ActivityIndicator size="small" color="#087A5A" />
+              <ActivityIndicator size="small" color="#059669" />
             ) : (
               <>
-                <MaterialCommunityIcons name="check-all" size={16} color="#087A5A" />
+                <MaterialCommunityIcons name="check-all" size={16} color="#059669" />
                 <Text style={styles.markAllBtnText}>Baca Semua</Text>
               </>
             )}
@@ -165,7 +221,7 @@ export default function NotificationsScreen({ navigation }: any) {
 
       {/* Notifications List */}
       {loading && !items.length ? (
-        <ActivityIndicator color="#087A5A" style={styles.loader} />
+        <ActivityIndicator color="#059669" style={styles.loader} />
       ) : items.length ? (
         items.map((item, index) => {
           const isUnread = !item.read_at && !item.is_read;
@@ -181,15 +237,14 @@ export default function NotificationsScreen({ navigation }: any) {
               activeOpacity={0.85}
               onPress={() => handleItemPress(item)}
             >
-              <Surface
+              <View
                 style={[styles.card, isUnread && styles.cardUnread]}
-                elevation={0}
               >
                 <View style={[styles.icon, isUnread && styles.iconUnread]}>
                   <MaterialCommunityIcons
                     name={getIconName(item)}
                     size={22}
-                    color={isUnread ? '#087A5A' : '#71807C'}
+                    color={isUnread ? '#059669' : '#64748B'}
                   />
                 </View>
                 <View style={styles.copy}>
@@ -227,23 +282,33 @@ export default function NotificationsScreen({ navigation }: any) {
                         <MaterialCommunityIcons
                           name="chat-outline"
                           size={11}
-                          color="#087A5A"
+                          color="#059669"
                         />
                         <Text style={styles.chatBadgeText}>Buka Chat</Text>
                       </View>
                     )}
                   </View>
                 </View>
-              </Surface>
+              </View>
             </TouchableOpacity>
           );
         })
       ) : (
-        <View style={styles.empty}>
-          <MaterialCommunityIcons name="bell-sleep-outline" size={48} color="#A7B5B1" />
-          <Text style={styles.emptyTitle}>Belum ada notifikasi</Text>
-          <Text style={styles.emptyText}>Informasi terbaru akan muncul di halaman ini.</Text>
-        </View>
+        <EmptyStateCard
+          icon="bell-sleep-outline"
+          title="Belum Ada Notifikasi"
+          description="Informasi terbaru dan pengumuman sekolah akan muncul di halaman ini."
+        />
+      )}
+
+      {feedbackModal && (
+        <AppFeedbackModal
+          visible={feedbackModal.visible}
+          type={feedbackModal.type || 'info'}
+          title={feedbackModal.title}
+          message={feedbackModal.message}
+          onClose={() => setFeedbackModal(null)}
+        />
       )}
     </ScrollView>
   );
@@ -252,81 +317,88 @@ export default function NotificationsScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#F7FAF9',
+    backgroundColor: '#F8FAFC',
   },
   content: {
-    padding: 18,
-    paddingBottom: 34,
+    padding: 16,
+    paddingBottom: 40,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 18,
+    marginBottom: 16,
   },
   heading: {
     flex: 1,
   },
   eyebrow: {
     fontSize: 10,
-    fontWeight: '900',
+    fontWeight: '800',
     letterSpacing: 1.2,
-    color: '#087A5A',
+    color: '#059669',
   },
   title: {
-    fontSize: 27,
+    fontSize: 24,
     fontWeight: '900',
-    color: '#10231E',
-    marginTop: 3,
+    color: '#0F172A',
+    marginTop: 2,
   },
   subtitle: {
     fontSize: 12,
-    color: '#71807C',
-    marginTop: 4,
+    color: '#64748B',
+    marginTop: 3,
   },
   markAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E6F4F0',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#C2E5D9',
-    marginTop: 14,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    marginTop: 10,
     gap: 4,
   },
   markAllBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#087A5A',
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#059669',
   },
   loader: {
     marginTop: 44,
   },
   card: {
     flexDirection: 'row',
-    backgroundColor: '#FFF',
-    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
     padding: 14,
     marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#E7EEEB',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cardUnread: {
-    borderColor: '#A4E0CA',
-    backgroundColor: '#FAFCFB',
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+    borderLeftWidth: 4,
+    borderLeftColor: '#059669',
   },
   icon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: '#F1F5F4',
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconUnread: {
-    backgroundColor: '#DDF7EC',
+    backgroundColor: '#DEF7EC',
   },
   copy: {
     flex: 1,
@@ -340,23 +412,23 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '700',
-    color: '#273B35',
+    color: '#334155',
   },
   itemTitleUnread: {
     fontWeight: '800',
-    color: '#10231E',
+    color: '#0F172A',
   },
   dot: {
-    width: 7,
-    height: 7,
+    width: 8,
+    height: 8,
     borderRadius: 4,
     backgroundColor: '#EF4444',
     marginLeft: 6,
   },
   message: {
-    fontSize: 11.5,
+    fontSize: 12,
     lineHeight: 17,
-    color: '#63716D',
+    color: '#64748B',
     marginTop: 4,
   },
   metaRow: {
@@ -366,22 +438,25 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   date: {
-    fontSize: 10,
-    color: '#9AA7A3',
+    fontSize: 10.5,
+    color: '#94A3B8',
+    fontWeight: '600',
   },
   chatBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E6F4F0',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     gap: 3,
   },
   chatBadgeText: {
     fontSize: 10,
-    fontWeight: '700',
-    color: '#087A5A',
+    fontWeight: '800',
+    color: '#059669',
   },
   empty: {
     alignItems: 'center',

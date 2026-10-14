@@ -37,6 +37,13 @@ export type MobileBrandingConfig = {
   has_dedicated_logo_login?: boolean;
   has_dedicated_logo_footer?: boolean;
   fallback_logo_url?: string | null;
+  address?: string;
+  motto?: string;
+  contact?: {
+    phone?: string;
+    email?: string;
+    website?: string;
+  };
 };
 
 export type MobileNavigationItem = {
@@ -62,6 +69,7 @@ export type MobileFeatureFlags = {
   mutabaah: boolean;
   cbt: boolean;
   school_info: boolean;
+  billing?: boolean;
 };
 
 export type MobileSystemConfig = {
@@ -71,11 +79,13 @@ export type MobileSystemConfig = {
   maintenance_message: string;
   force_update: boolean;
   update_url: string;
+  mapbox_token?: string;
 };
 
 export type MobileAppConfig = {
   platform: 'android';
   version: number;
+  mapbox_token?: string;
   theme: MobileThemeConfig;
   branding: MobileBrandingConfig;
   navigation: {
@@ -142,7 +152,7 @@ export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
     show_labels: true,
     items: [
       { key: 'home', label: 'Beranda', icon: 'view-dashboard-outline', enabled: true, order: 1 },
-      { key: 'notifications', label: 'Chat Guru', icon: 'chat-processing-outline', enabled: true, order: 2 },
+      { key: 'notifications', label: 'Chat', icon: 'chat-processing-outline', enabled: true, order: 2 },
       { key: 'qr', label: 'QR Code', icon: 'qrcode-scan', enabled: true, order: 3 },
       { key: 'profile', label: 'Profil', icon: 'account-circle-outline', enabled: true, order: 4 },
       { key: 'more', label: 'Lainnya', icon: 'menu', enabled: true, order: 5 },
@@ -192,39 +202,53 @@ export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
       'Sistem sedang dalam pemeliharaan rutin. Silakan coba beberapa saat lagi.',
     force_update: false,
     update_url: 'https://play.google.com/store/apps/details?id=id.sch.dareliman.simsit',
+    mapbox_token: undefined,
   },
 };
 
 const CACHE_KEY = 'sims-android-ui-config-v2';
 const META_KEY = 'sims-android-config-meta-v2';
 
-export const mergeConfig = (value?: Partial<MobileAppConfig>): MobileAppConfig => ({
-  ...DEFAULT_MOBILE_CONFIG,
-  ...value,
-  theme: { ...DEFAULT_MOBILE_CONFIG.theme, ...(value?.theme || {}) },
-  branding: { ...DEFAULT_MOBILE_CONFIG.branding, ...(value?.branding || {}) },
-  navigation: {
-    ...DEFAULT_MOBILE_CONFIG.navigation,
-    ...(value?.navigation || {}),
-    items: (value?.navigation?.items || DEFAULT_MOBILE_CONFIG.navigation.items).map((it) => {
-      if (it.key === 'notifications') {
-        return { ...it, label: 'Chat Guru', icon: 'chat-processing-outline' };
-      }
-      return it;
-    }),
-  },
-  home_layout: {
-    ...DEFAULT_MOBILE_CONFIG.home_layout,
-    ...(value?.home_layout || {}),
-    sections: value?.home_layout?.sections || DEFAULT_MOBILE_CONFIG.home_layout.sections,
-  },
-  role_home_layouts: {
-    ...DEFAULT_MOBILE_CONFIG.role_home_layouts,
-    ...(value?.role_home_layouts || {}),
-  },
-  features: { ...DEFAULT_MOBILE_CONFIG.features, ...(value?.features || {}) },
-  system: { ...DEFAULT_MOBILE_CONFIG.system, ...(value?.system || {}) },
-});
+export const mergeConfig = (value?: Partial<MobileAppConfig>): MobileAppConfig => {
+  const token =
+    value?.mapbox_token ||
+    value?.system?.mapbox_token ||
+    (value as any)?.data?.mapbox_token ||
+    DEFAULT_MOBILE_CONFIG.mapbox_token;
+
+  return {
+    ...DEFAULT_MOBILE_CONFIG,
+    ...value,
+    mapbox_token: token,
+    theme: { ...DEFAULT_MOBILE_CONFIG.theme, ...(value?.theme || {}) },
+    branding: { ...DEFAULT_MOBILE_CONFIG.branding, ...(value?.branding || {}) },
+    system: {
+      ...DEFAULT_MOBILE_CONFIG.system,
+      ...(value?.system || {}),
+      mapbox_token: token,
+    },
+    navigation: {
+      ...DEFAULT_MOBILE_CONFIG.navigation,
+      ...(value?.navigation || {}),
+      items: (value?.navigation?.items || DEFAULT_MOBILE_CONFIG.navigation.items).map((it) => {
+        if (it.key === 'notifications') {
+          return { ...it, label: 'Chat', icon: 'chat-processing-outline' };
+        }
+        return it;
+      }),
+    },
+    home_layout: {
+      ...DEFAULT_MOBILE_CONFIG.home_layout,
+      ...(value?.home_layout || {}),
+      sections: value?.home_layout?.sections || DEFAULT_MOBILE_CONFIG.home_layout.sections,
+    },
+    role_home_layouts: {
+      ...DEFAULT_MOBILE_CONFIG.role_home_layouts,
+      ...(value?.role_home_layouts || {}),
+    },
+    features: { ...DEFAULT_MOBILE_CONFIG.features, ...(value?.features || {}) },
+  };
+};
 
 type ConfigState = {
   config: MobileAppConfig;

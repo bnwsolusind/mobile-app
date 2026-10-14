@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Image,
   Modal,
@@ -16,17 +17,30 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
+import { getApiErrorMessage } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isStaffRole } from '../utils/roles';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { StudentHeroCard } from '../components/StudentHeroCard';
+import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
+import { TeacherStickyHeader } from '../components/TeacherStickyHeader';
+import { StudentIdCardModal } from '../components/StudentIdCardModal';
+import { StudentQrModal } from '../components/StudentQrModal';
+import { StudentMenuModal } from '../components/StudentMenuModal';
+import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const STUDENT_CARD_GAP = 12;
+const STUDENT_PEEK_WIDTH = 26;
 
 type Child = Record<string, any>;
 
@@ -171,35 +185,218 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 16);
   const user = useAuthStore((state) => state.user);
-  const isParent = isParentRole(user?.roles || []);
+  const roles = useAuthStore((state) => state.roles);
+  const userRoles = useMemo(() => (roles?.length ? roles : user?.roles || []), [roles, user?.roles]);
+  const isParent = isParentRole(userRoles);
+  const isTeacher = isTeacherRole(userRoles) || isStaffRole(userRoles);
+  const isTeacherMode = Boolean(
+    isTeacher && (!isParent || route?.params?.from_teacher_portal || !route?.params?.from_child_portal)
+  );
 
-  const [children, setChildren] = useState<Child[]>([]);
-  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(route?.params?.child_id);
-  const [studentInfo, setStudentInfo] = useState<any>(null);
-  const studentScrollRef = useRef<ScrollView>(null);
+  // ── Sticky header bersama (StudentStickyHeader, sama dengan Tugas/Jadwal/Materi/Nilai) ──
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
+  const { scrollY, handleMainScroll } = useStickyScroll();
+  const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
 
-  const handleStudentScrollEnd = (e: any) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 50 + 12;
-    const index = Math.round(offsetX / cardWidth);
-    if (index >= 0 && index < children.length) {
-      const targetChild = children[index];
-      if (targetChild && String(targetChild.id) !== selectedChildId) {
-        setSelectedChildId(String(targetChild.id));
-      }
+  // Animasi fade + slide-up card siswa di body (identik dengan TahfizhScreen / ScheduleScreen)
+  const bodyCardOpacity = useMemo(() =>
+    scrollY.interpolate({
+      inputRange: [45, 105],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    }), [scrollY]);
+
+  const bodyCardTranslateY = useMemo(() =>
+    scrollY.interpolate({
+      inputRange: [45, 105],
+      outputRange: [0, -16],
+      extrapolate: 'clamp',
+    }), [scrollY]);
+
+  const handleBack = () => {
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    if (handled) return;
+    const childId = route?.params?.child_id || route?.params?.student_id;
+    if (route?.params?.from_child_portal && childId) {
+      navigation?.navigate('Beranda');
+      return;
+    }
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+    } else {
+      navigation?.navigate('Beranda');
     }
   };
 
-  const selectChildWithScroll = (childId: string, index: number) => {
-    setSelectedChildId(childId);
-    studentScrollRef.current?.scrollTo({
-      x: index * (SCREEN_WIDTH - 50 + 12),
-      animated: true,
-    });
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
+  const [children, setChildren] = useState<Child[]>(() => {
+    if (isTeacherMode) return [];
+    const fromStore = useActiveChildStore.getState().children;
+    return Array.isArray(fromStore) && fromStore.length > 0 ? fromStore : [];
+  });
+  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(() => {
+    const fromRoute = route?.params?.child_id || route?.params?.student_id;
+    if (fromRoute) return String(fromRoute);
+    const fromStore = useActiveChildStore.getState().activeChildId;
+    return fromStore ? String(fromStore) : undefined;
+  });
+  const [activeChildIndex, setActiveChildIndex] = useState(0);
+  const handledParamIdRef = useRef<string | null>(null);
+  const [studentInfo, setStudentInfo] = useState<any>(null);
+  const studentScrollRef = useRef<ScrollView>(null);
+
+  const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
+  const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
+  const [selectedMenuStudent, setSelectedMenuStudent] = useState<any>(null);
+  const [selectedWeeklyStudent, setSelectedWeeklyStudent] = useState<any>(null);
+
+  // Tombol Kartu Siswa -> modal KTS; tombol QR -> modal QR khusus
+  const openIdCard = (student: any) => {
+    setSelectedIdCardStudent(student);
   };
+  const openQrCard = (student: any) => {
+    setSelectedQrStudent(student);
+  };
+
+  // Tombol Jadwal pada sticky header & body card (disamakan dengan halaman Jadwal)
+  const openScheduleForStudent = useCallback((student: any) => {
+    const sid = student?.id || student?.student_id;
+    if (sid) {
+      const idStr = String(sid);
+      navigation?.navigate('Jadwal', { child_id: idStr, student_id: idStr });
+    } else {
+      navigation?.navigate('Jadwal');
+    }
+  }, [navigation]);
+
+  const studentCardWidth = useMemo(() => {
+    return children.length > 1
+      ? SCREEN_WIDTH - 16 - STUDENT_CARD_GAP - STUDENT_PEEK_WIDTH
+      : SCREEN_WIDTH - 32;
+  }, [children.length]);
+
+  const studentSnapInterval = useMemo(() => {
+    return studentCardWidth + STUDENT_CARD_GAP;
+  }, [studentCardWidth]);
+
+  // Padding kiri-kanan track = setengah sisa layar -> potongan (peek) kiri & kanan
+  // SEIMBANG (masing-masing (sisa/2 - gap)). Single: 16 | multi: 27.
+  const studentTrackPad = useMemo(() => {
+    return (SCREEN_WIDTH - studentCardWidth) / 2;
+  }, [studentCardWidth]);
+
+  // Carousel INFINITE seimbang & ringan: hanya 3 card yang dirender
+  // ([sebelumnya, aktif, berikutnya]), anak aktif selalu di TENGAH sehingga
+  // kiri-kanan seimbang (1 vs 1). Geser ke ujung mana pun lanjut memutar.
+  const studentLoopCount = children.length > 1 ? children.length : 0;
+  const safeCenter = studentLoopCount === 0
+    ? 0
+    : ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount;
+
+  const loopWindow = useMemo(() => {
+    if (studentLoopCount === 0) return { list: children, realIdx: [0] };
+    const n = studentLoopCount;
+    const prev = (safeCenter - 1 + n) % n;
+    const next = (safeCenter + 1) % n;
+    return {
+      list: [children[prev], children[safeCenter], children[next]],
+      realIdx: [prev, safeCenter, next],
+    };
+  }, [children, studentLoopCount, safeCenter]);
+
+  const centerLoopOffset = studentSnapInterval;
+
+  // Kembali ke tengah (tanpa animasi) — tak terlihat karena card yang tampil sama
+  const recenterLoop = (): void => {
+    if (studentLoopCount === 0) return;
+    studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
+  };
+
+  const syncLoopChildId = (realIdx: number): void => {
+    const selChild = children[realIdx];
+    const sid = selChild?.id || selChild?.student_id;
+    if (sid) {
+      const strSid = String(sid);
+      setSelectedChildId(strSid);
+      useActiveChildStore.getState().setActiveChildId(strSid);
+    }
+  };
+
+  const goToLoopChild = (targetRealIndex: number): void => {
+    if (studentLoopCount === 0) {
+      if (children.length === 1) {
+        setActiveChildIndex(0);
+        syncLoopChildId(0);
+      }
+      return;
+    }
+    const n = studentLoopCount;
+    const normTarget = ((targetRealIndex % n) + n) % n;
+    if (normTarget === safeCenter) return;
+
+    let delta = normTarget - safeCenter;
+    if (delta > n / 2) delta -= n;
+    if (delta < -n / 2) delta += n;
+
+    if (delta === 1) {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
+      setTimeout(() => {
+        setActiveChildIndex(normTarget);
+        syncLoopChildId(normTarget);
+        recenterLoop();
+      }, 240);
+    } else if (delta === -1) {
+      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
+      setTimeout(() => {
+        setActiveChildIndex(normTarget);
+        syncLoopChildId(normTarget);
+        recenterLoop();
+      }, 240);
+    } else {
+      setActiveChildIndex(normTarget);
+      syncLoopChildId(normTarget);
+      recenterLoop();
+    }
+  };
+
+  const teacherUnit = useMemo(() => {
+    return (
+      (user as any)?.unit_name ||
+      (user?.metadata as any)?.unit ||
+      (user?.metadata as any)?.unit_name ||
+      (user as any)?.education_unit?.name ||
+      'Pondok Pesantren'
+    );
+  }, [user]);
+
+  // Siswa aktif untuk sticky header & hero (anak terpilih -> info siswa -> profil -> user)
+  const headerStudent = useMemo(() => {
+    if (isTeacherMode) return null;
+    if (children && children.length > 0) {
+      const found = children.find(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (found) return found;
+      return children[safeCenter] || children[0];
+    }
+    if (studentInfo) return studentInfo;
+    return (user as any)?.student || user || null;
+  }, [isTeacherMode, children, selectedChildId, safeCenter, studentInfo, user]);
+
+  // Nama depan + fallback tahun ajaran untuk subtitle hero statis
+  const heroFirstName = useMemo(
+    () => (!isTeacherMode ? resolveStudentDisplay(headerStudent, user).firstName : ''),
+    [isTeacherMode, headerStudent, user]
+  );
+  const heroSubtitleFallback = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
+  }, []);
 
   const [calendarRange, setCalendarRange] = useState<string>('today');
   const [calendarDate, setCalendarDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState<string | null>(null);
   const [viewYear, setViewYear] = useState<number>(() => {
     const parts = new Date().toISOString().slice(0, 10).split('-');
     return parseInt(parts[0], 10) || new Date().getFullYear();
@@ -214,25 +411,23 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [showAllAgendaModal, setShowAllAgendaModal] = useState<boolean>(false);
 
-  // 1. Load Children if Parent with offline cache
+  // 1. Load Children if Parent with offline cache (selaras penuh dengan ExamGridsScreen)
   useEffect(() => {
     let isMounted = true;
-    if (isParent) {
-      const targetChildId = route?.params?.child_id;
-      const isSingleChild = route?.params?.single_child_only === true;
+    if (isParent && !isTeacherMode) {
+      const targetChildId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
       const childCacheKey = offlineCache.buildKey('academic_cal_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<Child[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          const filteredCached = (isSingleChild && targetChildId)
-            ? cached.filter((c) => String(c.id) === String(targetChildId))
-            : cached;
-          const safeCached = filteredCached.length > 0 ? filteredCached : cached;
-          setChildren(safeCached);
-          if (targetChildId) {
-            setSelectedChildId(String(targetChildId));
-          } else if (!selectedChildId) {
-            setSelectedChildId(String(safeCached[0].id));
+          setChildren(cached);
+          if (!selectedChildId) {
+            const initId = targetChildId
+              ? String(targetChildId)
+              : String(cached[0]?.id || cached[0]?.student_id);
+            setSelectedChildId(initId);
+            const foundIdx = cached.findIndex((c: any) => String(c.id || c.student_id) === initId);
+            if (foundIdx >= 0) setActiveChildIndex(foundIdx);
           }
         }
       })();
@@ -241,15 +436,14 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
           if (isMounted && arr.length > 0) {
-            const filteredArr = (isSingleChild && targetChildId)
-              ? arr.filter((c) => String(c.id) === String(targetChildId))
-              : arr;
-            const safeArr = filteredArr.length > 0 ? filteredArr : arr;
-            setChildren(safeArr);
+            setChildren(arr);
             if (targetChildId) {
               setSelectedChildId(String(targetChildId));
+              const foundIdx = arr.findIndex((c: any) => String(c.id || c.student_id) === String(targetChildId));
+              if (foundIdx >= 0) setActiveChildIndex(foundIdx);
             } else if (!selectedChildId) {
-              setSelectedChildId(String(safeArr[0].id));
+              setSelectedChildId(String(arr[0]?.id || arr[0]?.student_id));
+              setActiveChildIndex(0);
             }
             void offlineCache.set(childCacheKey, arr);
           }
@@ -259,7 +453,39 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
+  }, [isParent, isTeacherMode, user?.id, globalActiveChildId]);
+
+  // Route params sync (hanya sekali saat parameter route baru terdeteksi)
+  useEffect(() => {
+    const incomingId = route?.params?.child_id || route?.params?.student_id;
+    if (incomingId && children.length > 0 && handledParamIdRef.current !== String(incomingId)) {
+      handledParamIdRef.current = String(incomingId);
+      const foundIdx = children.findIndex((c: any) => String(c.id || c.student_id) === String(incomingId));
+      if (foundIdx >= 0) {
+        goToLoopChild(foundIdx);
+      }
+    }
+  }, [route?.params?.child_id, route?.params?.student_id, children]);
+
+  // Sinkronkan activeChildIndex jika selectedChildId berubah dari luar (route params / store)
+  useEffect(() => {
+    if (children.length > 0 && selectedChildId) {
+      const idx = children.findIndex(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (idx >= 0 && idx !== activeChildIndex) {
+        setActiveChildIndex(idx);
+      }
+    }
+  }, [selectedChildId, children, activeChildIndex]);
+
+  // Posisikan ke tengah setiap kali jumlah anak / lebar card berubah
+  useEffect(() => {
+    if (studentLoopCount === 0) return;
+    requestAnimationFrame(() => {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
+    });
+  }, [studentLoopCount, studentSnapInterval, centerLoopOffset]);
 
   // 2. Load Academic Calendar Data from Database API with offline cache
   const loadCalendar = useCallback(async () => {
@@ -276,26 +502,59 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
     }
 
     try {
-      const res = await mobileApiService.getAcademicCalendar({
-        range: calendarRange,
-        date: calendarDate,
-        child_id: selectedChildId,
-      });
-      const data = unwrapApiData<any>(res) || {};
-      setCalendarData(data);
-      const freshStudent = res?.student || data?.student || null;
-      if (freshStudent) {
-        setStudentInfo(freshStudent);
+      setError(null);
+      let data: any = null;
+      let freshStudent: any = null;
+
+      if (isTeacherMode) {
+        const res = await mobileApiService.getTeacherAcademicCalendar({
+          range: calendarRange,
+          date: calendarDate,
+        });
+        const rawList = unwrapApiData<any>(res) || [];
+        const rawItems = Array.isArray(rawList?.data) ? rawList.data : (Array.isArray(rawList) ? rawList : []);
+        const mappedEvents = rawItems.map((item: any) => ({
+          id: item.id,
+          title: item.judul_pengumuman || item.title || 'Agenda Sekolah',
+          description: item.isi_pengumuman || item.description || '',
+          date: (item.mulai_tampil || item.created_at || '').slice(0, 10),
+          start_date: item.mulai_tampil,
+          end_date: item.akhir_tampil,
+          type: item.tipe || item.kategori || 'akademik',
+          category: item.kategori || 'Umum',
+        }));
+
+        data = {
+          events: mappedEvents,
+          upcoming_events: mappedEvents.slice(0, 5),
+          range: calendarRange,
+          date: calendarDate,
+          total_events: mappedEvents.length,
+        };
+      } else {
+        const res = await mobileApiService.getAcademicCalendar({
+          range: calendarRange,
+          date: calendarDate,
+          child_id: selectedChildId,
+        });
+        data = unwrapApiData<any>(res) || {};
+        freshStudent = res?.student || data?.student || null;
+        if (freshStudent) {
+          setStudentInfo(freshStudent);
+        }
       }
+
+      setCalendarData(data);
       void offlineCache.set(cacheKey, { data, student: freshStudent });
-    } catch {
+    } catch (err: any) {
       if (!cached) {
         setCalendarData(null);
+        setError(getApiErrorMessage(err, 'Jadwal kalender akademik belum berhasil dimuat.'));
       }
     } finally {
       setLoading(false);
     }
-  }, [calendarRange, calendarDate, selectedChildId, user?.id]);
+  }, [calendarRange, calendarDate, selectedChildId, user?.id, isTeacherMode]);
 
   useEffect(() => {
     void loadCalendar();
@@ -371,7 +630,16 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
     setCalendarRange('today');
   };
 
-  const activeChild = children.find((c) => String(c.id) === selectedChildId);
+  const activeChild = useMemo(() => {
+    if (children && children.length > 0) {
+      const found = children.find(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (found) return found;
+      return children[safeCenter] || children[0];
+    }
+    return headerStudent;
+  }, [children, selectedChildId, safeCenter, headerStudent]);
   const events = Array.isArray(calendarData?.events) ? calendarData.events : [];
   const upcomingEvents = Array.isArray(calendarData?.upcoming_events) ? calendarData.upcoming_events : [];
   const displayDates = Array.isArray(calendarData?.display_dates) && calendarData.display_dates.length > 0
@@ -407,31 +675,240 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
     return calendarDate;
   })();
 
-  const todayEvents = events.filter((e: any) => {
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  // Helper pemeriksa apakah suatu agenda berlangsung pada tanggal target
+  const isEventOnDate = useCallback((e: any, targetDate: string) => {
+    if (!targetDate) return false;
     const eDate = e.date ? String(e.date).slice(0, 10) : '';
-    return eDate === calendarDate;
-  });
-  const panelEvents = todayEvents.length > 0
-    ? todayEvents
-    : (events.length > 0 ? events.slice(0, 3) : upcomingEvents.slice(0, 3));
+    const sDate = e.start_date ? String(e.start_date).slice(0, 10) : eDate;
+    const edDate = e.end_date ? String(e.end_date).slice(0, 10) : (sDate || eDate);
+
+    if (eDate === targetDate) return true;
+    if (sDate && edDate && sDate <= targetDate && edDate >= targetDate) return true;
+    return false;
+  }, []);
+
+  // Agenda khusus hari ini (mengikuti tanggal hari ini secara ketat)
+  const todayEvents = useMemo(() => {
+    return events.filter((e: any) => isEventOnDate(e, todayStr));
+  }, [events, isEventOnDate, todayStr]);
+
+  // Agenda untuk tanggal yang dipilih di panel (tanpa menampilkan agenda tanggal lain jika kosong)
+  const isSelectedDateToday = calendarDate === todayStr;
+  const panelEvents = useMemo(() => {
+    const targetDate = calendarDate || todayStr;
+    return events.filter((e: any) => isEventOnDate(e, targetDate));
+  }, [events, isEventOnDate, calendarDate, todayStr]);
 
   return (
     <View style={styles.rootContainer}>
+      {/* 0. STICKY HEADER BERSAMA */}
+      {!isTeacherMode ? (
+        <StudentStickyHeader
+          scrollY={scrollY}
+          topInset={topInset}
+          title="Kalender Akademik"
+          navigation={navigation}
+          route={route}
+          student={headerStudent}
+          user={user}
+          childrenList={children}
+          selectedChildId={selectedChildId}
+          onSelectChild={(cid, idx) => {
+            goToLoopChild(idx);
+          }}
+          middleAction={{
+            label: 'Jadwal',
+            icon: 'calendar-clock',
+            onPress: () => openScheduleForStudent(headerStudent),
+          }}
+          onOpenIdCard={(s) => openIdCard(s)}
+          onOpenQr={(s) => openQrCard(s)}
+          onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
+          onOpenMenu={(s) => setSelectedMenuStudent(s)}
+        />
+      ) : (
+        <TeacherStickyHeader
+          scrollY={scrollY}
+          topInset={topInset}
+          title="Kalender Akademik"
+          subtitle={teacherUnit}
+          navigation={navigation}
+          route={route}
+          equalColumns={true}
+          quickChips={[
+            {
+              id: 'total_agenda',
+              label: `Agenda (${events.length})`,
+              icon: 'calendar-text-outline',
+              active: calendarRange !== 'today',
+              onPress: () => {
+                if (calendarRange === 'today') {
+                  setCalendarRange('month');
+                }
+              },
+            },
+            {
+              id: 'today_btn',
+              label: 'Hari Ini',
+              icon: 'calendar-today',
+              active: calendarRange === 'today',
+              iconColor: '#059669',
+              onPress: handleTodayDate,
+            },
+          ]}
+        />
+      )}
       <View style={styles.sheetContainer}>
         <LinearGradient
           colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
           start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
+          end={{ x: 1, y: 1 }}
           style={StyleSheet.absoluteFill}
         />
-        <ScrollView
+        <Animated.ScrollView
           style={styles.screen}
-          contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 30 }]}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={loadCalendar} colors={['#18A165']} />}
+          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
+          onScroll={handleMainScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={loadCalendar} colors={['#18A165']} progressViewOffset={topInset + 10} />}
         >
-      {/* 1. CONTAINER DATA SISWA & UNIT PENDIDIKAN */}
-      {children.length > 0 ? (
-        <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
+          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
+            <LinearGradient
+              colors={['#047857', '#059669', '#10B981']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.heroDecorCircle1} />
+            <View style={styles.heroDecorCircle2} />
+
+            <View style={styles.staticTopBarRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleBack}
+                style={styles.heroSquircleBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Kembali"
+              >
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+              </TouchableOpacity>
+
+              <View style={styles.heroTitleCenterCol}>
+                <Text numberOfLines={1} style={styles.heroModuleTitle}>
+                  Kalender Akademik
+                </Text>
+                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
+                  {isTeacherMode
+                    ? `${teacherUnit} • Agenda Guru`
+                    : (heroFirstName ? `Ananda ${heroFirstName}` : heroSubtitleFallback)}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => navigation?.navigate('Notifikasi')}
+                style={styles.heroSquircleBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Notifikasi"
+              >
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Badan Halaman Konten */}
+          <View style={styles.bodyContentWrapper}>
+      {/* 1. TEACHER STATS CARDS (TOTAL AGENDA, FILTER PERIODE, AGENDA HARIAN) / PARENT DATA */}
+      {isTeacherMode ? (
+        <View style={styles.teacherStatsWrapper}>
+          <View style={styles.teacherStatsRow}>
+            {/* Card 1: Total Agenda */}
+            <TouchableOpacity
+              activeOpacity={0.82}
+              onPress={() => setCalendarRange(calendarRange === 'today' ? 'month' : 'today')}
+              style={[styles.teacherStatCard, styles.teacherStatCardEmerald]}
+            >
+              <View style={styles.teacherStatTopRow}>
+                <View style={[styles.teacherStatIconWrap, { backgroundColor: '#DEF7EC' }]}>
+                  <MaterialCommunityIcons name="calendar-text-outline" size={16} color="#059669" />
+                </View>
+                <View style={[styles.teacherStatBadge, { backgroundColor: '#D1FAE5' }]}>
+                  <Text style={[styles.teacherStatBadgeText, { color: '#047857' }]}>Aktif</Text>
+                </View>
+              </View>
+              <Text numberOfLines={1} style={[styles.teacherStatValue, { color: '#064E3B' }]}>
+                {events.length}
+              </Text>
+              <Text numberOfLines={1} style={[styles.teacherStatLabel, { color: '#047857' }]}>
+                Total Agenda
+              </Text>
+            </TouchableOpacity>
+
+            {/* Card 2: Filter Periode */}
+            <TouchableOpacity
+              activeOpacity={0.82}
+              onPress={() => {
+                const ranges = ['today', 'week', 'month', 'semester', 'year'];
+                const curIdx = ranges.indexOf(calendarRange);
+                const nextRange = ranges[(curIdx + 1) % ranges.length];
+                setCalendarRange(nextRange);
+              }}
+              style={[styles.teacherStatCard, styles.teacherStatCardSky]}
+            >
+              <View style={styles.teacherStatTopRow}>
+                <View style={[styles.teacherStatIconWrap, { backgroundColor: '#E0F2FE' }]}>
+                  <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#0284C7" />
+                </View>
+                <View style={[styles.teacherStatBadge, { backgroundColor: '#E0F2FE' }]}>
+                  <Text style={[styles.teacherStatBadgeText, { color: '#0284C7' }]}>Periode</Text>
+                </View>
+              </View>
+              <Text numberOfLines={1} style={[styles.teacherStatValue, { color: '#0C4A6E', fontSize: 13 }]}>
+                {calendarRange === 'today'
+                  ? 'Hari Ini'
+                  : calendarRange === 'week'
+                  ? '1 Minggu'
+                  : calendarRange === 'month'
+                  ? '1 Bulan'
+                  : calendarRange === 'semester'
+                  ? 'Semester'
+                  : 'Tahun Ajaran'}
+              </Text>
+              <Text numberOfLines={1} style={[styles.teacherStatLabel, { color: '#0369A1' }]}>
+                Filter Periode
+              </Text>
+            </TouchableOpacity>
+
+            {/* Card 3: Agenda Harian */}
+            <TouchableOpacity
+              activeOpacity={0.82}
+              onPress={handleTodayDate}
+              style={[styles.teacherStatCard, styles.teacherStatCardAmber]}
+            >
+              <View style={styles.teacherStatTopRow}>
+                <View style={[styles.teacherStatIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                  <MaterialCommunityIcons name="calendar-check-outline" size={16} color="#D97706" />
+                </View>
+                <View style={[styles.teacherStatBadge, { backgroundColor: '#FEF3C7' }]}>
+                  <Text style={[styles.teacherStatBadgeText, { color: '#B45309' }]}>Hari Ini</Text>
+                </View>
+              </View>
+              <Text numberOfLines={1} style={[styles.teacherStatValue, { color: '#78350F' }]}>
+                {todayEvents.length}
+              </Text>
+              <Text numberOfLines={1} style={[styles.teacherStatLabel, { color: '#B45309' }]}>
+                Agenda Harian
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : children.length > 0 ? (
+        <Animated.View style={[styles.containerBlock, styles.studentContainerBlock, { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] }]}>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderTitleWrap}>
               <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
@@ -440,7 +917,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
             {children.length > 1 && (
               <View style={styles.studentCardCountBadge}>
                 <Text style={styles.studentCardCountBadgeText}>
-                  {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
+                  {safeCenter + 1} dari {children.length} Ananda
                 </Text>
               </View>
             )}
@@ -452,7 +929,16 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
                 child={children[0]}
                 isSelected={true}
                 isSingleChild={true}
-                showActionButtons={false}
+                showActionButtons={true}
+                cardLabel="Kartu Siswa"
+                calendarLabel="Jadwal"
+                portalLabel="Menu"
+                onPressCard={() => openIdCard(children[0])}
+                onPressQr={() => openQrCard(children[0])}
+                onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
+                onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                onPressCalendar={() => openScheduleForStudent(children[0])}
+                onPressPortal={() => setSelectedMenuStudent(children[0])}
               />
             </View>
           ) : (
@@ -460,48 +946,101 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
               <ScrollView
                 ref={studentScrollRef}
                 horizontal
+                nestedScrollEnabled={true}
                 showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
+                contentOffset={{ x: centerLoopOffset, y: 0 }}
+                contentContainerStyle={[
+                  styles.studentCardsTrack,
+                  { paddingHorizontal: studentTrackPad },
+                ]}
                 decelerationRate="fast"
-                onMomentumScrollEnd={handleStudentScrollEnd}
+                snapToInterval={studentSnapInterval}
+                snapToAlignment="start"
+                disableIntervalMomentum
+                onMomentumScrollEnd={(e) => {
+                  if (studentLoopCount === 0) return;
+                  const offsetX = e.nativeEvent.contentOffset.x;
+                  const slot = Math.round(offsetX / studentSnapInterval);
+                  const n = studentLoopCount;
+                  const cur = ((activeChildIndex % n) + n) % n;
+                  let realIdx = cur;
+                  if (slot === 2) realIdx = (cur + 1) % n;
+                  else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                  if (realIdx !== cur) {
+                    setActiveChildIndex(realIdx);
+                    syncLoopChildId(realIdx);
+                    requestAnimationFrame(() => {
+                      recenterLoop();
+                    });
+                  } else {
+                    recenterLoop();
+                  }
+                }}
+                onScrollEndDrag={(e) => {
+                  if (studentLoopCount === 0) return;
+                  const offsetX = e.nativeEvent.contentOffset.x;
+                  const slot = Math.round(offsetX / studentSnapInterval);
+                  const n = studentLoopCount;
+                  const cur = ((activeChildIndex % n) + n) % n;
+                  let realIdx = cur;
+                  if (slot === 2) realIdx = (cur + 1) % n;
+                  else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                  if (realIdx !== cur) {
+                    setActiveChildIndex(realIdx);
+                    syncLoopChildId(realIdx);
+                  }
+                }}
+                scrollEventThrottle={16}
                 style={styles.heroCardScrollContainer}
-                contentContainerStyle={styles.heroCardScroll}
               >
-                {children.map((child, idx) => (
-                  <StudentHeroCard
-                    key={String(child.id || idx)}
-                    child={child}
-                    isSelected={String(child.id) === selectedChildId}
-                    isSingleChild={false}
-                    showActionButtons={false}
-                    onSelect={() => selectChildWithScroll(String(child.id), idx)}
-                  />
-                ))}
+                {loopWindow.list.map((child: any, sIdx: number) => {
+                  const realIdx = loopWindow.realIdx[sIdx] ?? 0;
+                  const isCardActive = realIdx === safeCenter;
+                  return (
+                    <StudentHeroCard
+                      key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
+                      child={child}
+                      isSelected={isCardActive}
+                      isSingleChild={false}
+                      showActionButtons={true}
+                      cardWidth={studentCardWidth}
+                      cardLabel="Kartu Siswa"
+                      calendarLabel="Jadwal"
+                      portalLabel="Menu"
+                      onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
+                      onPressCard={() => openIdCard(child)}
+                      onPressQr={() => openQrCard(child)}
+                      onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
+                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                      onPressCalendar={() => openScheduleForStudent(child)}
+                      onPressPortal={() => setSelectedMenuStudent(child)}
+                    />
+                  );
+                })}
               </ScrollView>
 
               {/* DOT INDIKATOR SCROLL SISWA */}
-              {children.length > 1 && (
-                <View style={styles.paginationDotsRow}>
-                  {children.map((c, i) => {
-                    const isDotActive = String(c.id) === selectedChildId;
-                    return (
-                      <TouchableOpacity
-                        key={String(c.id || i)}
-                        onPress={() => selectChildWithScroll(String(c.id), i)}
-                        style={[
-                          styles.paginationDot,
-                          isDotActive && styles.paginationDotActive,
-                        ]}
-                      />
-                    );
-                  })}
-                </View>
-              )}
+              <View style={styles.paginationDotsRow}>
+                {children.map((_, dotIdx) => {
+                  const isDotActive = dotIdx === safeCenter;
+                  return (
+                    <TouchableOpacity
+                      key={dotIdx}
+                      activeOpacity={0.7}
+                      onPress={() => goToLoopChild(dotIdx)}
+                      style={[
+                        styles.paginationDot,
+                        isDotActive && styles.paginationDotActive,
+                      ]}
+                    />
+                  );
+                })}
+              </View>
             </>
           )}
-        </View>
+        </Animated.View>
       ) : studentInfo ? (
-        <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+        <Animated.View style={[styles.containerBlock, styles.studentContainerBlock, { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] }]}>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderTitleWrap}>
               <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
@@ -514,12 +1053,21 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
               child={studentInfo}
               isSelected={true}
               isSingleChild={true}
-              showActionButtons={false}
+              showActionButtons={true}
+              cardLabel="Kartu Siswa"
+              calendarLabel="Jadwal"
+              portalLabel="Menu"
+              onPressCard={() => openIdCard(studentInfo)}
+              onPressQr={() => openQrCard(studentInfo)}
+              onPressWeeklyReport={() => setSelectedWeeklyStudent(studentInfo)}
+              onPressNotifications={() => navigation?.navigate('Notifikasi')}
+              onPressCalendar={() => openScheduleForStudent(studentInfo)}
+              onPressPortal={() => setSelectedMenuStudent(studentInfo)}
             />
           </View>
-        </View>
+        </Animated.View>
       ) : user ? (
-        <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+        <Animated.View style={[styles.containerBlock, styles.studentContainerBlock, { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] }]}>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderTitleWrap}>
               <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
@@ -589,61 +1137,27 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
                   <View style={styles.studentAttrDivider} />
                   <View style={styles.studentAttrBox}>
                     <Text style={styles.studentAttrLabel}>Status</Text>
-                    <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>Terverifikasi</Text>
+                    <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>{(user as any)?.status || 'Aktif'}</Text>
                   </View>
                 </View>
               </LinearGradient>
             );
           })()}
+        </Animated.View>
+      ) : null}
+
+      {/* Error State Banner */}
+      {error ? (
+        <View style={styles.errorBannerBox}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#E11D48" />
+          <Text style={styles.errorBannerText}>{error}</Text>
+          <TouchableOpacity onPress={() => void loadCalendar()} style={styles.errorRetryBtn}>
+            <Text style={styles.errorRetryText}>Coba Lagi</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
 
-      {/* 2. TOP HERO BANNER: Kalender Akademik */}
-      <LinearGradient
-        colors={['rgba(255, 255, 255, 0.85)', 'rgba(242, 250, 246, 0.75)', 'rgba(221, 245, 235, 0.6)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.heroBannerCard}
-      >
-        <View style={styles.heroBannerLeft}>
-          <View style={styles.heroBannerIconBox}>
-            <MaterialCommunityIcons name="calendar-multiselect" size={24} color="#15803D" />
-          </View>
-          <View style={styles.heroBannerTextWrap}>
-            <Text style={styles.heroBannerTitle}>Kalender Akademik</Text>
-            <Text numberOfLines={1} style={styles.heroBannerSub}>
-              {calendarData?.academic_year?.name || `Tahun Ajaran ${new Date().getMonth() >= 6 ? `${new Date().getFullYear()}/${new Date().getFullYear() + 1}` : `${new Date().getFullYear() - 1}/${new Date().getFullYear()}`}`}
-            </Text>
-            <Text numberOfLines={1} style={styles.heroBannerUnit}>
-              {calendarData?.unit?.name || activeChild?.education_unit?.name || 'Sekolah Terpadu'}
-            </Text>
-          </View>
-        </View>
-
-        {/* 3D Calendar Graphic Illustration */}
-        <View style={styles.heroCalendarArtWrap}>
-          <View style={styles.artCardBackdrop} />
-          <View style={styles.artCalendarCard}>
-            <View style={styles.artCalendarHeader}>
-              <View style={styles.artSpiralHole} />
-              <View style={styles.artSpiralHole} />
-            </View>
-            <View style={styles.artCalendarBody}>
-              <Text style={styles.artCalendarDayNum}>
-                {calendarDate.split('-')[2] ? parseInt(calendarDate.split('-')[2], 10) : new Date().getDate()}
-              </Text>
-              <Text style={styles.artCalendarMonth}>
-                {MONTH_NAMES[viewMonth]?.slice(0, 3)?.toUpperCase() || MONTH_NAMES[new Date().getMonth()]?.slice(0, 3)?.toUpperCase()}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.artLeafBadge}>
-            <MaterialCommunityIcons name="leaf" size={13} color="#16A34A" />
-          </View>
-        </View>
-      </LinearGradient>
-
-      {/* 3. SECTION: Rentang Cepat (5 Colorful Square Cards) */}
+      {/* 2. SECTION: Rentang Cepat (5 Colorful Square Cards) */}
       <View style={styles.quickRangeSectionNew}>
         <Text style={styles.quickRangeTitleNew}>Rentang Cepat:</Text>
         <View style={styles.quickRangeGridRow}>
@@ -682,158 +1196,218 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
         </View>
       </View>
 
-      {/* 4. SPLIT 2-COLUMN SECTION: Month Calendar Grid (Left) & Agenda Hari Ini (Right) */}
-      <View style={styles.splitGridRow}>
-        {/* Left Column: Mini Month Calendar Grid */}
-        <View style={styles.calendarColCard}>
-          {/* Header Month < Month Year > */}
-          <View style={styles.calendarColHeader}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handlePrevMonth}
-              style={styles.monthNavBtn}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <MaterialCommunityIcons name="chevron-left" size={20} color="#1E293B" />
-            </TouchableOpacity>
+      {/* 3. KALENDER BULANAN (CARD DIPERBESAR & FULL WIDTH) */}
+      <View style={styles.calendarFullCard}>
+        {/* Header Month < Month Year > */}
+        <View style={styles.calendarFullHeader}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handlePrevMonth}
+            style={styles.monthNavBtn}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <MaterialCommunityIcons name="chevron-left" size={24} color="#0F172A" />
+          </TouchableOpacity>
 
-            <View style={styles.monthColTitleWrap}>
-              <Text numberOfLines={1} style={styles.monthColTitleMonth}>
-                {MONTH_NAMES[viewMonth] || 'Bulan'}
-              </Text>
-              <Text style={styles.monthColTitleYear}>
-                {viewYear}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleNextMonth}
-              style={styles.monthNavBtn}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <MaterialCommunityIcons name="chevron-right" size={20} color="#1E293B" />
-            </TouchableOpacity>
+          <View style={styles.monthTitleWrap}>
+            <Text numberOfLines={1} style={styles.monthTitleMonth}>
+              {MONTH_NAMES[viewMonth] || 'Bulan'} {viewYear}
+            </Text>
+            <Text style={styles.monthTitleSub}>
+              Pilih tanggal untuk melihat rincian agenda
+            </Text>
           </View>
 
-          {/* Days of Week Header */}
-          <View style={styles.dayNamesRow}>
-            {DAY_NAMES.map((dn, idx) => (
-              <Text
-                key={dn}
-                style={[
-                  styles.dayNameCell,
-                  idx === 0 && styles.dayNameCellSun,
-                ]}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handleNextMonth}
+            style={styles.monthNavBtn}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#0F172A" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Days of Week Header */}
+        <View style={styles.dayNamesRow}>
+          {DAY_NAMES.map((dn, idx) => (
+            <Text
+              key={dn}
+              style={[
+                styles.dayNameCell,
+                idx === 0 && styles.dayNameCellSun,
+              ]}
+            >
+              {dn}
+            </Text>
+          ))}
+        </View>
+
+        {/* Days Grid Matrix (7 Columns) */}
+        <View style={styles.daysMatrixGrid}>
+          {monthGridDays.map((cell, cIdx) => {
+            return (
+              <TouchableOpacity
+                key={`${cell.fullDate}_${cIdx}`}
+                activeOpacity={0.75}
+                onPress={() => {
+                  setCalendarDate(cell.fullDate);
+                  const parts = cell.fullDate.split('-');
+                  if (parts.length === 3) {
+                    setViewYear(parseInt(parts[0], 10));
+                    setViewMonth(parseInt(parts[1], 10) - 1);
+                  }
+                }}
+                style={styles.dayCellTouch}
               >
-                {dn}
-              </Text>
-            ))}
-          </View>
-
-          {/* Days Grid Matrix (7 Columns) */}
-          <View style={styles.daysMatrixGrid}>
-            {monthGridDays.map((cell, cIdx) => {
-              return (
-                <TouchableOpacity
-                  key={`${cell.fullDate}_${cIdx}`}
-                  activeOpacity={0.75}
-                  onPress={() => {
-                    setCalendarDate(cell.fullDate);
-                    const parts = cell.fullDate.split('-');
-                    if (parts.length === 3) {
-                      setViewYear(parseInt(parts[0], 10));
-                      setViewMonth(parseInt(parts[1], 10) - 1);
-                    }
-                  }}
-                  style={styles.dayCellTouch}
+                <View
+                  style={[
+                    styles.dayCellCircle,
+                    cell.isSelected && styles.dayCellSelectedCircle,
+                    cell.isToday && !cell.isSelected && styles.dayCellTodayCircle,
+                  ]}
                 >
-                  <View
+                  <Text
                     style={[
-                      styles.dayCellCircle,
-                      cell.isSelected && styles.dayCellSelectedCircle,
-                      cell.isToday && !cell.isSelected && styles.dayCellTodayCircle,
+                      styles.dayCellText,
+                      !cell.isCurrentMonth && styles.dayCellTextMuted,
+                      cell.isToday && !cell.isSelected && styles.dayCellTextToday,
+                      cell.isSelected && styles.dayCellTextSelected,
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.dayCellText,
-                        !cell.isCurrentMonth && styles.dayCellTextMuted,
-                        cell.isToday && !cell.isSelected && styles.dayCellTextToday,
-                        cell.isSelected && styles.dayCellTextSelected,
-                      ]}
-                    >
-                      {cell.day}
-                    </Text>
+                    {cell.day}
+                  </Text>
+                </View>
+                {cell.hasEvent && (
+                  <View
+                    style={[
+                      styles.dayEventIndicatorDot,
+                      cell.isSelected && styles.dayEventIndicatorDotSelected,
+                    ]}
+                  />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Dynamic Range Summary Banner from Backend (if week, month, semester, year) */}
+      {calendarRange !== 'today' && calendarData?.range_info?.formatted_range && (
+        <View style={styles.rangeInfoBanner}>
+          <MaterialCommunityIcons name="calendar-range" size={15} color="#18A165" />
+          <Text numberOfLines={1} style={styles.rangeInfoText}>
+            {calendarData.range_info.label || calendarData.range_info.formatted_range}
+          </Text>
+          <View style={styles.rangeCountBadge}>
+            <Text style={styles.rangeCountText}>
+              {calendarData.range_info.total_days} Hari
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* 4. AGENDA HARI INI / AGENDA TANGGAL (PINDAH KE BAWAH KALENDER - FULL WIDTH) */}
+      <View style={styles.agendaFullCard}>
+        <View style={styles.agendaFullHeader}>
+          <View style={styles.agendaFullHeaderLeft}>
+            <View style={styles.agendaFullIconBox}>
+              <MaterialCommunityIcons name="calendar-clock" size={20} color="#15803D" />
+            </View>
+            <View style={styles.agendaFullHeaderTextCol}>
+              <Text style={styles.agendaFullTitle}>
+                {isSelectedDateToday ? 'Agenda Hari Ini' : 'Agenda Tanggal Terpilih'}
+              </Text>
+              <Text numberOfLines={1} style={styles.agendaFullDate}>
+                {formattedPanelDate}
+              </Text>
+            </View>
+          </View>
+
+          {panelEvents.length > 0 && (
+            <View style={styles.agendaCountBadge}>
+              <Text style={styles.agendaCountBadgeText}>
+                {panelEvents.length} Agenda
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {loading ? (
+          <ActivityIndicator size="small" color="#18A165" style={{ marginVertical: 24 }} />
+        ) : panelEvents.length > 0 ? (
+          <View style={styles.agendaFullListWrap}>
+            {panelEvents.map((evt: any, idx: number) => {
+              const dotColors = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B'];
+              const itemColor = evt.color || dotColors[idx % dotColors.length];
+              return (
+                <TouchableOpacity
+                  key={String(evt.id || idx)}
+                  activeOpacity={0.82}
+                  onPress={() => setSelectedEvent(evt)}
+                  style={[styles.agendaItemCard, { borderLeftColor: itemColor }]}
+                >
+                  <View style={styles.agendaItemTopRow}>
+                    <View style={styles.agendaItemCategoryWrap}>
+                      <View style={[styles.agendaItemCategoryDot, { backgroundColor: itemColor }]} />
+                      <Text style={[styles.agendaItemCategoryText, { color: itemColor }]}>
+                        {evt.category || 'Kegiatan Akademik'}
+                      </Text>
+                    </View>
+                    <View style={styles.agendaItemTimeWrap}>
+                      <MaterialCommunityIcons name="clock-outline" size={13} color="#64748B" />
+                      <Text numberOfLines={1} style={styles.agendaItemTimeText}>
+                        {evt.time_display || (evt.time_start && evt.time_end ? `${evt.time_start} - ${evt.time_end}` : 'Waktu KBM')}
+                      </Text>
+                    </View>
                   </View>
-                  {cell.hasEvent && (
-                    <View
-                      style={[
-                        styles.dayEventIndicatorDot,
-                        cell.isSelected && styles.dayEventIndicatorDotSelected,
-                      ]}
-                    />
-                  )}
+
+                  <Text numberOfLines={2} style={styles.agendaItemTitle}>
+                    {evt.title}
+                  </Text>
+
+                  {evt.description ? (
+                    <Text numberOfLines={2} style={styles.agendaItemDesc}>
+                      {evt.description}
+                    </Text>
+                  ) : null}
+
+                  <View style={styles.agendaItemFooter}>
+                    <View style={styles.agendaItemLocationRow}>
+                      <MaterialCommunityIcons name="map-marker-outline" size={14} color="#64748B" />
+                      <Text numberOfLines={1} style={styles.agendaItemLocationText}>
+                        {evt.location || evt.room || evt.venue || evt.unit || calendarData?.unit?.name || activeChild?.unit_name || 'Kampus Sekolah'}
+                      </Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={16} color="#94A3B8" />
+                  </View>
                 </TouchableOpacity>
               );
             })}
           </View>
-        </View>
-
-        {/* Right Column: Panel "Agenda Hari Ini" */}
-        <View style={styles.agendaColCard}>
-          <View style={styles.agendaColHeader}>
-            <Text style={styles.agendaColTitle}>Agenda Hari Ini</Text>
-            <Text numberOfLines={1} style={styles.agendaColDate}>
-              {formattedPanelDate}
+        ) : (
+          <View style={styles.agendaEmptyBox}>
+            <View style={styles.agendaEmptyIconWrap}>
+              <MaterialCommunityIcons name="calendar-blank-outline" size={28} color="#059669" />
+            </View>
+            <Text style={styles.agendaEmptyTitle}>
+              {isSelectedDateToday ? 'Tidak Ada Agenda Hari Ini' : 'Tidak Ada Agenda Kegiatan'}
+            </Text>
+            <Text style={styles.agendaEmptyText}>
+              {isSelectedDateToday
+                ? 'Tidak ada agenda kegiatan akademik pada hari ini.'
+                : 'Tidak ada jadwal kegiatan akademik pada tanggal yang dipilih.'}
             </Text>
           </View>
+        )}
 
-          {loading ? (
-            <ActivityIndicator size="small" color="#18A165" style={{ marginVertical: 24 }} />
-          ) : panelEvents.length > 0 ? (
-            <View style={styles.agendaListWrap}>
-              {panelEvents.map((evt: any, idx: number) => {
-                const dotColors = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B'];
-                const itemColor = evt.color || dotColors[idx % dotColors.length];
-                return (
-                  <TouchableOpacity
-                    key={String(evt.id || idx)}
-                    activeOpacity={0.82}
-                    onPress={() => setSelectedEvent(evt)}
-                    style={[styles.agendaMiniCard, { borderLeftColor: itemColor }]}
-                  >
-                    <View style={styles.agendaMiniTopRow}>
-                      <View style={[styles.agendaMiniDot, { backgroundColor: itemColor }]} />
-                      <Text numberOfLines={1} style={styles.agendaMiniTime}>
-                        {evt.time_display || '07.00 - 07.30'}
-                      </Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.agendaMiniTitle}>
-                      {evt.title}
-                    </Text>
-                    <Text numberOfLines={1} style={styles.agendaMiniLocation}>
-                      {evt.location || evt.room || 'Lapangan Sekolah'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ) : (
-            <View style={styles.agendaEmptyBox}>
-              <MaterialCommunityIcons name="calendar-blank-outline" size={22} color="#94A3B8" />
-              <Text style={styles.agendaEmptyText}>Tidak ada agenda kegiatan hari ini</Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => setShowAllAgendaModal(true)}
-            style={styles.seeAllAgendaBtn}
-          >
-            <Text style={styles.seeAllAgendaBtnText}>Lihat Semua Agenda →</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => setShowAllAgendaModal(true)}
+          style={styles.seeAllAgendaBtn}
+        >
+          <Text style={styles.seeAllAgendaBtnText}>Lihat Semua Agenda Kalender →</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Dynamic Range Summary Banner from Backend (if week, month, semester, year) */}
@@ -861,7 +1435,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
             <View style={styles.unitTag}>
               <MaterialCommunityIcons name="shield-check" size={12} color="#18A165" />
               <Text numberOfLines={1} style={styles.unitTagText}>
-                {calendarData?.unit?.name || 'Unit Terpilih'}
+                {calendarData?.unit?.name || (isTeacherMode ? teacherUnit : (activeChild?.kelas?.unit_pendidikan?.name || activeChild?.education_unit?.name || activeChild?.unit_name || 'Unit Sekolah'))}
               </Text>
             </View>
           </View>
@@ -878,7 +1452,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
                 <View style={styles.eventCardHeader}>
                   <View style={styles.eventTimeBox}>
                     <MaterialCommunityIcons name="clock-outline" size={13} color="#475569" />
-                    <Text style={styles.eventTimeText}>{evt.time_display || 'Waktu KBM'}</Text>
+                    <Text style={styles.eventTimeText}>{evt.time_display || (evt.time_start && evt.time_end ? `${evt.time_start} - ${evt.time_end}` : 'Waktu KBM')}</Text>
                   </View>
 
                   <View
@@ -905,7 +1479,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
                   <View style={styles.eventLocationWrapper}>
                     <MaterialCommunityIcons name="map-marker-outline" size={13} color="#64748B" />
                     <Text numberOfLines={1} style={styles.eventLocationText}>
-                      {evt.location || evt.room || evt.unit || 'Kampus SIT'}
+                      {evt.location || evt.room || evt.venue || evt.unit || calendarData?.unit?.name || activeChild?.unit_name || 'Kampus Sekolah'}
                     </Text>
                   </View>
                   <Text style={styles.eventDateBadge}>
@@ -960,7 +1534,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
                     {upEvt.title}
                   </Text>
                   <Text numberOfLines={1} style={styles.upcomingCardSub}>
-                    {upEvt.location || upEvt.unit || 'Kampus SIT'}
+                    {upEvt.location || upEvt.room || upEvt.venue || upEvt.unit || calendarData?.unit?.name || (isTeacherMode ? teacherUnit : (activeChild?.unit_name || 'Kampus Sekolah'))}
                   </Text>
                   <Text style={styles.upcomingCardDate}>
                     {upEvt.date ? new Date(upEvt.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Mendatang'}
@@ -1018,7 +1592,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
               <View style={styles.detailInfoRow}>
                 <MaterialCommunityIcons name="map-marker-radius-outline" size={16} color="#18A165" />
                 <Text style={styles.detailInfoText}>
-                  {selectedEvent?.location || selectedEvent?.room || selectedEvent?.unit || 'Kampus SIT'}
+                  {selectedEvent?.location || selectedEvent?.room || selectedEvent?.venue || selectedEvent?.unit || calendarData?.unit?.name || activeChild?.unit_name || 'Kampus Sekolah'}
                 </Text>
               </View>
 
@@ -1043,7 +1617,9 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
 
             <View style={styles.rsvpRow}>
               <MaterialCommunityIcons name="check-circle" size={16} color="#10B981" />
-              <Text style={styles.rsvpText}>Jadwal terdaftar resmi dalam kalender SIT</Text>
+              <Text style={styles.rsvpText}>
+                {calendarData?.unit?.name ? `Jadwal terdaftar resmi dalam kalender ${calendarData.unit.name}` : 'Jadwal terdaftar resmi dalam kalender akademik sekolah'}
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -1095,7 +1671,7 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
                       </Text>
                     </View>
                     <Text style={styles.allAgendaItemTitle}>{evt.title}</Text>
-                    <Text style={styles.allAgendaItemLocation}>{evt.location || evt.room || 'Kampus SIT'}</Text>
+                    <Text style={styles.allAgendaItemLocation}>{evt.location || evt.room || evt.venue || evt.unit || calendarData?.unit?.name || activeChild?.unit_name || 'Kampus Sekolah'}</Text>
                   </TouchableOpacity>
                 ))
               ) : (
@@ -1116,8 +1692,32 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
           </View>
         </View>
       </Modal>
-        </ScrollView>
+          </View>
+        </Animated.ScrollView>
       </View>
+
+      {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
+      <StudentIdCardModal
+        visible={Boolean(selectedIdCardStudent)}
+        student={selectedIdCardStudent}
+        onClose={() => setSelectedIdCardStudent(null)}
+      />
+      <StudentQrModal
+        visible={Boolean(selectedQrStudent)}
+        student={selectedQrStudent}
+        onClose={() => setSelectedQrStudent(null)}
+      />
+      <StudentMenuModal
+        visible={Boolean(selectedMenuStudent)}
+        student={selectedMenuStudent}
+        onClose={() => setSelectedMenuStudent(null)}
+        navigation={navigation}
+      />
+      <StudentWeeklyReportModal
+        visible={Boolean(selectedWeeklyStudent)}
+        student={selectedWeeklyStudent}
+        onClose={() => setSelectedWeeklyStudent(null)}
+      />
     </View>
   );
 }
@@ -1132,7 +1732,102 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   screen: { flex: 1, backgroundColor: 'transparent' },
-  content: { padding: 16, paddingTop: Platform.OS === 'android' ? 20 : 16 },
+  // Struktur scroll + hero statis disamakan plek dengan Tugas/Jadwal/Materi/Nilai
+  mainScrollContent: {
+    flexGrow: 1,
+  },
+  bodyContentWrapper: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  staticTopBarWrapper: {
+    width: '100%',
+    position: 'relative',
+    overflow: 'hidden',
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
+    paddingBottom: 14,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  heroDecorCircle1: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  heroDecorCircle2: {
+    position: 'absolute',
+    bottom: -20,
+    left: 20,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  staticTopBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    width: '100%',
+  },
+  heroSquircleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+    position: 'relative',
+  },
+  heroTitleCenterCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  heroModuleTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    fontFamily: 'Poppins_700Bold',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  heroModuleSubtitle: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    marginTop: 1,
+  },
+  heroBellDot: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
   containerBlock: {
     marginBottom: 16,
   },
@@ -1172,6 +1867,11 @@ const styles = StyleSheet.create({
   },
   heroCardScrollContainer: {
     marginHorizontal: -16,
+  },
+  studentCardsTrack: {
+    gap: STUDENT_CARD_GAP,
+    paddingBottom: 4,
+    zIndex: 1,
   },
   heroCardScroll: {
     paddingHorizontal: 16,
@@ -2042,191 +2742,66 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  // Hero Banner Card
-  heroBannerCard: {
-    borderRadius: 18,
-    borderWidth: 0,
-    borderColor: 'transparent',
+  // 3. Kalender Bulanan (Card Diperbesar & Full Width)
+  calendarFullCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 14,
-    marginBottom: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    elevation: 0,
-    shadowOpacity: 0,
-  },
-  heroBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 10,
-  },
-  heroBannerIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: 'rgba(220, 252, 231, 0.75)',
-    borderWidth: 0,
-    borderColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  heroBannerTextWrap: {
-    flex: 1,
-  },
-  heroBannerTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#064E3B',
-  },
-  heroBannerSub: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#047857',
-    marginTop: 2,
-  },
-  heroBannerUnit: {
-    fontSize: 10.5,
-    fontWeight: '600',
-    color: '#059669',
-    marginTop: 1,
-  },
-  heroCalendarArtWrap: {
-    width: 52,
-    height: 52,
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  artCardBackdrop: {
-    position: 'absolute',
-    width: 38,
-    height: 42,
-    borderRadius: 8,
-    backgroundColor: '#3B82F6',
-    opacity: 0.85,
-    transform: [{ rotate: '-8deg' }],
-  },
-  artCalendarCard: {
-    width: 38,
-    height: 42,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-    overflow: 'hidden',
-    alignItems: 'center',
-  },
-  artCalendarHeader: {
-    width: '100%',
-    height: 10,
-    backgroundColor: '#EF4444',
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-  },
-  artSpiralHole: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#FFFFFF',
-  },
-  artCalendarBody: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  artCalendarDayNum: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#0F172A',
-    lineHeight: 14,
-  },
-  artCalendarMonth: {
-    fontSize: 7,
-    fontWeight: '800',
-    color: '#EF4444',
-    letterSpacing: 0.5,
-  },
-  artLeafBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    backgroundColor: '#DCFCE7',
-    borderRadius: 10,
-    padding: 2,
-    borderWidth: 1,
-    borderColor: '#86EFAC',
-  },
-
-  // Split Grid 2-Column
-  splitGridRow: {
-    flexDirection: SCREEN_WIDTH < 340 ? 'column' : 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  calendarColCard: {
-    flex: 1.18,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#64748B',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    marginBottom: 16,
   },
-  calendarColHeader: {
+  calendarFullHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
-    paddingHorizontal: 2,
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
   monthNavBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  monthColTitleWrap: {
+  monthTitleWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 2,
+    paddingHorizontal: 6,
   },
-  monthColTitleMonth: {
-    fontSize: 12,
+  monthTitleMonth: {
+    fontSize: 16,
     fontWeight: '900',
     color: '#0F172A',
     textAlign: 'center',
   },
-  monthColTitleYear: {
-    fontSize: 9.5,
-    fontWeight: '700',
+  monthTitleSub: {
+    fontSize: 11,
+    fontWeight: '600',
     color: '#64748B',
     textAlign: 'center',
-    marginTop: 1,
+    marginTop: 2,
   },
   dayNamesRow: {
     flexDirection: 'row',
-    marginBottom: 4,
+    marginBottom: 6,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   dayNameCell: {
     flex: 1,
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#94A3B8',
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#64748B',
     textAlign: 'center',
   },
   dayNameCellSun: {
@@ -2235,18 +2810,19 @@ const styles = StyleSheet.create({
   daysMatrixGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    marginTop: 2,
   },
   dayCellTouch: {
     width: '14.28%',
-    height: 26,
+    height: 42,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
   dayCellCircle: {
-    width: 21,
-    height: 21,
-    borderRadius: 10.5,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2254,16 +2830,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#18A165',
     shadowColor: '#18A165',
     shadowOpacity: 0.35,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowRadius: 5,
+    elevation: 3,
   },
   dayCellTodayCircle: {
-    borderWidth: 1.2,
+    borderWidth: 1.5,
     borderColor: '#18A165',
     backgroundColor: '#ECFDF5',
   },
   dayCellText: {
-    fontSize: 10,
+    fontSize: 13,
     fontWeight: '700',
     color: '#1E293B',
   },
@@ -2281,118 +2857,316 @@ const styles = StyleSheet.create({
   },
   dayEventIndicatorDot: {
     position: 'absolute',
-    bottom: 0,
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
+    bottom: 2,
+    width: 4.5,
+    height: 4.5,
+    borderRadius: 2.5,
     backgroundColor: '#18A165',
   },
   dayEventIndicatorDotSelected: {
     backgroundColor: '#FFFFFF',
   },
 
-  // Right Panel Agenda Hari Ini
-  agendaColCard: {
-    flex: 1,
+  // 4. Panel Agenda Hari Ini (Full Width di Bawah Kalender)
+  agendaFullCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 10,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#64748B',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    marginBottom: 16,
+  },
+  agendaFullHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
-  agendaColHeader: {
-    marginBottom: 8,
+  agendaFullHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
-  agendaColTitle: {
-    fontSize: 13,
+  agendaFullIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  agendaFullHeaderTextCol: {
+    flex: 1,
+  },
+  agendaFullTitle: {
+    fontSize: 14.5,
     fontWeight: '900',
     color: '#0F172A',
   },
-  agendaColDate: {
-    fontSize: 10,
+  agendaFullDate: {
+    fontSize: 11,
     fontWeight: '700',
-    color: '#18A165',
-    marginTop: 2,
+    color: '#16A34A',
+    marginTop: 1,
   },
-  agendaListWrap: {
-    gap: 6,
+  agendaCountBadge: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  agendaCountBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  agendaFullListWrap: {
+    gap: 10,
+    marginBottom: 10,
+  },
+  agendaItemCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderLeftWidth: 4,
+  },
+  agendaItemTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 6,
   },
-  agendaMiniCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    borderLeftWidth: 3,
+  agendaItemCategoryWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  agendaMiniTopRow: {
+  agendaItemCategoryDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  agendaItemCategoryText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  agendaItemTimeWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 2,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  agendaMiniDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-  },
-  agendaMiniTime: {
-    fontSize: 9,
+  agendaItemTimeText: {
+    fontSize: 10.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#475569',
   },
-  agendaMiniTitle: {
-    fontSize: 11,
+  agendaItemTitle: {
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#0F172A',
+    lineHeight: 18,
+    marginBottom: 4,
   },
-  agendaMiniLocation: {
-    fontSize: 9.5,
-    color: '#94A3B8',
-    marginTop: 1,
+  agendaItemDesc: {
+    fontSize: 11.5,
+    color: '#64748B',
+    lineHeight: 16,
+    marginBottom: 8,
+  },
+  agendaItemFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  agendaItemLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    marginRight: 6,
+  },
+  agendaItemLocationText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  errorBannerBox: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1.5,
+    borderColor: '#FECDD3',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9F1239',
+  },
+  errorRetryBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#E11D48',
+  },
+  errorRetryText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   agendaEmptyBox: {
-    paddingVertical: 18,
+    paddingVertical: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  agendaEmptyIconWrap: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  agendaEmptyTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
   agendaEmptyText: {
-    fontSize: 10,
-    color: '#94A3B8',
+    fontSize: 11.5,
+    color: '#64748B',
     textAlign: 'center',
     marginTop: 4,
-    lineHeight: 14,
+    lineHeight: 16,
+    paddingHorizontal: 16,
   },
   seeAllAgendaBtn: {
-    paddingVertical: 5,
+    paddingVertical: 10,
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     marginTop: 4,
   },
   seeAllAgendaBtnText: {
-    fontSize: 10.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#18A165',
   },
 
+  // Teacher KPI Stats Cards (Total Agenda, Filter Periode, Agenda Harian)
+  teacherStatsWrapper: {
+    marginBottom: 14,
+  },
+  teacherStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'stretch',
+  },
+  teacherStatCard: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 9,
+    borderWidth: 1.2,
+    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+      },
+      android: { elevation: 2 },
+    }),
+  },
+  teacherStatCardEmerald: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  teacherStatCardSky: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+  },
+  teacherStatCardAmber: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  teacherStatTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  teacherStatIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  teacherStatBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  teacherStatBadgeText: {
+    fontSize: 8.5,
+    fontWeight: '800',
+  },
+  teacherStatValue: {
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 2,
+    letterSpacing: -0.3,
+  },
+  teacherStatLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
+
   // Rentang Cepat 5 Cards
   quickRangeSectionNew: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   quickRangeTitleNew: {
-    fontSize: 13.5,
-    fontWeight: '900',
+    fontSize: 13,
+    fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   quickRangeGridRow: {
     flexDirection: 'row',
@@ -2401,22 +3175,23 @@ const styles = StyleSheet.create({
   },
   quickRangeCardNew: {
     flex: 1,
-    aspectRatio: 1,
-    borderRadius: 14,
+    minHeight: 64,
+    borderRadius: 13,
     borderWidth: 1.2,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 2,
     shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
     elevation: 1,
   },
   quickRangeCardTextNew: {
     fontSize: 9,
     fontWeight: '800',
     textAlign: 'center',
-    marginTop: 4,
+    marginTop: 3,
     lineHeight: 11,
   },
 

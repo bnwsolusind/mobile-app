@@ -3,6 +3,48 @@ import { API_BASE_URL } from '../services/api';
 export const DEFAULT_PARENT_AVATAR = require('../../assets/avatar_parent.jpg');
 export const DEFAULT_STUDENT_BOY_AVATAR = require('../../assets/avatar_student_boy.png');
 export const DEFAULT_STUDENT_GIRL_AVATAR = require('../../assets/avatar_student_girl.jpg');
+export const SUPERVISI_GURU_ILLUSTRATION = require('../../assets/supervisi_guru.jpg');
+
+export const resolveMediaUrl = (rawUrl?: string | null): string | null => {
+  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim() === '') return null;
+
+  const cleanRawUrl = rawUrl.trim();
+  const apiHost = API_BASE_URL.replace(/\/api\/?$/, '');
+
+  // Data URI: return as is
+  if (cleanRawUrl.startsWith('data:')) {
+    return cleanRawUrl;
+  }
+
+  // Absolute URL (http:// or https://)
+  if (cleanRawUrl.startsWith('http://') || cleanRawUrl.startsWith('https://')) {
+    try {
+      const parsed = new URL(cleanRawUrl);
+      const isLocalOrPrivateHost =
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '10.0.2.2' ||
+        parsed.hostname.startsWith('192.168.') ||
+        parsed.hostname.startsWith('10.') ||
+        parsed.hostname.startsWith('172.');
+
+      // If pointing to local network / storage, map to current active apiHost
+      if (isLocalOrPrivateHost || parsed.pathname.includes('/storage/')) {
+        return `${apiHost}${parsed.pathname}${parsed.search}`;
+      }
+      return cleanRawUrl;
+    } catch {
+      return cleanRawUrl.replace(/^https?:\/\/[^/]+/i, apiHost);
+    }
+  }
+
+  // Relative path stored in database (e.g. "students/photos/1.jpg" or "storage/..." or "/storage/...")
+  let cleanPath = cleanRawUrl.startsWith('/') ? cleanRawUrl : `/${cleanRawUrl}`;
+  if (!cleanPath.startsWith('/storage/')) {
+    cleanPath = `/storage${cleanPath}`;
+  }
+  return `${apiHost}${cleanPath}`;
+};
 
 export const getProfileImageUrl = (user: any, dashboard?: any): string | null => {
   if (!user && !dashboard) return null;
@@ -54,42 +96,5 @@ export const getProfileImageUrl = (user: any, dashboard?: any): string | null =>
     dashboard?.student?.metadata?.photo ||
     null;
 
-  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim() === '') return null;
-
-  const cleanRawUrl = rawUrl.trim();
-  const apiHost = API_BASE_URL.replace(/\/api\/?$/, '');
-
-  // Data URI: return as is
-  if (cleanRawUrl.startsWith('data:')) {
-    return cleanRawUrl;
-  }
-
-  // Absolute URL (http:// or https://)
-  if (cleanRawUrl.startsWith('http://') || cleanRawUrl.startsWith('https://')) {
-    try {
-      const parsed = new URL(cleanRawUrl);
-      const isLocalOrPrivateHost =
-        parsed.hostname === 'localhost' ||
-        parsed.hostname === '127.0.0.1' ||
-        parsed.hostname === '10.0.2.2' ||
-        parsed.hostname.startsWith('192.168.') ||
-        parsed.hostname.startsWith('10.') ||
-        parsed.hostname.startsWith('172.');
-
-      // If pointing to local network / storage, map to current active apiHost
-      if (isLocalOrPrivateHost || parsed.pathname.includes('/storage/')) {
-        return `${apiHost}${parsed.pathname}${parsed.search}`;
-      }
-      return cleanRawUrl;
-    } catch {
-      return cleanRawUrl.replace(/^https?:\/\/[^/]+/i, apiHost);
-    }
-  }
-
-  // Relative path stored in database (e.g. "students/photos/1.jpg" or "storage/..." or "/storage/...")
-  let cleanPath = cleanRawUrl.startsWith('/') ? cleanRawUrl : `/${cleanRawUrl}`;
-  if (!cleanPath.startsWith('/storage/')) {
-    cleanPath = `/storage${cleanPath}`;
-  }
-  return `${apiHost}${cleanPath}`;
+  return resolveMediaUrl(rawUrl);
 };

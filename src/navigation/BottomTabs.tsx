@@ -1,5 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  AppState,
+  BackHandler,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -7,9 +19,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import InAppNotificationBanner from '../components/InAppNotificationBanner';
 import { useChatNotificationWatcher } from '../hooks/useChatNotificationWatcher';
+import { useScheduleNotificationWatcher } from '../hooks/useScheduleNotificationWatcher';
 import { notificationService } from '../services/notificationService';
 import { useChatBadgeStore } from '../stores/chatBadgeStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { useActiveChildStore } from '../stores/activeChildStore';
+import {
+  getProfileImageUrl,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+} from '../utils/profile';
 import HomeScreen from '../screens/HomeScreen';
 import AbsensiScreen from '../screens/AbsensiScreen';
 import ProfilScreen from '../screens/ProfilScreen';
@@ -31,22 +51,82 @@ import GradeScreen from '../screens/GradeScreen';
 import StudentNotesScreen from '../screens/StudentNotesScreen';
 import MutabaahScreen from '../screens/MutabaahScreen';
 import ExamGridsScreen from '../screens/ExamGridsScreen';
+import BankSoalScreen from '../screens/BankSoalScreen';
 import CbtExamsScreen from '../screens/CbtExamsScreen';
 import QuranScreen from '../screens/QuranScreen';
 import DoaDzikirScreen from '../screens/DoaDzikirScreen';
 import ParentBillsScreen from '../screens/ParentBillsScreen';
+import StudentAttendanceReportScreen from '../screens/StudentAttendanceReportScreen';
+import GateAttendanceTerminalScreen from '../screens/GateAttendanceTerminalScreen';
+import SubstituteKbmAttendanceScreen from '../screens/SubstituteKbmAttendanceScreen';
+import StaffSelfAttendanceScreen from '../screens/StaffSelfAttendanceScreen';
+import PrincipalDashboardScreen from '../screens/PrincipalDashboardScreen';
+import MasterSiswaScreen from '../screens/MasterSiswaScreen';
+import MutasiSiswaScreen from '../screens/MutasiSiswaScreen';
+import PantauKelasScreen from '../screens/PantauKelasScreen';
 import AccessDeniedScreen from '../components/AccessDeniedScreen';
 import { useAuthStore } from '../stores/authStore';
 import { mobileApiService } from '../services/mobileApiService';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { isFoundationRole } from '../utils/roles';
-import { canAccessScreen, ScreenKey } from '../utils/accessControl';
+import { canAccessScreen, canAccessBilling, ScreenKey } from '../utils/accessControl';
 
 const Tab = createBottomTabNavigator();
 
-function ModuleHeader({ title, subtitle, navigation, route }: { title: string; subtitle?: string; navigation: any; route?: any }) {
-  const insets = useSafeAreaInsets();
+function ModuleHeader({
+  title,
+  subtitle,
+  navigation,
+  route,
+  showStudentCard = false,
+}: {
+  title: string;
+  subtitle?: string;
+  navigation: any;
+  route?: any;
+  showStudentCard?: boolean;
+}) {
+  let insets = { top: 0, bottom: 0, left: 0, right: 0 };
+  try {
+    if (typeof useSafeAreaInsets === 'function') {
+      insets = useSafeAreaInsets() || insets;
+    }
+  } catch {}
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
+  const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
+
+  const user = useAuthStore((state) => state.user);
+  const children = useActiveChildStore((state) => state.children);
+  const activeChildId = useActiveChildStore((state) => state.activeChildId);
+  const setActiveChildId = useActiveChildStore((state) => state.setActiveChildId);
+
+  // Active student calculation
+  const activeStudent: any = useMemo(() => {
+    if (children && children.length > 0) {
+      const found = children.find(
+        (c) => String(c.id || c.student_id) === String(activeChildId)
+      );
+      if (found) return found;
+      return children[0];
+    }
+    return (user as any)?.student || user || null;
+  }, [children, activeChildId, user]);
+
+  const studentName = activeStudent?.name || activeStudent?.full_name || activeStudent?.nama_lengkap || user?.name || 'Siswa';
+  const studentGender = activeStudent?.gender || activeStudent?.jenis_kelamin || (user as any)?.gender || 'L';
+  const isGirl = studentGender === 'P' || studentGender === 'female' || studentGender === 'perempuan';
+  const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+  const avatarUrl = getProfileImageUrl(activeStudent);
+
+  const studentClass = typeof activeStudent?.kelas === 'object'
+    ? (activeStudent?.kelas?.nama_kelas || activeStudent?.kelas?.name)
+    : (activeStudent?.class_name || activeStudent?.kelas || '-');
+
+  const studentUnit = typeof activeStudent?.education_unit === 'object'
+    ? (activeStudent?.education_unit?.name || activeStudent?.education_unit?.nama)
+    : (activeStudent?.unit_name || (user as any)?.unit_name || 'Unit Pendidikan');
+
+  const studentNis = activeStudent?.nisn || activeStudent?.nis || '-';
 
   const resolvedSubtitle = subtitle || (
     title === 'Nilai Hasil Belajar' ? 'Mutabaah Ibadah Harian' :
@@ -63,17 +143,18 @@ function ModuleHeader({ title, subtitle, navigation, route }: { title: string; s
     }
     const childId = route?.params?.child_id || route?.params?.student_id;
     if (route?.params?.from_child_portal && childId) {
-      navigation.navigate('Beranda', {
-        reopen_child_portal_id: String(childId),
-        reopen_timestamp: Date.now(),
-      });
+      navigation.navigate('Beranda');
+      return;
+    }
+    if (navigation.canGoBack()) {
+      navigation.goBack();
     } else {
       navigation.navigate('Beranda');
     }
   };
 
   return (
-    <View style={{ backgroundColor: '#FFFFFF', width: '100%' }}>
+    <View style={moduleHeaderStyles.headerOuterWrapper}>
       <LinearGradient
         colors={['#047857', '#059669', '#10B981']}
         start={{ x: 0, y: 0 }}
@@ -82,69 +163,208 @@ function ModuleHeader({ title, subtitle, navigation, route }: { title: string; s
           moduleHeaderStyles.gradientBar,
           {
             paddingTop: topInset + 8,
-            paddingBottom: resolvedSubtitle ? 16 : 14,
+            paddingBottom: showStudentCard ? 14 : (resolvedSubtitle ? 16 : 14),
           },
         ]}
       >
-        <View style={moduleHeaderStyles.decorWave} />
-        <View style={moduleHeaderStyles.decorCircle} />
-        <View style={moduleHeaderStyles.decorMosqueArch} />
+        {/* Subtle Decorative Accents (clean geometric circles, no heavy images) */}
+        <View style={moduleHeaderStyles.decorCircle1} />
+        <View style={moduleHeaderStyles.decorCircle2} />
 
-        {/* Title layer: Absolutely centered relative to full screen width */}
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <View
-            style={[
-              moduleHeaderStyles.titleAbsoluteCenter,
-              {
-                paddingTop: topInset + 8,
-                paddingBottom: resolvedSubtitle ? 16 : 14,
-              },
-            ]}
-          >
-            <Text numberOfLines={1} style={moduleHeaderStyles.title}>
-              {title}
-            </Text>
-            {resolvedSubtitle ? (
-              <Text numberOfLines={1} style={moduleHeaderStyles.subtitle}>
-                {resolvedSubtitle}
-              </Text>
-            ) : null}
+        {showStudentCard ? (
+          /* ================= UNIFIED DYNAMIC HEADER (WITH INTEGRATED STUDENT CARD) ================= */
+          <View style={moduleHeaderStyles.unifiedHeaderContainer}>
+            {/* Top Bar: Back Button, Left Identity, Right Bell */}
+            <View style={moduleHeaderStyles.unifiedTopRow}>
+              {/* Back button */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Kembali ke halaman sebelumnya"
+                onPress={handleBack}
+                style={moduleHeaderStyles.squircleBtn}
+              >
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+              </Pressable>
+
+              {/* Left Identity: Squircle Avatar + Title & Student Subtitle */}
+              <View style={moduleHeaderStyles.unifiedLeftIdentity}>
+                <View style={moduleHeaderStyles.studentAvatarSquircle}>
+                  <Image
+                    source={avatarUrl ? { uri: avatarUrl } : defaultAvatar}
+                    style={moduleHeaderStyles.studentAvatarImg}
+                    resizeMode="cover"
+                  />
+                </View>
+                <View style={moduleHeaderStyles.headerIdentityTextCol}>
+                  <Text numberOfLines={1} style={moduleHeaderStyles.headerModuleTitleText}>
+                    {title}
+                  </Text>
+                  <Text numberOfLines={1} style={moduleHeaderStyles.headerStudentSubnameText}>
+                    Ananda {studentName}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Right Bell */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Notifikasi"
+                onPress={() => navigation.navigate('Notifikasi')}
+                style={moduleHeaderStyles.squircleBtn}
+              >
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                {unreadNotificationCount > 0 && (
+                  <View style={moduleHeaderStyles.bellBadgeDot} />
+                )}
+              </Pressable>
+            </View>
+
+            {/* Integrated Dynamic Student Card */}
+            <View style={moduleHeaderStyles.integratedCard}>
+              <View style={moduleHeaderStyles.integratedCardMainRow}>
+                <View style={moduleHeaderStyles.integratedCardInfoCol}>
+                  <Text numberOfLines={1} style={moduleHeaderStyles.integratedCardStudentName}>
+                    {studentName}
+                  </Text>
+                  <View style={moduleHeaderStyles.integratedBadgesRow}>
+                    <View style={moduleHeaderStyles.unitClassBadge}>
+                      <MaterialCommunityIcons name="school" size={12} color="#059669" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={moduleHeaderStyles.unitClassBadgeText}>
+                        {studentClass} • {studentUnit}
+                      </Text>
+                    </View>
+                    {studentNis !== '-' && (
+                      <View style={moduleHeaderStyles.nisBadge}>
+                        <Text style={moduleHeaderStyles.nisBadgeText}>NIS: {studentNis}</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Status Indicator */}
+                <View style={moduleHeaderStyles.activeStatusPill}>
+                  <MaterialCommunityIcons name="check-circle" size={13} color="#059669" />
+                  <Text style={moduleHeaderStyles.activeStatusText}>Aktif</Text>
+                </View>
+              </View>
+
+              {/* Multiple Children Switcher Chips (if more than 1 child) */}
+              {children && children.length > 1 && (
+                <View style={moduleHeaderStyles.childSwitcherSection}>
+                  <View style={moduleHeaderStyles.childSwitcherDivider} />
+                  <View style={moduleHeaderStyles.childSwitcherRow}>
+                    <Text style={moduleHeaderStyles.childSwitcherLabel}>Pilih Ananda:</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={moduleHeaderStyles.childChipsScroll}
+                    >
+                      {children.map((child: any) => {
+                        const childIdStr = String(child.id || child.student_id);
+                        const isSelected = childIdStr === String(activeChildId);
+                        const shortName = (child.name || child.full_name || 'Ananda').split(' ')[0];
+                        return (
+                          <TouchableOpacity
+                            key={childIdStr}
+                            activeOpacity={0.75}
+                            onPress={() => setActiveChildId(childIdStr)}
+                            style={[
+                              moduleHeaderStyles.childChip,
+                              isSelected && moduleHeaderStyles.childChipActive,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name={isSelected ? 'check-circle' : 'account-circle-outline'}
+                              size={13}
+                              color={isSelected ? '#FFFFFF' : '#64748B'}
+                              style={{ marginRight: 4 }}
+                            />
+                            <Text
+                              style={[
+                                moduleHeaderStyles.childChipText,
+                                isSelected && moduleHeaderStyles.childChipTextActive,
+                              ]}
+                            >
+                              {shortName}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                </View>
+              )}
+            </View>
           </View>
-        </View>
+        ) : (
+          /* ================= STANDARD HEADER (FOR OTHER MODULES) ================= */
+          <>
+            {/* Title layer: Absolutely centered relative to full screen width */}
+            <View style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}>
+              <View
+                style={[
+                  moduleHeaderStyles.titleAbsoluteCenter,
+                  {
+                    paddingTop: topInset + 8,
+                    paddingBottom: resolvedSubtitle ? 16 : 14,
+                  },
+                ]}
+              >
+                <Text numberOfLines={1} style={moduleHeaderStyles.title}>
+                  {title}
+                </Text>
+                {resolvedSubtitle ? (
+                  <Text numberOfLines={1} style={moduleHeaderStyles.subtitle}>
+                    {resolvedSubtitle}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
 
-        {/* Buttons layer: left back button and right bell button */}
-        <View style={moduleHeaderStyles.buttonsRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Kembali ke halaman sebelumnya"
-            onPress={handleBack}
-            style={moduleHeaderStyles.backButton}
-          >
-            <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
-          </Pressable>
+            {/* Buttons layer: left back button and right bell button */}
+            <View style={moduleHeaderStyles.buttonsRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Kembali ke halaman sebelumnya"
+                onPress={handleBack}
+                style={moduleHeaderStyles.backButton}
+              >
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+              </Pressable>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Notifikasi"
-            onPress={() => navigation.navigate('Notifikasi')}
-            style={moduleHeaderStyles.bellButton}
-          >
-            <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
-            <View style={moduleHeaderStyles.bellBadgeDot} />
-          </Pressable>
-        </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Notifikasi"
+                onPress={() => navigation.navigate('Notifikasi')}
+                style={moduleHeaderStyles.bellButton}
+              >
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                {unreadNotificationCount > 0 && (
+                  <View style={moduleHeaderStyles.bellBadgeDot} />
+                )}
+              </Pressable>
+            </View>
+          </>
+        )}
       </LinearGradient>
     </View>
   );
 }
 
-const moduleOptions = (title: string, theme: any) => ({ navigation, route }: any) => ({
+const moduleOptions = (title: string, theme: any, options?: { showStudentCard?: boolean }) => ({ navigation, route }: any) => ({
   title,
   headerShown: true,
   tabBarButton: () => null,
   tabBarItemStyle: { display: 'none' as const },
   headerShadowVisible: false,
-  header: () => <ModuleHeader title={title} navigation={navigation} route={route} />,
+  header: () => (
+    <ModuleHeader
+      title={title}
+      navigation={navigation}
+      route={route}
+      showStudentCard={options?.showStudentCard}
+    />
+  ),
 });
 
 /**
@@ -187,16 +407,7 @@ const GuardedTeacherScreen = withScreenGuard(TeacherPortalScreen, 'teacher');
 const GuardedParentScreen = withScreenGuard(ParentPortalScreen, 'parent');
 const GuardedStudentScreen = withScreenGuard(StudentPortalScreen, 'student');
 const GuardedAbsensiScreen = withScreenGuard(AbsensiScreen, 'attendance');
-
-const getSafeInsets = (insetsHook?: () => any) => {
-  try {
-    if (typeof insetsHook === 'function') {
-      const res = insetsHook();
-      if (res && typeof res === 'object') return res;
-    }
-  } catch {}
-  return { top: 0, bottom: 0, left: 0, right: 0 };
-};
+const GuardedTeacherAttendanceReportScreen = withScreenGuard(StudentAttendanceReportScreen, 'rekapPresensiGuru');
 
 function QrTabBarButton(props: any) {
   const isSelected = props.accessibilityState?.selected;
@@ -222,7 +433,12 @@ function QrTabBarButton(props: any) {
 }
 
 export default function BottomTabs() {
-  const insets = getSafeInsets(typeof useSafeAreaInsets === 'function' ? useSafeAreaInsets : undefined);
+  let insets = { top: 0, bottom: 0, left: 0, right: 0 };
+  try {
+    if (typeof useSafeAreaInsets === 'function') {
+      insets = useSafeAreaInsets() || insets;
+    }
+  } catch {}
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 18 : 10);
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
@@ -240,6 +456,11 @@ export default function BottomTabs() {
       return;
     }
 
+    // Safety timeout: jangan biarkan spinner verifikasi menahan layar lebih dari 1.2 detik
+    const timer = setTimeout(() => {
+      setIsProfileSyncing(false);
+    }, 1200);
+
     // Refresh user roles, permissions, and scope from authoritative server profile
     mobileApiService
       .getProfile()
@@ -250,8 +471,11 @@ export default function BottomTabs() {
         // Safe offline preservation: cached session remains active if offline
       })
       .finally(() => {
+        clearTimeout(timer);
         setIsProfileSyncing(false);
       });
+
+    return () => clearTimeout(timer);
   }, [token, syncServerProfile]);
 
   const access = useMemo(() => ({
@@ -265,6 +489,7 @@ export default function BottomTabs() {
     parent: canAccessScreen('parent', user, mobileConfig).allowed,
     student: canAccessScreen('student', user, mobileConfig).allowed,
     attendance: canAccessScreen('attendance', user, mobileConfig).allowed,
+    billing: canAccessBilling(user, mobileConfig),
   }), [user, mobileConfig]);
 
   const tabRegistry: Record<string, { name: string; component: React.ComponentType<any>; key: ScreenKey }> = {
@@ -276,7 +501,7 @@ export default function BottomTabs() {
   };
 
   const primaryTabs = mobileConfig.navigation.items
-    .filter((item) => item.enabled && access[item.key as ScreenKey] !== false)
+    .filter((item) => item.enabled && (access as Record<string, boolean>)[item.key] !== false)
     .sort((a, b) => a.order - b.order);
 
   const navigationRef = useNavigationContainerRef();
@@ -288,14 +513,41 @@ export default function BottomTabs() {
     } catch {}
   }, [navigationRef]);
 
+  const handleNavigateSchedule = useCallback((payload: any) => {
+    try {
+      if (payload?.scheduleId || payload?.classId) {
+        (navigationRef as any).navigate('QR Code', {
+          schedule_id: payload.scheduleId,
+          kelas_id: payload.classId,
+          class_name: payload.className,
+          mode: 'manual',
+        });
+      } else {
+        (navigationRef as any).navigate('Jadwal');
+      }
+    } catch {}
+  }, [navigationRef]);
+
   // Watch for incoming messages from teachers and show notifications
   useChatNotificationWatcher(handleNavigateChat);
+
+  // Watch for lesson schedules and trigger 10-minute and 5-minute notifications
+  useScheduleNotificationWatcher(handleNavigateSchedule);
 
   // Listen for user tapping native Android status-bar notification
   useEffect(() => {
     const unsubscribe = notificationService.onNotificationResponse((data) => {
       try {
-        if (data?.screen === 'Chat' || data?.teacherId) {
+        if (data?.screen === 'QR Code' || data?.scheduleId) {
+          (navigationRef as any).navigate('QR Code', {
+            schedule_id: data.scheduleId,
+            kelas_id: data.classId,
+            class_name: data.className,
+            mode: 'manual',
+          });
+        } else if (data?.screen === 'Jadwal') {
+          (navigationRef as any).navigate('Jadwal');
+        } else if (data?.screen === 'Chat' || data?.teacherId) {
           (navigationRef as any).navigate('Chat Guru', {
             teacherId: data.teacherId,
             studentId: data.studentId,
@@ -310,6 +562,46 @@ export default function BottomTabs() {
 
     return unsubscribe;
   }, []);
+
+  // Sync unread notification & message count periodically & on AppState change
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let isMounted = true;
+    const syncUnreadCount = async () => {
+      try {
+        const res: any = await mobileApiService.getUnreadNotificationCount();
+        if (!isMounted) return;
+        const count = Number(res?.data?.unread_count ?? res?.unread_count ?? (typeof res === 'number' ? res : 0));
+        useNotificationBadgeStore.getState().setUnreadNotificationCount(count);
+      } catch {}
+    };
+
+    // 1. Initial sync
+    syncUnreadCount();
+
+    // 2. Periodic polling every 8s while user is logged in
+    const intervalId = setInterval(syncUnreadCount, 8000);
+
+    // 3. Re-sync whenever app comes to foreground
+    const appStateSub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        syncUnreadCount();
+      }
+    });
+
+    // 4. Re-sync whenever in-app notification triggers
+    const inAppUnsub = notificationService.subscribeInApp(() => {
+      syncUnreadCount();
+    });
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+      appStateSub.remove();
+      inAppUnsub();
+    };
+  }, [user?.id]);
 
   const handleNavigationStateChange = useCallback(() => {
     try {
@@ -417,18 +709,18 @@ export default function BottomTabs() {
           tabBarIcon: ({ focused }) => {
             let iconName = 'circle-outline';
             if (route.name === 'Beranda') iconName = focused ? 'home' : 'home-outline';
-            else if (route.name === 'Chat Guru') iconName = focused ? 'chat-processing' : 'chat-processing-outline';
+            else if (route.name === 'Chat Guru' || route.name === 'Chat') iconName = focused ? 'chat-processing' : 'chat-processing-outline';
             else if (route.name === 'Notifikasi') iconName = focused ? 'bell' : 'bell-outline';
             else if (route.name === 'Profil') iconName = focused ? 'account' : 'account-outline';
             else if (route.name === 'Lainnya') iconName = 'menu';
             else if (route.name === 'Data') iconName = 'database-outline';
-            else if (route.name === 'Guru') iconName = 'teach';
+            else if (route.name === 'Guru') iconName = 'presentation';
             else if (route.name === 'Orang Tua') iconName = 'account-child-outline';
             else if (route.name === 'Siswa') iconName = 'school-outline';
             else if (route.name === 'Absensi') iconName = 'clipboard-check-outline';
             else if (route.name === 'Kalender') iconName = 'calendar-month-outline';
 
-            const isChat = route.name === 'Chat Guru';
+            const isChat = route.name === 'Chat Guru' || route.name === 'Chat';
             const showBadge = isChat && unreadChatCount > 0;
 
             if (focused) {
@@ -461,9 +753,9 @@ export default function BottomTabs() {
         {primaryTabs.map((item) => {
           const entry = tabRegistry[item.key];
           if (!entry) return null;
-          const isChat = item.key === 'notifications' || entry.name === 'Chat Guru';
+          const isChat = item.key === 'notifications' || entry.name === 'Chat Guru' || entry.name === 'Chat';
           const isQr = item.key === 'qr' || entry.name === 'QR Code';
-          const finalLabel = isChat ? 'Chat Guru' : item.label;
+          const finalLabel = isChat ? 'Chat' : item.label;
 
           if (isQr) {
             return (
@@ -494,21 +786,42 @@ export default function BottomTabs() {
           <Tab.Screen
             name="Data"
             component={GuardedDataScreen}
-            options={moduleOptions(isFoundation ? 'Data Yayasan' : 'Data Master', theme)}
+            options={{
+              headerShown: false,
+              tabBarButton: () => null,
+              tabBarItemStyle: { display: 'none' as const },
+            }}
           />
         )}
+        <Tab.Screen
+          name="DataManagement"
+          component={GuardedDataScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
         {access.teacher && (
           <Tab.Screen
             name="Guru"
             component={GuardedTeacherScreen}
-            options={moduleOptions('Portal Guru', theme)}
+            options={{
+              headerShown: false,
+              tabBarButton: () => null,
+              tabBarItemStyle: { display: 'none' as const },
+            }}
           />
         )}
         {access.parent && (
           <Tab.Screen
             name="Orang Tua"
             component={GuardedParentScreen}
-            options={moduleOptions('Portal Orang Tua', theme)}
+            options={{
+              headerShown: false,
+              tabBarButton: () => null,
+              tabBarItemStyle: { display: 'none' as const },
+            }}
           />
         )}
         {access.student && (
@@ -522,63 +835,105 @@ export default function BottomTabs() {
           <Tab.Screen
             name="Absensi"
             component={GuardedAbsensiScreen}
-            options={moduleOptions('Presensi', theme)}
+            options={{
+              headerShown: false,
+              tabBarButton: () => null,
+              tabBarItemStyle: { display: 'none' as const },
+            }}
           />
         )}
         <Tab.Screen
           name="Perizinan"
           component={GuardedAbsensiScreen}
           initialParams={{ tab: 'permissions' }}
-          options={moduleOptions('Perizinan Santri', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Kalender"
           component={AcademicCalendarScreen}
-          options={moduleOptions('Kalender Akademik', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Informasi"
           component={SchoolInformationScreen}
-          options={moduleOptions('Informasi Sekolah', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Jadwal"
           component={ScheduleScreen}
-          options={moduleOptions('Jadwal Pelajaran', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Materi"
           component={MaterialScreen}
-          options={moduleOptions('Materi Pembelajaran', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Tugas"
           component={AssignmentScreen}
-          options={moduleOptions('Tugas Siswa', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Tahfizh"
           component={TahfizhScreen}
-          options={moduleOptions('Tahfizh Al-Qur\'an', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Mutabaah"
           component={MutabaahScreen}
-          options={moduleOptions('Mutaba’ah Yaumiyyah', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Nilai"
           component={GradeScreen}
-          options={moduleOptions('Nilai Hasil Belajar', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
-        {access.parent && (
-          <Tab.Screen
-            name="Komentar"
-            component={StudentNotesScreen}
-            options={moduleOptions('Buku Penghubung', theme)}
-          />
-        )}
-        {access.parent && (
+        <Tab.Screen
+          name="Komentar"
+          component={StudentNotesScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        {(access.parent || access.billing) && (
           <Tab.Screen
             name="Tagihan"
             component={ParentBillsScreen}
@@ -588,12 +943,29 @@ export default function BottomTabs() {
         <Tab.Screen
           name="KisiKisi"
           component={ExamGridsScreen}
-          options={moduleOptions('Kisi-Kisi Ujian', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="BankSoal"
+          component={BankSoalScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="CbtExams"
           component={CbtExamsScreen}
-          options={moduleOptions('Ujian CBT', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Quran"
@@ -610,14 +982,155 @@ export default function BottomTabs() {
           component={GuardedNotificationsScreen}
           options={moduleOptions('Notifikasi & Pengumuman', theme)}
         />
+        <Tab.Screen
+          name="Notifications"
+          component={GuardedNotificationsScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="Chat"
+          component={GuardedChatScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="RekapPresensiSiswa"
+          component={StudentAttendanceReportScreen}
+          initialParams={{ defaultSubject: 'siswa', lockedSubject: 'siswa' }}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="RekapPresensiGuru"
+          component={GuardedTeacherAttendanceReportScreen}
+          initialParams={{ defaultSubject: 'pegawai', lockedSubject: 'pegawai' }}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="AbsensiGerbangTerminal"
+          component={GateAttendanceTerminalScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="RekapPresensiGerbang"
+          component={GateAttendanceTerminalScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="PresensiKbmPengganti"
+          component={SubstituteKbmAttendanceScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="PresensiMandiriStaff"
+          component={StaffSelfAttendanceScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="PrincipalDashboard"
+          component={PrincipalDashboardScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="DashboardKepalaSekolah"
+          component={PrincipalDashboardScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="MasterSiswa"
+          component={MasterSiswaScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="MutasiSiswa"
+          component={MutasiSiswaScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="KelolaAlumni"
+          component={MutasiSiswaScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="PantauKelas"
+          component={PantauKelasScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
       </Tab.Navigator>
       <InAppNotificationBanner
-        onPressNotification={(data) => {
+        onPressNotification={(data: any) => {
           try {
-            (navigationRef as any).navigate('Chat Guru', {
-              teacherId: data.teacherId,
-              studentId: data.studentId,
-            });
+            if (data?.screen === 'QR Code' || data?.scheduleId) {
+              (navigationRef as any).navigate('QR Code', {
+                schedule_id: data.scheduleId,
+                kelas_id: data.classId,
+                class_name: data.className,
+                mode: 'manual',
+              });
+            } else if (data?.screen === 'Jadwal') {
+              (navigationRef as any).navigate('Jadwal');
+            } else if (data?.teacherId) {
+              (navigationRef as any).navigate('Chat Guru', {
+                teacherId: data.teacherId,
+                studentId: data.studentId,
+              });
+            } else if (data?.screen === 'Notifikasi') {
+              (navigationRef as any).navigate('Notifikasi');
+            }
           } catch {}
         }}
       />
@@ -626,13 +1139,70 @@ export default function BottomTabs() {
 }
 
 const moduleHeaderStyles = StyleSheet.create({
+  headerOuterWrapper: {
+    backgroundColor: '#FFFFFF',
+    width: '100%',
+  },
   gradientBar: {
     width: '100%',
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
     overflow: 'hidden',
     position: 'relative',
     justifyContent: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  decorCircle1: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  decorCircle2: {
+    position: 'absolute',
+    bottom: -20,
+    left: 20,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  decorWave: {
+    position: 'absolute',
+    top: -40,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    transform: [{ scaleX: 1.3 }, { rotate: '-25deg' }],
+  },
+  decorCircle: {
+    position: 'absolute',
+    bottom: -20,
+    left: 40,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  decorMosqueArch: {
+    position: 'absolute',
+    right: 48,
+    top: -10,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   titleAbsoluteCenter: {
     flex: 1,
@@ -707,33 +1277,197 @@ const moduleHeaderStyles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 1.5,
   },
-  decorWave: {
-    position: 'absolute',
-    top: -40,
-    right: -20,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    transform: [{ scaleX: 1.3 }, { rotate: '-25deg' }],
+
+  /* Unified Header Styles */
+  unifiedHeaderContainer: {
+    width: '100%',
   },
-  decorCircle: {
-    position: 'absolute',
-    bottom: -20,
-    left: 40,
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  unifiedTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    width: '100%',
   },
-  decorMosqueArch: {
-    position: 'absolute',
-    right: 48,
-    top: -10,
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  squircleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+    position: 'relative',
+  },
+  unifiedLeftIdentity: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 10,
+  },
+  studentAvatarSquircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  headerIdentityTextCol: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  headerModuleTitleText: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    fontFamily: 'Poppins_700Bold',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  headerStudentSubnameText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 1,
+  },
+
+  /* Integrated Card Styles */
+  integratedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    shadowColor: '#000000',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  integratedCardMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  integratedCardInfoCol: {
+    flex: 1,
+    marginRight: 8,
+  },
+  integratedCardStudentName: {
+    fontSize: 14.5,
+    fontWeight: '700',
+    fontFamily: 'Poppins_700Bold',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+  },
+  integratedBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  unitClassBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  unitClassBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: '#047857',
+  },
+  nisBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  nisBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: '#64748B',
+  },
+  activeStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+  },
+  activeStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+    marginLeft: 3.5,
+  },
+  childSwitcherSection: {
+    marginTop: 8,
+  },
+  childSwitcherDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginBottom: 8,
+  },
+  childSwitcherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  childSwitcherLabel: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748B',
+    marginRight: 6,
+  },
+  childChipsScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  childChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  childChipActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  childChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  childChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   tabIcon: {
     width: 38,

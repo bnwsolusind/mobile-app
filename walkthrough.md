@@ -41,3 +41,34 @@
   - ADB reverse port 8081 dan 8000 berhasil dipasang.
   - Aplikasi `id.sch.dareliman.simsit` berhasil diluncurkan ke layar HP dan menjadi `mCurrentFocus` / `mFocusedApp`.
   - Tangkapan layar dari HP fisik berhasil diambil dan memverifikasi aplikasi tampil sempurna di HP.
+
+---
+
+## 4. Perbaikan Masalah Aplikasi Stuck di Splash Screen (Android 12–15 & .APK Release)
+
+### A. Akar Masalah
+1. **Deadlock Native `preventAutoHideAsync()`**:
+   - Pemanggilan `ExpoSplashScreen.preventAutoHideAsync()` di module level `App.tsx` menyebabkan `SplashScreenManager.preventAutoHideCalled = true`.
+   - Android 12–15 (`androidx.core.splashscreen`) membatalkan frame pertama (`OnPreDrawListener` return `false`).
+   - Karena frame dibatalkan dan view tree idle, Choreographer Android tidak pernah melakukan pass gambar ulang saat `hide()` dipanggil di memori, menyebabkan native splash screen (`#0B8A4D`) terkunci permanen (ANR / timeout 60 detik di HP fisik).
+2. **Double Splash Screen Conflict**:
+   - Aplikasi sudah memiliki custom React Native screen (`src/screens/SplashScreen.tsx`) dengan LinearGradient dan animasi progress bar 0-100%.
+   - Menahan splash OS dengan `preventAutoHideAsync()` justru menutupi custom splash screen tersebut.
+3. **Bottleneck Multi-Condition Gate**:
+   - Custom splash screen sebelumnya tertahan menunggu 4 kondisi dan timeout 4000ms.
+
+### B. Solusi yang Diterapkan
+1. **Pembersihan `preventAutoHideAsync()`**:
+   - Menghapus `preventAutoHideAsync()` dari global scope di `App.tsx`.
+   - Native OS splash screen kini menutup secara otomatis dan alami saat React Native me-mount frame pertama (`ReactMarkerConstants.CONTENT_APPEARED`).
+2. **Optimasi Waktu Transisi & Safety Timer**:
+   - Durasi animasi progress bar dipangkas dari 2400ms menjadi **1600ms**.
+   - Maximum safety timeout di `App.tsx` dipangkas dari 4000ms menjadi **2200ms**.
+   - Font fallback timeout dipangkas dari 2500ms menjadi **1200ms**.
+   - Profile verification spinner di `BottomTabs.tsx` dipangkas dari 3000ms menjadi **1200ms**.
+3. **Fitur Tap to Skip (Fast Forward)**:
+   - Menambahkan `Pressable` wrapper pada `SplashScreen.tsx` sehingga pengguna dapat mengetuk layar kapan saja untuk langsung masuk tanpa menunggu sisa animasi.
+4. **Validasi & Pengujian**:
+   - Seluruh unit test suite lulus 100%:
+     - `test-config-guards.mjs`: PASS (Exit code 0).
+     - `test-access-control.mjs`: PASS (Exit code 0).

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Dimensions,
   Image,
   Modal,
@@ -17,6 +18,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../stores/authStore';
 import { getApiErrorMessage } from '../services/api';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
@@ -26,11 +28,26 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
+import { useActiveChildStore } from '../stores/activeChildStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { StudentHeroCard } from '../components/StudentHeroCard';
+import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
+import { StudentIdCardModal } from '../components/StudentIdCardModal';
+import { StudentQrModal } from '../components/StudentQrModal';
+import { StudentMenuModal } from '../components/StudentMenuModal';
+import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
+import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import { EmptyStateCard } from '../components/EmptyStateCard';
+import TeacherCbtWorkspace from '../components/teacher/TeacherCbtWorkspace';
 
-import { isParentRole, isStudentRole } from '../utils/roles';
+import { isParentRole, isStudentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const STUDENT_CARD_GAP = 12;
+const STUDENT_PEEK_WIDTH = 26;
+const STUDENT_CARD_WIDTH = Math.round(SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP);
+const STUDENT_SNAP_INTERVAL = STUDENT_CARD_WIDTH + STUDENT_CARD_GAP;
 
 type CbtExamItem = {
   id: string;
@@ -81,16 +98,72 @@ const childUnit = (child: any) => child?.education_unit?.name || child?.kelas?.u
 export default function CbtExamsScreen({ route }: any) {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 16);
+  const navigation = useNavigation<any>();
   const user = useAuthStore((state) => state.user);
   const roles = useAuthStore((state) => state.roles);
   const userRoles = useMemo(() => (roles?.length ? roles : user?.roles || []), [roles, user?.roles]);
   const isParent = isParentRole(userRoles);
   const isStudent = isStudentRole(userRoles);
+  const isTeacher = isTeacherRole(userRoles);
+  const isStaff = isTuRole(userRoles) || isPrincipalRole(userRoles) || isSuperAdminRole(userRoles);
+  const isTeacherOrStaff = isTeacher || isStaff;
 
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
   const studentScrollRef = useRef<ScrollView>(null);
   const [children, setChildren] = useState<any[]>([]);
-  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(route?.params?.child_id);
+  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(() => {
+    const fromRoute = route?.params?.child_id || route?.params?.student_id;
+    if (fromRoute) return String(fromRoute);
+    const fromStore = useActiveChildStore.getState().activeChildId;
+    return fromStore ? String(fromStore) : undefined;
+  });
+  const [activeChildIndex, setActiveChildIndex] = useState(0);
+  const handledParamIdRef = useRef<string | null>(null);
   const [studentInfo, setStudentInfo] = useState<any>(null);
+
+  // ── Sticky header bersama (StudentStickyHeader, sama dengan Tugas/Jadwal/Materi/Nilai) ──
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
+  const { scrollY, handleMainScroll } = useStickyScroll();
+  const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
+
+  const handleBack = () => {
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    if (handled) return;
+    const childId = route?.params?.child_id || route?.params?.student_id;
+    if (route?.params?.from_child_portal && childId) {
+      navigation?.navigate('Beranda');
+      return;
+    }
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+    } else {
+      navigation?.navigate('Beranda');
+    }
+  };
+
+  const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
+  const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
+  const [selectedMenuStudent, setSelectedMenuStudent] = useState<any>(null);
+  const [selectedWeeklyStudent, setSelectedWeeklyStudent] = useState<any>(null);
+
+  // Tombol Kartu Siswa -> modal KTS; tombol QR -> modal QR khusus
+  const openIdCard = (student: any) => {
+    setSelectedIdCardStudent(student);
+  };
+  const openQrCard = (student: any) => {
+    setSelectedQrStudent(student);
+  };
+
+  // Tombol Jadwal pada sticky header & body card (disamakan dengan halaman Jadwal)
+  const openScheduleForStudent = useCallback((student: any) => {
+    const sid = student?.id || student?.student_id;
+    if (sid) {
+      const idStr = String(sid);
+      navigation?.navigate('Jadwal', { child_id: idStr, student_id: idStr });
+    } else {
+      navigation?.navigate('Jadwal');
+    }
+  }, [navigation]);
   const [exams, setExams] = useState<CbtExamItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -137,23 +210,34 @@ export default function CbtExamsScreen({ route }: any) {
     jumlah_salah: number | null;
     jumlah_kosong: number | null;
   } | null>(null);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    visible: boolean;
+    type?: FeedbackType;
+    title: string;
+    message?: string;
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+  } | null>(null);
 
-  // 1. Load Children if parent with offline cache
+  // 1. Load Children if parent with offline cache (seluruh anak ditampilkan)
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
-      const targetChildId = route?.params?.child_id;
-      const isSingleChild = route?.params?.single_child_only === true;
+      const targetChildId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
       const childCacheKey = offlineCache.buildKey('cbt_exams_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<any[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          const filteredCached = (isSingleChild && targetChildId)
-            ? cached.filter((c) => String(c.id) === String(targetChildId))
-            : cached;
-          const safeCached = filteredCached.length > 0 ? filteredCached : cached;
-          setChildren(safeCached);
-          setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || (safeCached[0]?.id ? String(safeCached[0].id) : undefined)));
+          setChildren(cached);
+          if (!selectedChildId) {
+            const initId = targetChildId
+              ? String(targetChildId)
+              : String(cached[0]?.id || cached[0]?.student_id);
+            setSelectedChildId(initId);
+            const foundIdx = cached.findIndex((c: any) => String(c.id || c.student_id) === initId);
+            if (foundIdx >= 0) setActiveChildIndex(foundIdx);
+          }
         }
       })();
 
@@ -161,21 +245,108 @@ export default function CbtExamsScreen({ route }: any) {
         .then((res) => {
           const list = unwrapApiData<any[]>(res) || [];
           if (isMounted && list.length > 0) {
-            const filteredList = (isSingleChild && targetChildId)
-              ? list.filter((c) => String(c.id) === String(targetChildId))
-              : list;
-            const safeList = filteredList.length > 0 ? filteredList : list;
-            setChildren(safeList);
-            setSelectedChildId(targetChildId ? String(targetChildId) : ((prev: any) => prev || (safeList[0]?.id ? String(safeList[0].id) : undefined)));
+            setChildren(list);
+            if (targetChildId) {
+              setSelectedChildId(String(targetChildId));
+              const foundIdx = list.findIndex((c: any) => String(c.id || c.student_id) === String(targetChildId));
+              if (foundIdx >= 0) setActiveChildIndex(foundIdx);
+            } else if (!selectedChildId) {
+              setSelectedChildId(String(list[0]?.id || list[0]?.student_id));
+              setActiveChildIndex(0);
+            }
             void offlineCache.set(childCacheKey, list);
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     }
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, route?.params?.child_id, route?.params?.single_child_only]);
+  }, [isParent, user?.id, globalActiveChildId]);
+
+  // Virtual loop window
+  const safeCenter = children.length > 0 ? (activeChildIndex % children.length + children.length) % children.length : 0;
+  const loopWindow = useMemo(() => {
+    if (children.length <= 1) return [];
+    const len = children.length;
+    const prevIdx = (safeCenter - 1 + len) % len;
+    const nextIdx = (safeCenter + 1) % len;
+    return [
+      { child: children[prevIdx], realIdx: prevIdx, slotKey: `prev-${prevIdx}` },
+      { child: children[safeCenter], realIdx: safeCenter, slotKey: `center-${safeCenter}` },
+      { child: children[nextIdx], realIdx: nextIdx, slotKey: `next-${nextIdx}` },
+    ];
+  }, [children, safeCenter]);
+
+  const syncLoopChildId = useCallback((rawIdx: number) => {
+    if (children.length === 0) return;
+    const realIdx = ((rawIdx % children.length) + children.length) % children.length;
+    const child = children[realIdx];
+    if (child) {
+      const childId = String(child.id || child.student_id);
+      setSelectedChildId(childId);
+      useActiveChildStore.getState().setActiveChildId(childId);
+    }
+  }, [children]);
+
+  const recenterLoop = useCallback((e: any) => {
+    if (children.length <= 1) return;
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const scrolledSlot = Math.round(offsetX / STUDENT_SNAP_INTERVAL);
+
+    if (scrolledSlot !== 1) {
+      const delta = scrolledSlot - 1;
+      const newActive = ((safeCenter + delta) % children.length + children.length) % children.length;
+      setActiveChildIndex(newActive);
+      syncLoopChildId(newActive);
+      requestAnimationFrame(() => {
+        studentScrollRef.current?.scrollTo({ x: STUDENT_SNAP_INTERVAL, y: 0, animated: false });
+      });
+    }
+  }, [children.length, safeCenter, syncLoopChildId]);
+
+  const goToLoopChild = useCallback((targetRealIndex: number) => {
+    if (children.length <= 1) {
+      if (children.length === 1) {
+        setActiveChildIndex(0);
+        syncLoopChildId(0);
+      }
+      return;
+    }
+    const len = children.length;
+    const normTarget = ((targetRealIndex % len) + len) % len;
+    if (normTarget === safeCenter) return;
+
+    let delta = normTarget - safeCenter;
+    if (delta > len / 2) delta -= len;
+    if (delta < -len / 2) delta += len;
+
+    const targetSlot = delta > 0 ? 2 : 0;
+    studentScrollRef.current?.scrollTo({
+      x: targetSlot * STUDENT_SNAP_INTERVAL,
+      y: 0,
+      animated: true,
+    });
+    setTimeout(() => {
+      setActiveChildIndex(normTarget);
+      syncLoopChildId(normTarget);
+      requestAnimationFrame(() => {
+        studentScrollRef.current?.scrollTo({ x: STUDENT_SNAP_INTERVAL, y: 0, animated: false });
+      });
+    }, 280);
+  }, [children.length, safeCenter, syncLoopChildId]);
+
+  // Route params sync (hanya sekali saat parameter route baru terdeteksi)
+  useEffect(() => {
+    const incomingId = route?.params?.child_id || route?.params?.student_id;
+    if (incomingId && children.length > 0 && handledParamIdRef.current !== String(incomingId)) {
+      handledParamIdRef.current = String(incomingId);
+      const foundIdx = children.findIndex((c: any) => String(c.id || c.student_id) === String(incomingId));
+      if (foundIdx >= 0) {
+        goToLoopChild(foundIdx);
+      }
+    }
+  }, [route?.params?.child_id, route?.params?.student_id, children, goToLoopChild]);
 
   // 2. Load Real CBT Exams from Backend Database with offline cache
   const loadCbtExams = useCallback(async () => {
@@ -191,15 +362,17 @@ export default function CbtExamsScreen({ route }: any) {
     }
 
     try {
-      const response = await mobileApiService.getPortalCbtExams(targetChildId);
+      const response = isTeacher
+        ? await mobileApiService.getTeacherCbtExams()
+        : await mobileApiService.getPortalCbtExams(targetChildId);
       const raw = unwrapApiData<any>(response);
       const records = Array.isArray(raw?.exams)
         ? raw.exams
         : Array.isArray(raw?.data)
-        ? raw.data
-        : Array.isArray(raw)
-        ? raw
-        : [];
+          ? raw.data
+          : Array.isArray(raw)
+            ? raw
+            : [];
       setExams(records);
 
       const resolvedStudent = response?.student || raw?.student || response?.data?.student;
@@ -245,26 +418,33 @@ export default function CbtExamsScreen({ route }: any) {
     void loadAll();
   }, [loadAll]);
 
-  // Handle Child Carousel Interaction
-  const handleStudentScrollEnd = (e: any) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 50 + 12;
-    const index = Math.round(offsetX / cardWidth);
-    if (index >= 0 && index < children.length) {
-      const targetChild = children[index];
-      if (targetChild && String(targetChild.id) !== selectedChildId) {
-        setSelectedChildId(String(targetChild.id));
-      }
+  // Siswa aktif untuk sticky header & hero (anak terpilih -> info siswa -> profil -> user)
+  const headerStudent = useMemo(() => {
+    if (children && children.length > 0) {
+      const found = children.find(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (found) return found;
+      return children[0];
     }
-  };
+    if (studentInfo) return studentInfo;
+    return (user as any)?.student || user || null;
+  }, [children, selectedChildId, studentInfo, user]);
 
-  const selectChildWithScroll = (childId: string, index: number) => {
-    setSelectedChildId(childId);
-    studentScrollRef.current?.scrollTo({
-      x: index * (SCREEN_WIDTH - 50 + 12),
-      animated: true,
-    });
-  };
+  // Nama depan + fallback tahun ajaran untuk subtitle hero statis
+  const heroFirstName = useMemo(
+    () => resolveStudentDisplay(headerStudent, user).firstName,
+    [headerStudent, user]
+  );
+  const activeStudentName = useMemo(() => {
+    return resolveStudentDisplay(headerStudent, user).firstName || headerStudent?.name || 'Siswa';
+  }, [headerStudent, user]);
+
+  const heroSubtitleFallback = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -349,8 +529,14 @@ export default function CbtExamsScreen({ route }: any) {
 
     try {
       setSavingAnswer(true);
+      const qItem = activeExamSession.soal.find((q) => q.id === questionId);
+      const isEssay = qItem?.tipe_soal && ['esai', 'isian', 'menjodohkan'].includes(qItem.tipe_soal);
       await mobileApiService.savePortalCbtAnswers(activeExamSession.sesi_id, [
-        { soal_id: questionId, jawaban_dipilih: optionKey },
+        {
+          soal_id: questionId,
+          jawaban_dipilih: isEssay ? null : optionKey,
+          jawaban_esai: isEssay ? optionKey : null,
+        },
       ]);
     } catch (e) {
       console.warn('Gagal menyimpan jawaban otomatis:', e);
@@ -393,12 +579,17 @@ export default function CbtExamsScreen({ route }: any) {
       setCurrentQuestionIndex(0);
       const remainingSeconds =
         sessionData.ujian?.sisa_waktu_detik != null
-          ? Number(sessionData.ujian.sisa_waktu_detik)
-          : Number(sessionData.ujian?.durasi_menit || 60) * 60;
-      setTimeLeft(remainingSeconds > 0 ? remainingSeconds : 3600);
+          ? Math.max(0, Number(sessionData.ujian.sisa_waktu_detik))
+          : Math.max(0, Number(sessionData.ujian?.durasi_menit ?? 60) * 60);
+      setTimeLeft(remainingSeconds);
       setActiveExamSession(sessionData);
     } catch (startErr) {
-      Alert.alert('Ujian Belum Dapat Dimulai', getApiErrorMessage(startErr, 'Gagal memulai sesi ujian CBT.'));
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Ujian Belum Dapat Dimulai',
+        message: getApiErrorMessage(startErr, 'Gagal memulai sesi ujian CBT.'),
+      });
     } finally {
       setStartingId(null);
     }
@@ -411,28 +602,27 @@ export default function CbtExamsScreen({ route }: any) {
     const unansweredCount = Math.max(0, totalQuestions - answeredCount);
     const doubtfulCount = Object.values(doubtfulQuestions).filter(Boolean).length;
 
-    Alert.alert(
-      'Kumpulkan Lembar Jawaban?',
-      `Ringkasan pengerjaan ujian:\n\n` +
-        `• Soal Dijawab: ${answeredCount} dari ${totalQuestions} soal\n` +
-        (doubtfulCount > 0 ? `• Ditandai Ragu-ragu: ${doubtfulCount} soal\n` : '') +
-        (unansweredCount > 0 ? `• Belum Terjawab: ${unansweredCount} soal\n` : '• Semua soal telah dijawab lengkap\n') +
-        `\nApakah Anda yakin ingin menyelesaikan dan mengumpulkan ujian sekarang?`,
-      [
-        { text: 'Periksa Kembali', style: 'cancel' },
-        {
-          text: 'Ya, Kumpulkan',
-          style: 'default',
-          onPress: () => {
-            void submitExam();
-          },
-        },
-      ]
-    );
+    setFeedbackModal({
+      visible: true,
+      type: 'confirm',
+      title: 'Kumpulkan Lembar Jawaban?',
+      message: `Ringkasan pengerjaan ujian:\n\n• Soal Dijawab: ${answeredCount} dari ${totalQuestions} soal\n${doubtfulCount > 0 ? `• Ditandai Ragu-ragu: ${doubtfulCount} soal\n` : ''}${unansweredCount > 0 ? `• Belum Terjawab: ${unansweredCount} soal\n` : '• Semua soal telah dijawab lengkap\n'}\nApakah Anda yakin ingin menyelesaikan dan mengumpulkan ujian sekarang?`,
+      confirmText: 'Ya, Kumpulkan',
+      cancelText: 'Periksa Kembali',
+      onConfirm: () => {
+        setFeedbackModal(null);
+        void submitExam();
+      },
+    });
   };
 
   const handleAutoFinishExam = async () => {
-    Alert.alert('Waktu Ujian Habis', 'Waktu pengerjaan telah berakhir. Sistem mengumpulkan lembar jawaban Anda.');
+    setFeedbackModal({
+      visible: true,
+      type: 'warning',
+      title: 'Waktu Ujian Habis',
+      message: 'Waktu pengerjaan telah berakhir. Sistem mengumpulkan lembar jawaban Anda.',
+    });
     await submitExam();
   };
 
@@ -440,10 +630,15 @@ export default function CbtExamsScreen({ route }: any) {
     if (!activeExamSession) return;
     setSubmittingExam(true);
     try {
-      const answersPayload = Object.entries(examAnswers).map(([soal_id, jawaban_dipilih]) => ({
-        soal_id,
-        jawaban_dipilih,
-      }));
+      const answersPayload = Object.entries(examAnswers).map(([soal_id, val]) => {
+        const qItem = activeExamSession.soal.find((q) => q.id === soal_id);
+        const isEssay = qItem?.tipe_soal && ['esai', 'isian', 'menjodohkan'].includes(qItem.tipe_soal);
+        return {
+          soal_id,
+          jawaban_dipilih: isEssay ? null : val,
+          jawaban_esai: isEssay ? val : null,
+        };
+      });
 
       const res = await mobileApiService.finishPortalCbtExam(activeExamSession.sesi_id, answersPayload);
       const resData = unwrapApiData<any>(res) || res?.data || res;
@@ -454,14 +649,48 @@ export default function CbtExamsScreen({ route }: any) {
       setExamResultModal(resData || { nilai_tersedia: false });
       await loadCbtExams();
     } catch (err) {
-      Alert.alert('Gagal Mengumpulkan Ujian', getApiErrorMessage(err, 'Terjadi kendala saat mengumpulkan ujian. Silakan coba kembali.'));
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Mengumpulkan Ujian',
+        message: getApiErrorMessage(err, 'Terjadi kendala saat mengumpulkan ujian. Silakan coba kembali.'),
+      });
     } finally {
       setSubmittingExam(false);
     }
   };
 
+  // Jika akun adalah Guru atau Staf/TU (dan bukan Orang Tua/Siswa), tampilkan TeacherCbtWorkspace
+  if (isTeacherOrStaff) {
+    return <TeacherCbtWorkspace navigation={navigation} route={route} />;
+  }
+
   return (
     <View style={styles.rootContainer}>
+      {/* 0. STICKY HEADER BERSAMA (top bar + card siswa, sama dengan Tugas/Jadwal/Materi/Nilai) */}
+      <StudentStickyHeader
+        scrollY={scrollY}
+        topInset={topInset}
+        title="Ujian CBT"
+        navigation={navigation}
+        route={route}
+        student={headerStudent}
+        user={user}
+        childrenList={children}
+        selectedChildId={selectedChildId}
+        onSelectChild={(_cid, idx) => {
+          goToLoopChild(idx);
+        }}
+        middleAction={{
+          label: 'Jadwal',
+          icon: 'calendar-clock',
+          onPress: () => openScheduleForStudent(headerStudent),
+        }}
+        onOpenIdCard={(s) => openIdCard(s)}
+        onOpenQr={(s) => openQrCard(s)}
+        onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
+        onOpenMenu={(s) => setSelectedMenuStudent(s)}
+      />
       <View style={styles.sheetContainer}>
         {/* Soft emerald aesthetic background */}
         <LinearGradient
@@ -471,441 +700,548 @@ export default function CbtExamsScreen({ route }: any) {
           style={StyleSheet.absoluteFill}
         />
 
-        <ScrollView
+        <Animated.ScrollView
           style={styles.screen}
-          contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 30 }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />}
+          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: bottomInset + 30 }]}
+          onScroll={handleMainScroll}
+          scrollEventThrottle={16}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} progressViewOffset={topInset + 10} />}
           showsVerticalScrollIndicator={false}
         >
-          {/* ══════════════════════════════════════════════════════════════
+          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
+          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
+            <LinearGradient
+              colors={['#047857', '#059669', '#10B981']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.heroDecorCircle1} />
+            <View style={styles.heroDecorCircle2} />
+
+            <View style={styles.staticTopBarRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleBack}
+                style={styles.heroSquircleBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Kembali"
+              >
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+              </TouchableOpacity>
+
+              <View style={styles.heroTitleCenterCol}>
+                <Text numberOfLines={1} style={styles.heroModuleTitle}>
+                  Ujian CBT
+                </Text>
+                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
+                  {heroFirstName ? `Ananda ${heroFirstName}` : heroSubtitleFallback}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => navigation?.navigate('Notifikasi')}
+                style={styles.heroSquircleBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Notifikasi"
+              >
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Badan Halaman Konten */}
+          <View style={styles.bodyContentWrapper}>
+            {/* ══════════════════════════════════════════════════════════════
               SECTION 1: DATA SISWA & UNIT PENDIDIKAN (HERO CARD STANDAR)
              ══════════════════════════════════════════════════════════════ */}
-          {children.length > 0 ? (
-            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
+            {children.length > 0 ? (
+              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={styles.sectionHeaderTitleWrap}>
+                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                    <Text style={styles.sectionTitle}>Data Ananda</Text>
+                  </View>
                 </View>
-              </View>
 
-              {children.length === 1 ? (
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={children[0]}
-                    isSelected={true}
-                    isSingleChild={true}
-                    showActionButtons={false}
-                  />
-                </View>
-              ) : (
-                <>
-                  <ScrollView
-                    ref={studentScrollRef}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    snapToInterval={SCREEN_WIDTH - 50 + 12}
-                    decelerationRate="fast"
-                    snapToAlignment="start"
-                    onMomentumScrollEnd={handleStudentScrollEnd}
-                    style={styles.heroCardScrollContainer}
-                    contentContainerStyle={styles.heroCardScroll}
-                  >
-                    {children.map((child, idx) => (
-                      <StudentHeroCard
-                        key={String(child.id || idx)}
-                        child={child}
-                        isSelected={String(child.id) === selectedChildId}
-                        isSingleChild={false}
-                        showActionButtons={false}
-                        onSelect={() => selectChildWithScroll(String(child.id), idx)}
-                      />
-                    ))}
-                  </ScrollView>
+                {children.length === 1 ? (
+                  <View style={styles.singleHeroCardContainer}>
+                    <StudentHeroCard
+                      child={children[0]}
+                      isSelected={true}
+                      isSingleChild={true}
+                      showActionButtons={true}
+                      cardLabel="Kartu Siswa"
+                      calendarLabel="Jadwal"
+                      portalLabel="Menu"
+                      onPressCard={() => openIdCard(children[0])}
+                      onPressQr={() => openQrCard(children[0])}
+                      onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
+                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                      onPressCalendar={() => openScheduleForStudent(children[0])}
+                      onPressPortal={() => setSelectedMenuStudent(children[0])}
+                    />
+                  </View>
+                ) : (
+                  <>
+                    <ScrollView
+                      ref={studentScrollRef}
+                      horizontal
+                      nestedScrollEnabled={true}
+                      showsHorizontalScrollIndicator={false}
+                      snapToInterval={STUDENT_SNAP_INTERVAL}
+                      decelerationRate="fast"
+                      snapToAlignment="start"
+                      contentOffset={{ x: STUDENT_SNAP_INTERVAL, y: 0 }}
+                      onMomentumScrollEnd={recenterLoop}
+                      onScrollEndDrag={recenterLoop}
+                      style={styles.heroCardScrollContainer}
+                      contentContainerStyle={[styles.heroCardScroll, styles.studentCardsTrack]}
+                    >
+                      {loopWindow.map(({ child, realIdx, slotKey }) => {
+                        const isCardActive = realIdx === safeCenter;
+                        return (
+                          <View key={slotKey} style={{ width: STUDENT_CARD_WIDTH }}>
+                            <StudentHeroCard
+                              child={child}
+                              isSelected={isCardActive}
+                              isSingleChild={false}
+                              showActionButtons={true}
+                              cardLabel="Kartu Siswa"
+                              calendarLabel="Jadwal"
+                              portalLabel="Menu"
+                              onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
+                              onPressCard={() => openIdCard(child)}
+                              onPressQr={() => openQrCard(child)}
+                              onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
+                              onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                              onPressCalendar={() => openScheduleForStudent(child)}
+                              onPressPortal={() => setSelectedMenuStudent(child)}
+                            />
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
 
-                  {/* DOT INDIKATOR SCROLL SISWA */}
-                  <View style={styles.paginationDotsRow}>
-                    {children.map((c, i) => {
-                      const isDotActive = String(c.id) === selectedChildId;
-                      return (
+                    {/* DOT INDIKATOR SCROLL SISWA */}
+                    <View style={styles.paginationDotsRow}>
+                      {children.map((c, i) => (
                         <TouchableOpacity
                           key={String(c.id || i)}
-                          onPress={() => selectChildWithScroll(String(c.id), i)}
+                          onPress={() => goToLoopChild(i)}
                           style={[
                             styles.paginationDot,
-                            isDotActive && styles.paginationDotActive,
+                            i === safeCenter && styles.paginationDotActive,
                           ]}
                         />
-                      );
-                    })}
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+            ) : studentInfo ? (
+              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={styles.sectionHeaderTitleWrap}>
+                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
+                    <Text style={styles.sectionTitle}>Data Ananda</Text>
                   </View>
-                </>
-              )}
-            </View>
-          ) : studentInfo ? (
-            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
+                </View>
+
+                <View style={styles.singleHeroCardContainer}>
+                  <StudentHeroCard
+                    child={studentInfo}
+                    isSelected={true}
+                    isSingleChild={true}
+                    showActionButtons={true}
+                    cardLabel="Kartu Siswa"
+                    calendarLabel="Jadwal"
+                    portalLabel="Menu"
+                    onPressCard={() => openIdCard(studentInfo)}
+                    onPressQr={() => openQrCard(studentInfo)}
+                    onPressWeeklyReport={() => setSelectedWeeklyStudent(studentInfo)}
+                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                    onPressCalendar={() => openScheduleForStudent(studentInfo)}
+                    onPressPortal={() => setSelectedMenuStudent(studentInfo)}
+                  />
                 </View>
               </View>
-
-              <View style={styles.singleHeroCardContainer}>
-                <StudentHeroCard
-                  child={studentInfo}
-                  isSelected={true}
-                  isSingleChild={true}
-                  showActionButtons={false}
-                />
-              </View>
-            </View>
-          ) : user ? (
-            <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-tie" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Pengguna & Unit Pendidikan</Text>
+            ) : user ? (
+              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={styles.sectionHeaderTitleWrap}>
+                    <MaterialCommunityIcons name="account-tie" size={18} color="#18A165" />
+                    <Text style={styles.sectionTitle}>Data Pengguna & Unit Pendidikan</Text>
+                  </View>
                 </View>
-              </View>
 
-              {(() => {
-                const u = user as any;
-                const userName = String(u?.name || u?.full_name || u?.nama_lengkap || 'Pengguna');
-                const userRole = String(typeof u?.role === 'string' ? user.role : Array.isArray(u?.roles) && u.roles[0] ? u.roles[0] : 'Pengguna');
-                const unitTitle = String(u?.unit_name || u?.education_unit?.name || 'Sistem Sekolah Terpadu');
-                const avatarUri = getProfileImageUrl(u);
+                {(() => {
+                  const u = user as any;
+                  const userName = String(u?.name || u?.full_name || u?.nama_lengkap || 'Pengguna');
+                  const userRole = String(typeof u?.role === 'string' ? user.role : Array.isArray(u?.roles) && u.roles[0] ? u.roles[0] : 'Pengguna');
+                  const unitTitle = String(u?.unit_name || u?.education_unit?.name || 'Sistem Sekolah Terpadu');
+                  const avatarUri = getProfileImageUrl(u);
 
-                return (
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.childCardHeroSizeSingle}
-                  >
-                    <View style={styles.cardDecorCircle} />
+                  return (
+                    <LinearGradient
+                      colors={['#0D6B42', '#18A165', '#2BD988']}
+                      locations={[0, 0.55, 1]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.childCardHeroSizeSingle}
+                    >
+                      <View style={styles.cardDecorCircle} />
 
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                        ) : (
-                          <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
-                        )}
+                      <View style={styles.childHeroTopRow}>
+                        <View style={styles.avatarBorderWrapHero}>
+                          {avatarUri ? (
+                            <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
+                          ) : (
+                            <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
+                          )}
+                        </View>
+                        <View style={styles.childInfoCol}>
+                          <Text numberOfLines={1} style={styles.childNameHero}>
+                            {userName}
+                          </Text>
+                          <Text style={styles.childSubInfoHero}>
+                            {u.nis ? `NIS: ${u.nis}` : 'Akun Terverifikasi'}
+                          </Text>
+                          <View style={styles.studentUnitBadge}>
+                            <MaterialCommunityIcons name="briefcase-outline" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                            <Text numberOfLines={1} style={styles.studentUnitText}>
+                              {userRole}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.selectedActionBtnRight}>
+                          <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
+                          <Text style={styles.selectedActionBtnText}>Aktif</Text>
+                        </View>
                       </View>
-                      <View style={styles.childInfoCol}>
-                        <Text numberOfLines={1} style={styles.childNameHero}>
-                          {userName}
-                        </Text>
-                        <Text style={styles.childSubInfoHero}>
-                          {u.nis ? `NIS: ${u.nis}` : 'Akun Terverifikasi'}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="briefcase-outline" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
+
+                      <View style={styles.studentAttributesGrid}>
+                        <View style={styles.studentAttrBox}>
+                          <Text style={styles.studentAttrLabel}>Peran</Text>
+                          <Text numberOfLines={1} style={styles.studentAttrValue}>
                             {userRole}
                           </Text>
                         </View>
+                        <View style={styles.studentAttrDivider} />
+                        <View style={styles.studentAttrBox}>
+                          <Text style={styles.studentAttrLabel}>Unit</Text>
+                          <Text numberOfLines={1} style={styles.studentAttrValue}>
+                            {unitTitle}
+                          </Text>
+                        </View>
+                        <View style={styles.studentAttrDivider} />
+                        <View style={styles.studentAttrBox}>
+                          <Text style={styles.studentAttrLabel}>Status</Text>
+                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
+                            Aktif
+                          </Text>
+                        </View>
                       </View>
-                      <View style={styles.selectedActionBtnRight}>
-                        <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
-                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                      </View>
-                    </View>
+                    </LinearGradient>
+                  );
+                })()}
+              </View>
+            ) : null}
 
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Peran</Text>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {userRole}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Unit</Text>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>
-                          {unitTitle}
-                        </Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Status</Text>
-                        <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                          Aktif
-                        </Text>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                );
-              })()}
-            </View>
-          ) : null}
-
-          {/* ══════════════════════════════════════════════════════════════
+            {/* ══════════════════════════════════════════════════════════════
               SECTION 2: 4 STATS GRID (TOTAL, TERSEDIA, AKAN DATANG, SELESAI)
              ══════════════════════════════════════════════════════════════ */}
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBox, { backgroundColor: '#ECFDF5' }]}>
-                <MaterialCommunityIcons name="file-document-check-outline" size={20} color="#059669" />
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <View style={[styles.statIconBox, { backgroundColor: '#ECFDF5' }]}>
+                  <MaterialCommunityIcons name="file-document-check-outline" size={20} color="#059669" />
+                </View>
+                <Text style={styles.statValue}>{stats.total}</Text>
+                <Text style={styles.statLabel}>Total CBT</Text>
               </View>
-              <Text style={styles.statValue}>{stats.total}</Text>
-              <Text style={styles.statLabel}>Total CBT</Text>
+
+              <View style={styles.statCard}>
+                <View style={[styles.statIconBox, { backgroundColor: '#EFF6FF' }]}>
+                  <MaterialCommunityIcons name="play-circle-outline" size={20} color="#2563EB" />
+                </View>
+                <Text style={styles.statValue}>{stats.available}</Text>
+                <Text style={styles.statLabel}>Tersedia</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <View style={[styles.statIconBox, { backgroundColor: '#FFFBEB' }]}>
+                  <MaterialCommunityIcons name="clock-outline" size={20} color="#D97706" />
+                </View>
+                <Text style={styles.statValue}>{stats.upcoming}</Text>
+                <Text style={styles.statLabel}>Akan Datang</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <View style={[styles.statIconBox, { backgroundColor: '#FAF5FF' }]}>
+                  <MaterialCommunityIcons name="shield-check-outline" size={20} color="#7C3AED" />
+                </View>
+                <Text style={styles.statValue}>{stats.completed}</Text>
+                <Text style={styles.statLabel}>Selesai</Text>
+              </View>
             </View>
 
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBox, { backgroundColor: '#EFF6FF' }]}>
-                <MaterialCommunityIcons name="play-circle-outline" size={20} color="#2563EB" />
-              </View>
-              <Text style={styles.statValue}>{stats.available}</Text>
-              <Text style={styles.statLabel}>Tersedia</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBox, { backgroundColor: '#FFFBEB' }]}>
-                <MaterialCommunityIcons name="clock-outline" size={20} color="#D97706" />
-              </View>
-              <Text style={styles.statValue}>{stats.upcoming}</Text>
-              <Text style={styles.statLabel}>Akan Datang</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBox, { backgroundColor: '#FAF5FF' }]}>
-                <MaterialCommunityIcons name="shield-check-outline" size={20} color="#7C3AED" />
-              </View>
-              <Text style={styles.statValue}>{stats.completed}</Text>
-              <Text style={styles.statLabel}>Selesai</Text>
-            </View>
-          </View>
-
-          {/* ══════════════════════════════════════════════════════════════
+            {/* ══════════════════════════════════════════════════════════════
               SECTION 3: SEARCH & FILTER TABS
              ══════════════════════════════════════════════════════════════ */}
-          <View style={styles.containerBlock}>
-            <View style={styles.searchContainer}>
-              <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Cari judul ujian atau mata pelajaran..."
-                placeholderTextColor="#94A3B8"
-                value={search}
-                onChangeText={setSearch}
-              />
-              {search.trim().length > 0 && (
-                <TouchableOpacity onPress={() => setSearch('')}>
-                  <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                </TouchableOpacity>
-              )}
+            <View style={styles.containerBlock}>
+              <View style={styles.searchContainer}>
+                <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Cari judul ujian atau mata pelajaran..."
+                  placeholderTextColor="#94A3B8"
+                  value={search}
+                  onChangeText={setSearch}
+                />
+                {search.trim().length > 0 && (
+                  <TouchableOpacity onPress={() => setSearch('')}>
+                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filter Tabs Row */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabsRow}>
+                {[
+                  { id: 'semua', label: 'Semua Ujian' },
+                  { id: 'available', label: 'Siap Dikerjakan' },
+                  { id: 'upcoming', label: 'Mendatang' },
+                  { id: 'completed', label: 'Riwayat Selesai' },
+                ].map((tab) => {
+                  const isSelected = selectedFilter === tab.id;
+                  return (
+                    <TouchableOpacity
+                      key={tab.id}
+                      activeOpacity={0.75}
+                      onPress={() => setSelectedFilter(tab.id as any)}
+                      style={[styles.filterTab, isSelected && styles.filterTabActive]}
+                    >
+                      <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive]}>
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
 
-            {/* Filter Tabs Row */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabsRow}>
-              {[
-                { id: 'semua', label: 'Semua Ujian' },
-                { id: 'available', label: 'Siap Dikerjakan' },
-                { id: 'upcoming', label: 'Mendatang' },
-                { id: 'completed', label: 'Riwayat Selesai' },
-              ].map((tab) => {
-                const isSelected = selectedFilter === tab.id;
-                return (
-                  <TouchableOpacity
-                    key={tab.id}
-                    activeOpacity={0.75}
-                    onPress={() => setSelectedFilter(tab.id as any)}
-                    style={[styles.filterTab, isSelected && styles.filterTabActive]}
-                  >
-                    <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive]}>
-                      {tab.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {/* ══════════════════════════════════════════════════════════════
+            {/* ══════════════════════════════════════════════════════════════
               SECTION 4: CBT EXAMS LIST (100% REAL DATA DATABASE)
              ══════════════════════════════════════════════════════════════ */}
-          {loading && !refreshing ? (
-            <View style={styles.centerLoading}>
-              <ActivityIndicator size="large" color="#18A165" />
-              <Text style={styles.loadingText}>Memuat jadwal ujian CBT dari database...</Text>
+            <View style={[styles.sectionHeaderRow, { marginBottom: 12, paddingHorizontal: 4 }]}>
+              <MaterialCommunityIcons name="laptop" size={18} color="#18A165" />
+              <Text style={styles.sectionTitle}>Daftar Ujian CBT "{activeStudentName}"</Text>
             </View>
-          ) : error ? (
-            <View style={styles.errorBox}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={28} color="#DC2626" />
-              <Text style={styles.errorText}>{error}</Text>
-              <TouchableOpacity onPress={() => void loadAll()} style={styles.retryBtn}>
-                <Text style={styles.retryBtnText}>Muat Ulang</Text>
-              </TouchableOpacity>
-            </View>
-          ) : filteredExams.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <MaterialCommunityIcons name="file-check-outline" size={48} color="#94A3B8" />
-              <Text style={styles.emptyTitle}>Belum Ada Ujian CBT</Text>
-              <Text style={styles.emptySubtitle}>
-                {search || selectedFilter !== 'semua'
-                  ? 'Tidak ditemukan jadwal ujian yang sesuai dengan filter pencarian.'
-                  : 'Belum ada paket ujian CBT yang diterbitkan oleh dewan guru untuk kelas ini.'}
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.examsList}>
-              {filteredExams.map((exam) => {
-                const isAvailable = ['available', 'resume'].includes(exam.availability);
-                const isUpcoming = exam.availability === 'upcoming';
-                const isEnded = exam.availability === 'ended' || exam.availability === 'completed';
-                const hasScore = exam.latest_result?.nilai_tersedia && exam.latest_result?.nilai_final != null;
+            {loading && !refreshing ? (
+              <View style={styles.centerLoading}>
+                <ActivityIndicator size="large" color="#18A165" />
+                <Text style={styles.loadingText}>Memuat jadwal ujian CBT dari database...</Text>
+              </View>
+            ) : error ? (
+              <View style={styles.errorBox}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={28} color="#DC2626" />
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity onPress={() => void loadAll()} style={styles.retryBtn}>
+                  <Text style={styles.retryBtnText}>Muat Ulang</Text>
+                </TouchableOpacity>
+              </View>
+            ) : filteredExams.length === 0 ? (
+              <EmptyStateCard
+                icon="file-check-outline"
+                title="Belum Ada Ujian CBT"
+                description={
+                  search || selectedFilter !== 'semua'
+                    ? 'Tidak ditemukan jadwal ujian yang sesuai dengan filter pencarian.'
+                    : 'Belum ada paket ujian CBT yang diterbitkan oleh dewan guru untuk kelas ini.'
+                }
+              />
+            ) : (
+              <View style={styles.examsList}>
+                {filteredExams.map((exam) => {
+                  const isAvailable = ['available', 'resume'].includes(exam.availability);
+                  const isUpcoming = exam.availability === 'upcoming';
+                  const isEnded = exam.availability === 'ended' || exam.availability === 'completed';
+                  const hasScore = exam.latest_result?.nilai_tersedia && exam.latest_result?.nilai_final != null;
 
-                return (
-                  <TouchableOpacity
-                    key={exam.id}
-                    activeOpacity={0.92}
-                    onPress={() => setInstructionModal(exam)}
-                    style={styles.examCard}
-                  >
-                    {/* Header: Subject & Availability Badge */}
-                    <View style={styles.cardHeaderRow}>
-                      <View style={styles.subjectBadge}>
-                        <MaterialCommunityIcons name="book-open-page-variant" size={12} color="#059669" />
-                        <Text numberOfLines={1} style={styles.subjectBadgeText}>
-                          {exam.mata_pelajaran || 'Mata Pelajaran'}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          isAvailable && styles.statusBadgeAvailable,
-                          isUpcoming && styles.statusBadgeUpcoming,
-                          isEnded && styles.statusBadgeEnded,
-                        ]}
-                      >
-                        <Text
+                  return (
+                    <TouchableOpacity
+                      key={exam.id}
+                      activeOpacity={0.92}
+                      onPress={() => setInstructionModal(exam)}
+                      style={styles.examCard}
+                    >
+                      {/* Header: Subject & Availability Badge */}
+                      <View style={styles.cardHeaderRow}>
+                        <View style={styles.subjectBadge}>
+                          <MaterialCommunityIcons name="book-open-page-variant" size={12} color="#059669" />
+                          <Text numberOfLines={1} style={styles.subjectBadgeText}>
+                            {exam.mata_pelajaran || 'Mata Pelajaran'}
+                          </Text>
+                        </View>
+                        <View
                           style={[
-                            styles.statusBadgeText,
-                            isAvailable && styles.statusBadgeTextAvailable,
-                            isUpcoming && styles.statusBadgeTextUpcoming,
-                            isEnded && styles.statusBadgeTextEnded,
+                            styles.statusBadge,
+                            isAvailable && styles.statusBadgeAvailable,
+                            isUpcoming && styles.statusBadgeUpcoming,
+                            isEnded && styles.statusBadgeEnded,
                           ]}
                         >
-                          {exam.availability === 'available'
-                            ? 'Tersedia'
-                            : exam.availability === 'resume'
-                            ? 'Lanjutkan'
-                            : exam.availability === 'upcoming'
-                            ? 'Akan Datang'
-                            : 'Ditutup'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Title */}
-                    <Text style={styles.examTitle} numberOfLines={2}>
-                      {exam.judul_ujian}
-                    </Text>
-
-                    {/* Meta: Kelas & Guru */}
-                    <Text style={styles.metaClassGuru} numberOfLines={1}>
-                      {exam.kelas || 'Kelas'} · Guru: {exam.guru || 'Dewan Guru'}
-                    </Text>
-
-                    {/* Attributes: Duration & Question Count */}
-                    <View style={styles.attrRow}>
-                      <View style={styles.attrPill}>
-                        <MaterialCommunityIcons name="clock-outline" size={13} color="#2563EB" />
-                        <Text style={styles.attrPillText}>{exam.durasi_menit} Menit</Text>
-                      </View>
-                      <View style={styles.attrPill}>
-                        <MaterialCommunityIcons name="format-list-numbered" size={13} color="#7C3AED" />
-                        <Text style={styles.attrPillText}>KKM {exam.nilai_kkm}</Text>
-                      </View>
-                    </View>
-
-                    {/* Schedule Time Windows */}
-                    <View style={styles.timeWindowBox}>
-                      <Text style={styles.timeWindowText}>Mulai: {formatDate(exam.waktu_mulai)}</Text>
-                      <Text style={styles.timeWindowText}>Selesai: {formatDate(exam.waktu_selesai)}</Text>
-                    </View>
-
-                    {/* Result Pill if Completed */}
-                    {hasScore && (
-                      <View style={styles.scoreRow}>
-                        <MaterialCommunityIcons name="check-decagram" size={16} color="#059669" />
-                        <Text style={styles.scoreText}>
-                          Nilai Akhir: <Text style={{ fontWeight: '900', color: '#059669' }}>{exam.latest_result?.nilai_final}</Text>
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Action Button */}
-                    {isParent ? (
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={() => setInstructionModal(exam)}
-                          style={[styles.actionBtnParent, { flex: 1 }]}
-                        >
-                          <MaterialCommunityIcons name="information-outline" size={16} color="#0284C7" />
-                          <Text style={styles.actionBtnParentText}>Petunjuk</Text>
-                        </TouchableOpacity>
-                        {isAvailable && (
-                          <TouchableOpacity
-                            activeOpacity={0.8}
-                            disabled={startingId === exam.id}
-                            onPress={() => setInstructionModal(exam)}
-                            style={[styles.actionBtn, { flex: 1.6 }]}
+                          <Text
+                            style={[
+                              styles.statusBadgeText,
+                              isAvailable && styles.statusBadgeTextAvailable,
+                              isUpcoming && styles.statusBadgeTextUpcoming,
+                              isEnded && styles.statusBadgeTextEnded,
+                            ]}
                           >
-                            {startingId === exam.id ? (
-                              <ActivityIndicator size="small" color="#FFFFFF" />
-                            ) : (
-                              <>
-                                <MaterialCommunityIcons name="play-circle" size={16} color="#FFFFFF" />
-                                <Text style={styles.actionBtnText}>
-                                  {exam.availability === 'resume' ? 'Lanjutkan Ujian' : 'Mulai Ujian Ananda'}
-                                </Text>
-                              </>
-                            )}
-                          </TouchableOpacity>
-                        )}
+                            {exam.availability === 'available'
+                              ? 'Tersedia'
+                              : exam.availability === 'resume'
+                                ? 'Lanjutkan'
+                                : exam.availability === 'upcoming'
+                                  ? 'Akan Datang'
+                                  : 'Ditutup'}
+                          </Text>
+                        </View>
                       </View>
-                    ) : (
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        disabled={!isAvailable || startingId === exam.id}
-                        onPress={() => setInstructionModal(exam)}
-                        style={[
-                          styles.actionBtn,
-                          !isAvailable && styles.actionBtnDisabled,
-                        ]}
-                      >
-                        {startingId === exam.id ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <>
-                            <MaterialCommunityIcons
-                              name={isAvailable ? 'play-circle' : 'lock-outline'}
-                              size={16}
-                              color="#FFFFFF"
-                            />
-                            <Text style={styles.actionBtnText}>
-                              {exam.availability === 'resume'
-                                ? 'Lanjutkan Ujian'
-                                : exam.availability === 'available'
-                                ? 'Mulai Ujian'
-                                : 'Belum Dapat Dikerjakan'}
-                            </Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-        </ScrollView>
+
+                      {/* Title */}
+                      <Text style={styles.examTitle} numberOfLines={2}>
+                        {exam.judul_ujian}
+                      </Text>
+
+                      {/* Meta: Kelas & Guru */}
+                      <Text style={styles.metaClassGuru} numberOfLines={1}>
+                        {exam.kelas || 'Kelas'} · Guru: {exam.guru || 'Guru'}
+                      </Text>
+
+                      {/* Attributes: Duration & Question Count */}
+                      <View style={styles.attrRow}>
+                        <View style={styles.attrPill}>
+                          <MaterialCommunityIcons name="clock-outline" size={13} color="#2563EB" />
+                          <Text style={styles.attrPillText}>{exam.durasi_menit} Menit</Text>
+                        </View>
+                        <View style={styles.attrPill}>
+                          <MaterialCommunityIcons name="format-list-numbered" size={13} color="#7C3AED" />
+                          <Text style={styles.attrPillText}>KKM {exam.nilai_kkm}</Text>
+                        </View>
+                      </View>
+
+                      {/* Schedule Time Windows */}
+                      <View style={styles.timeWindowBox}>
+                        <Text style={styles.timeWindowText}>Mulai: {formatDate(exam.waktu_mulai)}</Text>
+                        <Text style={styles.timeWindowText}>Selesai: {formatDate(exam.waktu_selesai)}</Text>
+                      </View>
+
+                      {/* Result Pill if Completed */}
+                      {hasScore && (
+                        <View style={styles.scoreRow}>
+                          <MaterialCommunityIcons name="check-decagram" size={16} color="#059669" />
+                          <Text style={styles.scoreText}>
+                            Nilai Akhir: <Text style={{ fontWeight: '900', color: '#059669' }}>{exam.latest_result?.nilai_final}</Text>
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Action Button */}
+                      {isParent ? (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => setInstructionModal(exam)}
+                            style={[styles.actionBtnParent, { flex: 1 }]}
+                          >
+                            <MaterialCommunityIcons name="information-outline" size={16} color="#0284C7" />
+                            <Text style={styles.actionBtnParentText}>Petunjuk</Text>
+                          </TouchableOpacity>
+                          {isAvailable && (
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              disabled={startingId === exam.id}
+                              onPress={() => setInstructionModal(exam)}
+                              style={[styles.actionBtn, { flex: 1.6 }]}
+                            >
+                              {startingId === exam.id ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                              ) : (
+                                <>
+                                  <MaterialCommunityIcons name="play-circle" size={16} color="#FFFFFF" />
+                                  <Text style={styles.actionBtnText}>
+                                    {exam.availability === 'resume' ? 'Lanjutkan Ujian' : 'Mulai Ujian Ananda'}
+                                  </Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          disabled={!isAvailable || startingId === exam.id}
+                          onPress={() => setInstructionModal(exam)}
+                          style={[
+                            styles.actionBtn,
+                            !isAvailable && styles.actionBtnDisabled,
+                          ]}
+                        >
+                          {startingId === exam.id ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <MaterialCommunityIcons
+                                name={isAvailable ? 'play-circle' : 'lock-outline'}
+                                size={16}
+                                color="#FFFFFF"
+                              />
+                              <Text style={styles.actionBtnText}>
+                                {exam.availability === 'resume'
+                                  ? 'Lanjutkan Ujian'
+                                  : exam.availability === 'available'
+                                    ? 'Mulai Ujian'
+                                    : 'Belum Dapat Dikerjakan'}
+                              </Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        </Animated.ScrollView>
       </View>
+
+      {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
+      <StudentIdCardModal
+        visible={Boolean(selectedIdCardStudent)}
+        student={selectedIdCardStudent}
+        onClose={() => setSelectedIdCardStudent(null)}
+      />
+      <StudentQrModal
+        visible={Boolean(selectedQrStudent)}
+        student={selectedQrStudent}
+        onClose={() => setSelectedQrStudent(null)}
+      />
+      <StudentMenuModal
+        visible={Boolean(selectedMenuStudent)}
+        student={selectedMenuStudent}
+        onClose={() => setSelectedMenuStudent(null)}
+        navigation={navigation}
+      />
+      <StudentWeeklyReportModal
+        visible={Boolean(selectedWeeklyStudent)}
+        student={selectedWeeklyStudent}
+        onClose={() => setSelectedWeeklyStudent(null)}
+      />
 
       {/* ══════════════════════════════════════════════════════════════
           MODAL: PETUNJUK & KONFIRMASI MULAI UJIAN CBT
@@ -1217,7 +1553,7 @@ export default function CbtExamsScreen({ route }: any) {
                   style={[
                     styles.doubtfulToggleBtn,
                     doubtfulQuestions[activeExamSession.soal[currentQuestionIndex].id] &&
-                      styles.doubtfulToggleBtnActive,
+                    styles.doubtfulToggleBtnActive,
                   ]}
                 >
                   <MaterialCommunityIcons
@@ -1237,7 +1573,7 @@ export default function CbtExamsScreen({ route }: any) {
                     style={[
                       styles.doubtfulToggleBtnText,
                       doubtfulQuestions[activeExamSession.soal[currentQuestionIndex].id] &&
-                        styles.doubtfulToggleBtnTextActive,
+                      styles.doubtfulToggleBtnTextActive,
                     ]}
                   >
                     Ragu-ragu
@@ -1450,6 +1786,20 @@ export default function CbtExamsScreen({ route }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* Universal Feedback Modal */}
+      {feedbackModal && (
+        <AppFeedbackModal
+          visible={feedbackModal.visible}
+          type={feedbackModal.type || 'info'}
+          title={feedbackModal.title}
+          message={feedbackModal.message}
+          confirmText={feedbackModal.confirmText}
+          cancelText={feedbackModal.cancelText}
+          onConfirm={feedbackModal.onConfirm}
+          onClose={() => setFeedbackModal(null)}
+        />
+      )}
     </View>
   );
 }
@@ -1467,9 +1817,101 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'transparent',
   },
-  content: {
-    padding: 16,
-    paddingTop: Platform.OS === 'android' ? 20 : 16,
+  // Struktur scroll + hero statis disamakan plek dengan Tugas/Jadwal/Materi/Nilai
+  mainScrollContent: {
+    flexGrow: 1,
+  },
+  bodyContentWrapper: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  staticTopBarWrapper: {
+    width: '100%',
+    position: 'relative',
+    overflow: 'hidden',
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
+    paddingBottom: 14,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  heroDecorCircle1: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  heroDecorCircle2: {
+    position: 'absolute',
+    bottom: -20,
+    left: 20,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  staticTopBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    width: '100%',
+  },
+  heroSquircleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+    position: 'relative',
+  },
+  heroTitleCenterCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  heroModuleTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    fontFamily: 'Poppins_700Bold',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  heroModuleSubtitle: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    fontFamily: 'Nunito_600SemiBold',
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    marginTop: 1,
+  },
+  heroBellDot: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
   containerBlock: {
     marginBottom: 16,
@@ -1517,6 +1959,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 12,
     paddingBottom: 4,
+  },
+  studentCardsTrack: {
+    gap: STUDENT_CARD_GAP,
   },
   childCardHeroSize: {
     width: SCREEN_WIDTH - 50,

@@ -14,6 +14,8 @@ export interface AttendancePayload {
   attendance_date?: string;
   class_id?: string;
   unit_pendidikan_id?: string;
+  academic_year_id?: string;
+  semester_id?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -34,11 +36,11 @@ const childRequest = (childId?: string) => (childId ? {
   headers: { 'X-Child-Id': childId },
 } : undefined);
 
-export const unwrapApiData = <T>(response: any): T => (
+export const unwrapApiData = <T = any>(response: any): T => (
   response?.data?.data ?? response?.data ?? response
 );
 
-export const unwrapCollection = <T>(response: any): T[] => {
+export const unwrapCollection = <T = any>(response: any): T[] => {
   const payload = response?.data ?? response;
   if (Array.isArray(payload)) return payload as T[];
   if (Array.isArray(payload?.data)) return payload.data as T[];
@@ -64,6 +66,9 @@ export const mobileApiService = {
   getNotifications: async (params: ListParams = {}) => (
     await api.get('/notifications', { params })
   ).data,
+  getUnreadNotificationCount: async () => (
+    await api.get('/notifications/unread-count')
+  ).data,
   markNotificationRead: async (id: string) => (
     await api.post(`/notifications/${id}/read`)
   ).data,
@@ -75,6 +80,11 @@ export const mobileApiService = {
   getManagedProfile: async () => (await api.get('/profile')).data,
   updateProfile: async (payload: Record<string, unknown>) => (
     await api.put('/profile', payload)
+  ).data,
+  updateAvatar: async (formData: FormData) => (
+    await api.post('/profile/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
   ).data,
   changePassword: async (payload: {
     current_password: string;
@@ -93,6 +103,36 @@ export const mobileApiService = {
   ).data,
   getPrincipalDashboard: async (params: ListParams = {}) => (
     await api.get('/dashboard/kepala-sekolah', { params })
+  ).data,
+  submitPrincipalMonthlyReport: async (payload: Record<string, unknown>) => (
+    await api.post('/dashboard-pemantauan/laporan-bulanan', payload)
+  ).data,
+  getPrincipalMonthlyReports: async (params: ListParams = {}) => (
+    await api.get('/dashboard-pemantauan/laporan-bulanan', { params })
+  ).data,
+  getStudentAchievements: async (params: ListParams = {}) => (
+    await api.get('/dashboard-pemantauan/rekap-prestasi-siswa', { params })
+  ).data,
+  getRekapPrestasiSiswa: async (params: ListParams = {}) => (
+    await api.get('/dashboard-pemantauan/rekap-prestasi-siswa', { params })
+  ).data,
+  getTeacherMonitoring: async (params: ListParams = {}) => (
+    await api.get('/teacher-monitoring', { params })
+  ).data,
+  createStudentAchievement: async (payload: Record<string, unknown>) => (
+    await api.post('/dashboard-pemantauan/rekap-prestasi-siswa', payload)
+  ).data,
+  verifyStudentAchievement: async (id: string, payload: Record<string, unknown>) => (
+    await api.put(`/dashboard-pemantauan/rekap-prestasi-siswa/${id}`, payload)
+  ).data,
+  deleteStudentAchievement: async (id: string) => (
+    await api.delete(`/dashboard-pemantauan/rekap-prestasi-siswa/${id}`)
+  ).data,
+  getTataUsahaDashboard: async (params: ListParams = {}) => (
+    await api.get('/dashboard/tata-usaha', { params })
+  ).data,
+  getTataUsahaKpiDetail: async (type: string, params: ListParams = {}) => (
+    await api.get(`/dashboard/tata-usaha/kpi/${type}`, { params })
   ).data,
 
   // Enterprise master data
@@ -127,6 +167,34 @@ export const mobileApiService = {
   ).data,
   deleteStudent: async (id: string) => (await api.delete(`/students/${id}`)).data,
 
+  // Alumni & Kelulusan
+  getAlumni: async (params: ListParams = {}) => (
+    await api.get('/alumni', { params })
+  ).data,
+  getAlumniStats: async () => (
+    await api.get('/alumni/stats')
+  ).data,
+
+  // Academic Years
+  getAcademicYears: async () => (await api.get('/tahun-ajaran/dropdown')).data,
+
+  // Student Mutations (Two-Way Handshake Pindah Unit Internal & Pindah Keluar)
+  getStudentMutations: async (params: ListParams = {}) => (
+    await api.get('/student-mutations', { params })
+  ).data,
+  getIncomingMutations: async (params: ListParams = {}) => (
+    await api.get('/student-mutations/incoming', { params })
+  ).data,
+  requestStudentMutation: async (payload: Record<string, unknown>) => (
+    await api.post('/student-mutations', payload)
+  ).data,
+  approveStudentMutation: async (id: string, payload: Record<string, unknown>) => (
+    await api.post(`/student-mutations/${id}/approve`, payload)
+  ).data,
+  rejectStudentMutation: async (id: string, payload: Record<string, unknown>) => (
+    await api.post(`/student-mutations/${id}/reject`, payload)
+  ).data,
+
   getEducationUnits: async (params: ListParams = {}) => (
     await api.get('/education-units', { params })
   ).data,
@@ -141,7 +209,19 @@ export const mobileApiService = {
   ).data,
 
   getClasses: async (params: ListParams = {}) => (await api.get('/kelas', { params })).data,
+  getClass: async (id: string) => (await api.get(`/kelas/${id}`)).data,
+  getKelasOptions: async () => (await api.get('/kelas/options')).data,
   getClassStudents: async (id: string) => (await api.get(`/kelas/${id}/siswa`)).data,
+  createClass: async (payload: Record<string, unknown>) => (await api.post('/kelas', payload)).data,
+  updateClass: async (id: string, payload: Record<string, unknown>) => (await api.put(`/kelas/${id}`, payload)).data,
+  deleteClass: async (id: string) => (await api.delete(`/kelas/${id}`)).data,
+
+  // Master Jabatan (Posisi / Level Jabatan)
+  getJabatanList: async (params: ListParams = {}) => (await api.get('/jabatan', { params })).data,
+  getJabatan: async (id: string) => (await api.get(`/jabatan/${id}`)).data,
+  createJabatan: async (payload: Record<string, unknown>) => (await api.post('/jabatan', payload)).data,
+  updateJabatan: async (id: string, payload: Record<string, unknown>) => (await api.put(`/jabatan/${id}`, payload)).data,
+  deleteJabatan: async (id: string) => (await api.delete(`/jabatan/${id}`)).data,
 
   // Foundation read-only monitoring endpoints
   getFoundationUnits: async (params: ListParams = {}) => (
@@ -164,9 +244,16 @@ export const mobileApiService = {
   ).data,
 
   // Attendance
-  checkIn: async (payload: AttendancePayload) => (
-    await api.post('/attendance/checkin', payload)
-  ).data,
+  checkIn: async (payload: AttendancePayload | FormData) => {
+    if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+      return (
+        await api.post('/attendance/checkin', payload, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (await api.post('/attendance/checkin', payload)).data;
+  },
   checkOut: async (payload: AttendancePayload & { attendance_id?: string }) => (
     await api.post('/attendance/checkout', payload)
   ).data,
@@ -177,10 +264,102 @@ export const mobileApiService = {
     await api.get('/attendance/stats', { params })
   ).data,
 
-  // Teacher portal
+  // Presensi Pembelajaran (Lesson Attendance KBM Guru)
+  getActiveLessonSchedules: async () => (
+    await api.get('/lesson-attendance/active-schedules')
+  ).data,
+  getMyLessonSchedules: async (params: ListParams = {}) => (
+    await api.get('/lesson-attendance/my-schedules', { params })
+  ).data,
+  getLessonScheduleStudents: async (scheduleId: string | number, params: { date?: string } = {}) => (
+    await api.get(`/lesson-attendance/my-schedules/${scheduleId}/students`, { params })
+  ).data,
+  startLessonAttendanceSession: async (payload: { schedule_id: string | number; attendance_date?: string }) => (
+    await api.post('/lesson-attendance/sessions', payload)
+  ).data,
+  identifyStudentCard: async (method: 'qr' | 'rfid', payload: { schedule_id: string | number; identifier: string }) => (
+    await api.post(`/lesson-attendance/identify-card/${method}`, payload)
+  ).data,
+  scanLessonAttendance: async (sessionId: string | number, method: 'qr' | 'barcode' | 'rfid', payload: { identifier: string }) => (
+    await api.post(`/lesson-attendance/sessions/${sessionId}/scan/${method}`, payload)
+  ).data,
+  submitManualLessonAttendance: async (sessionId: string | number, payload: { student_id: string | number; status: string; notes?: string }) => (
+    await api.post(`/lesson-attendance/sessions/${sessionId}/manual-check`, payload)
+  ).data,
+
+  // Gate attendance (Absensi Gerbang Masuk & Pulang)
+  scanGateIn: async (payload: { qr_token?: string; nis?: string; student_id?: string; attendance_method?: string }) => (
+    await api.post('/gate-attendance/scan-in', {
+      attendance_method: 'QRCODE',
+      ...payload,
+    })
+  ).data,
+  scanGateOut: async (payload: {
+    qr_token?: string;
+    nis?: string;
+    student_id?: string;
+    attendance_method?: string;
+    is_early?: boolean;
+    pickup_person?: string;
+    pickup_relation?: string;
+    pickup_verification?: string;
+    notes?: string;
+  }) => (
+    await api.post('/gate-attendance/scan-out', {
+      attendance_method: 'QRCODE',
+      ...payload,
+    })
+  ).data,
+  getGateLogs: async (params: ListParams = {}) => (
+    await api.get('/gate-attendance/logs', { params })
+  ).data,
+  getGateStats: async (params: Record<string, any> = {}) => (
+    await api.get('/gate-attendance/stats', { params })
+  ).data,
+
+  // Teacher & Unit portal
   getTeacherDashboard: async () => (await api.get('/teacher/dashboard')).data,
   getTeacherSchedules: async (params: ListParams = {}) => (
     await api.get('/teacher/schedules', { params })
+  ).data,
+  getUnitSchedules: async (params: ListParams = {}) => (
+    await api.get('/schedules', { params })
+  ).data,
+  getScheduleOptions: async () => (
+    await api.get('/schedules-options')
+  ).data,
+  createSchedule: async (payload: Record<string, unknown>) => (
+    await api.post('/schedules', payload)
+  ).data,
+  updateSchedule: async (id: string, payload: Record<string, unknown>) => (
+    await api.put(`/schedules/${id}`, payload)
+  ).data,
+  deleteSchedule: async (id: string) => (
+    await api.delete(`/schedules/${id}`)
+  ).data,
+  checkScheduleConflict: async (payload: Record<string, unknown>) => (
+    await api.post('/schedules/check-conflict', payload)
+  ).data,
+  getScheduleAvailability: async (params: Record<string, unknown> = {}) => (
+    await api.get('/schedules/availability', { params })
+  ).data,
+  getExamSchedules: async (params: ListParams = {}) => (
+    await api.get('/exam-schedules', { params })
+  ).data,
+  getExamCategories: async (params: ListParams = {}) => (
+    await api.get('/exam-categories', { params })
+  ).data,
+  getExamScheduleOptions: async (params: Record<string, unknown> = {}) => (
+    await api.get('/exam-schedules-options', { params })
+  ).data,
+  createExamSchedule: async (payload: Record<string, unknown>) => (
+    await api.post('/exam-schedules', payload)
+  ).data,
+  updateExamSchedule: async (id: string, payload: Record<string, unknown>) => (
+    await api.put(`/exam-schedules/${id}`, payload)
+  ).data,
+  deleteExamSchedule: async (id: string) => (
+    await api.delete(`/exam-schedules/${id}`)
   ).data,
   getTeacherClasses: async () => (await api.get('/teacher/classes')).data,
   getTeacherStudents: async (params: ListParams = {}) => (
@@ -189,20 +368,99 @@ export const mobileApiService = {
   getTeacherMaterials: async (params: ListParams = {}) => (
     await api.get('/teacher/materials', { params })
   ).data,
-  createTeacherMaterial: async (payload: Record<string, unknown>) => (
-    await api.post('/teacher/materials', payload)
+  getTeacherModulAjar: async (params: ListParams = {}) => (
+    await api.get('/lms/modul-ajar', { params })
   ).data,
-  updateTeacherMaterial: async (id: string, payload: Record<string, unknown>) => (
-    await api.put(`/teacher/materials/${id}`, payload)
+  getTeacherModulAjarDetail: async (id: string) => (
+    await api.get(`/lms/modul-ajar/${id}`)
   ).data,
+  createTeacherMaterial: async (payload: Record<string, unknown> | FormData) => (
+    await api.post('/teacher/materials', payload, {
+      headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+    })
+  ).data,
+  updateTeacherMaterial: async (id: string, payload: Record<string, unknown> | FormData) => {
+    if (payload instanceof FormData) {
+      return (
+        await api.post(`/teacher/materials/${id}?_method=PUT`, payload, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (await api.put(`/teacher/materials/${id}`, payload)).data;
+  },
   deleteTeacherMaterial: async (id: string) => (
     await api.delete(`/teacher/materials/${id}`)
   ).data,
   getTeacherAssignments: async (params: ListParams = {}) => (
     await api.get('/teacher/assignments', { params })
   ).data,
+  createTeacherAssignment: async (payload: Record<string, unknown> | FormData) => (
+    await api.post('/teacher/assignments', payload, {
+      headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+    })
+  ).data,
+  updateTeacherAssignment: async (id: string, payload: Record<string, unknown> | FormData) => (
+    await api.post(`/teacher/assignments/${id}`, payload, {
+      headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+    })
+  ).data,
+  deleteTeacherAssignment: async (id: string) => (
+    await api.delete(`/teacher/assignments/${id}`)
+  ).data,
   getTeacherStudentNotes: async (params: ListParams = {}) => (
     await api.get('/teacher/student-notes', { params })
+  ).data,
+  getTeacherTahfizh: async (params: ListParams = {}) => (
+    await api.get('/teacher/tahfizh', { params })
+  ).data,
+  createTeacherTahfizh: async (payload: Record<string, unknown>) => (
+    await api.post('/teacher/tahfizh', payload)
+  ).data,
+  getLastHafalan: async (studentId: string) => (
+    await api.get(`/tahfizh/last-hafalan/${studentId}`)
+  ).data,
+  getTahfizhWeeklySheet: async (studentId: string, startDate?: string) => (
+    await api.get('/tahfizh/weekly-sheet', { params: { student_id: studentId, start_date: startDate } })
+  ).data,
+  getTahfizhStudentProgress: async (studentId: string) => (
+    await api.get(`/tahfizh/student-progress/${studentId}`)
+  ).data,
+  getTeacherGrades: async (params: ListParams = {}) => (
+    await api.get('/teacher/grades', { params })
+  ).data,
+  saveTeacherGrades: async (payload: Record<string, unknown>) => (
+    await api.post('/teacher/grades', payload)
+  ).data,
+  getTeacherMutabaah: async (params: ListParams = {}) => (
+    await api.get('/teacher/mutabaah', { params })
+  ).data,
+  verifyTeacherMutabaah: async (id: string) => (
+    await api.post(`/teacher/mutabaah/${id}/verify`)
+  ).data,
+  getMutabaahDailyContext: async (params: Record<string, any> = {}) => (
+    await api.get('/mutabaah/daily/context', { params })
+  ).data,
+  getMutabaahDailyStudents: async (params: Record<string, any> = {}) => (
+    await api.get('/mutabaah/daily/students', { params })
+  ).data,
+  getMutabaahDailyStudentDetail: async (studentId: string, params: Record<string, any> = {}) => (
+    await api.get(`/mutabaah/daily/${studentId}`, { params })
+  ).data,
+  saveMutabaahDailyCell: async (payload: Record<string, any>) => (
+    await api.post('/mutabaah/daily/save-cell', payload)
+  ).data,
+  finalizeMutabaahDailyStudent: async (payload: Record<string, any>) => (
+    await api.post('/mutabaah/daily/finalize-student', payload)
+  ).data,
+  verifyMutabaahHome: async (payload: Record<string, any>) => (
+    await api.post('/mutabaah/daily/verify-home', payload)
+  ).data,
+  getTeacherSubmissions: async (params: ListParams = {}) => (
+    await api.get('/teacher/submissions', { params })
+  ).data,
+  gradeTeacherSubmission: async (id: string, payload: Record<string, unknown>) => (
+    await api.post(`/teacher/submissions/${id}/grade`, payload)
   ).data,
   createTeacherStudentNote: async (payload: Record<string, unknown>) => (
     await api.post('/teacher/student-notes', payload)
@@ -316,6 +574,15 @@ export const mobileApiService = {
       })
     ).data;
   },
+  getPortalBankSoal: async (childId?: string, params: Record<string, any> = {}) => {
+    const childConfig = childRequest(childId);
+    return (
+      await api.get('/portal/bank-soal', {
+        ...(childConfig || {}),
+        params: { ...(childConfig?.params || {}), ...params },
+      })
+    ).data;
+  },
   getPortalCbtExams: async (childId?: string) => {
     const childConfig = childRequest(childId);
     return (
@@ -332,6 +599,78 @@ export const mobileApiService = {
   ).data,
   finishPortalCbtExam: async (sessionId: string, answers?: any[]) => (
     await api.post(`/portal/lms/exam-sessions/${sessionId}/finish`, { ...(answers ? { jawaban: answers } : {}) })
+  ).data,
+  getTeacherExamGrids: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/kisi-kisi', { params })
+  ).data,
+  getTeacherExamGridStats: async () => (
+    await api.get('/lms/kisi-kisi/stats')
+  ).data,
+  getTeacherExamGridOptions: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/kisi-kisi/options', { params })
+  ).data,
+  createTeacherExamGrid: async (payload: Record<string, any>) => (
+    await api.post('/lms/kisi-kisi', payload)
+  ).data,
+  updateTeacherExamGrid: async (id: string, payload: Record<string, any>) => (
+    await api.put(`/lms/kisi-kisi/${id}`, payload)
+  ).data,
+  deleteTeacherExamGrid: async (id: string) => (
+    await api.delete(`/lms/kisi-kisi/${id}`)
+  ).data,
+  duplicateTeacherExamGrid: async (id: string) => (
+    await api.post(`/lms/kisi-kisi/${id}/duplicate`)
+  ).data,
+  getTeacherBankSoal: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/bank-soal', { params })
+  ).data,
+  getTeacherBankSoalOptions: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/bank-soal/options', { params })
+  ).data,
+  createTeacherBankSoal: async (payload: Record<string, any>) => (
+    await api.post('/lms/bank-soal', payload)
+  ).data,
+  updateTeacherBankSoal: async (id: string, payload: Record<string, any>) => (
+    await api.put(`/lms/bank-soal/${id}`, payload)
+  ).data,
+  deleteTeacherBankSoal: async (id: string) => (
+    await api.delete(`/lms/bank-soal/${id}`)
+  ).data,
+  duplicateTeacherBankSoal: async (id: string) => (
+    await api.post(`/lms/bank-soal/${id}/duplicate`)
+  ).data,
+  getTeacherCbtExams: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/ujian', { params })
+  ).data,
+  getTeacherCbtStats: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/ujian/stats', { params })
+  ).data,
+  getTeacherCbtOptions: async (params: Record<string, any> = {}) => (
+    await api.get('/lms/ujian/options', { params })
+  ).data,
+  getTeacherCbtResults: async (id: string) => (
+    await api.get(`/lms/ujian/${id}/results`)
+  ).data,
+  togglePublishTeacherCbt: async (id: string, status: string) => (
+    await api.post(`/lms/ujian/${id}/toggle-publish`, { status })
+  ).data,
+  createTeacherCbtExam: async (payload: Record<string, any>) => (
+    await api.post('/lms/ujian', payload)
+  ).data,
+  updateTeacherCbtExam: async (id: string, payload: Record<string, any>) => (
+    await api.put(`/lms/ujian/${id}`, payload)
+  ).data,
+  deleteTeacherCbtExam: async (id: string) => (
+    await api.delete(`/lms/ujian/${id}`)
+  ).data,
+  getTeacherAcademicCalendar: async (params: Record<string, any> = {}) => (
+    await api.get('/teacher/academic-calendar', { params })
+  ).data,
+  getTeacherAnnouncements: async (params: Record<string, any> = {}) => (
+    await api.get('/teacher/announcements', { params })
+  ).data,
+  getTeacherAttendanceLogs: async (month?: string) => (
+    await api.get('/teacher/attendance-logs', { params: month ? { month } : {} })
   ).data,
   submitPortalMurajaah: async (payload: {
     student_id: string;
@@ -381,6 +720,16 @@ export const mobileApiService = {
     end_date: string;
     reason: string;
   }) => (await api.post('/portal/permissions', payload)).data,
+  getTeacherPermissions: async (params: Record<string, any> = {}) => (
+    await api.get('/teacher/permissions', { params })
+  ).data,
+  reviewPermission: async (
+    permissionId: string | number,
+    action: 'approve' | 'reject' | 'revision' = 'approve',
+    notes?: string
+  ) => (
+    await api.post(`/teacher/permissions/${permissionId}/${action}`, { review_notes: notes })
+  ).data,
   getPortalAssignments: async (params: Record<string, any> = {}) => (
     await api.get('/portal/assignments', { params })
   ).data,
@@ -443,6 +792,72 @@ export const mobileApiService = {
     ).data;
   },
 
+  // Teacher Communication (/api/teacher/chat/*)
+  getTeacherChatConversations: async () => (
+    await api.get('/teacher/chat/conversations')
+  ).data,
+  getTeacherChatMessages: async (parentUserId: string, studentId: string) => (
+    await api.get(`/teacher/chat/parent/${parentUserId}/student/${studentId}`)
+  ).data,
+  sendTeacherChatMessage: async (
+    parentUserId: string,
+    studentId: string,
+    message: string,
+    attachment?: { uri: string; name: string; type: string } | null
+  ) => {
+    if (attachment) {
+      const formData = new FormData();
+      if (message) formData.append('message', message);
+      formData.append('attachment', {
+        uri: attachment.uri,
+        name: attachment.name,
+        type: attachment.type,
+      } as any);
+      return (
+        await api.post(`/teacher/chat/parent/${parentUserId}/student/${studentId}`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (
+      await api.post(`/teacher/chat/parent/${parentUserId}/student/${studentId}`, { message })
+    ).data;
+  },
+
+  // Employee Chat Communication (/api/employee/chat/*)
+  getEmployeeChatConversations: async () => (
+    await api.get('/employee/chat/conversations')
+  ).data,
+  getEmployeeChatContacts: async (params?: Record<string, any>) => (
+    await api.get('/employee/chat/contacts', { params })
+  ).data,
+  getEmployeeChatMessages: async (recipientUserId: string) => (
+    await api.get(`/employee/chat/messages/${recipientUserId}`)
+  ).data,
+  sendEmployeeChatMessage: async (
+    recipientUserId: string,
+    message: string,
+    attachment?: { uri: string; name: string; type: string } | null
+  ) => {
+    if (attachment) {
+      const formData = new FormData();
+      if (message) formData.append('message', message);
+      formData.append('attachment', {
+        uri: attachment.uri,
+        name: attachment.name,
+        type: attachment.type,
+      } as any);
+      return (
+        await api.post(`/employee/chat/messages/${recipientUserId}`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (
+      await api.post(`/employee/chat/messages/${recipientUserId}`, { message })
+    ).data;
+  },
+
   // Existing curriculum and tahfizh integrations
   submitTahfizh: async (payload: TahfizhPayload) => (
     await api.post('/tahfizh/store', payload)
@@ -468,6 +883,85 @@ export const mobileApiService = {
   getLmsMateriList: async (params: ListParams = {}) => (
     await api.get('/lms/materi', { params })
   ).data,
+  getLmsMateriStats: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/materi/stats', { params })
+  ).data,
+  getLmsMateriOptions: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/materi/options', { params })
+  ).data,
+  getLmsMateriDetail: async (id: string) => (
+    await api.get(`/lms/materi/${id}`)
+  ).data,
+  createLmsMateri: async (payload: Record<string, unknown> | FormData) => (
+    await api.post('/lms/materi', payload, {
+      headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+    })
+  ).data,
+  updateLmsMateri: async (id: string, payload: Record<string, unknown> | FormData) => {
+    if (payload instanceof FormData) {
+      return (
+        await api.post(`/lms/materi/${id}?_method=PUT`, payload, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (await api.put(`/lms/materi/${id}`, payload)).data;
+  },
+  deleteLmsMateri: async (id: string) => (
+    await api.delete(`/lms/materi/${id}`)
+  ).data,
+  restoreLmsMateri: async (id: string) => (
+    await api.post(`/lms/materi/${id}/restore`)
+  ).data,
+  getLmsModulAjarList: async (params: ListParams = {}) => (
+    await api.get('/lms/modul-ajar', { params })
+  ).data,
+  getLmsModulAjarStats: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/modul-ajar/stats', { params })
+  ).data,
+  getLmsModulAjarDetail: async (id: string) => (
+    await api.get(`/lms/modul-ajar/${id}`)
+  ).data,
+  // LMS Penugasan (Assignments) - Aligned with web-dashboard & LmsPenugasanController
+  getLmsPenugasanList: async (params: ListParams = {}) => (
+    await api.get('/lms/penugasan', { params })
+  ).data,
+  getLmsPenugasanStats: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/penugasan/stats', { params })
+  ).data,
+  getLmsPenugasanOptions: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/penugasan/options', { params })
+  ).data,
+  getLmsPenugasanDetail: async (id: string) => (
+    await api.get(`/lms/penugasan/${id}`)
+  ).data,
+  createLmsPenugasan: async (payload: Record<string, unknown> | FormData) => (
+    await api.post('/lms/penugasan', payload, {
+      headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+    })
+  ).data,
+  updateLmsPenugasan: async (id: string, payload: Record<string, unknown> | FormData) => {
+    if (payload instanceof FormData) {
+      return (
+        await api.post(`/lms/penugasan/${id}?_method=PUT`, payload, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      ).data;
+    }
+    return (await api.put(`/lms/penugasan/${id}`, payload)).data;
+  },
+  deleteLmsPenugasan: async (id: string) => (
+    await api.delete(`/lms/penugasan/${id}`)
+  ).data,
+  restoreLmsPenugasan: async (id: string) => (
+    await api.post(`/lms/penugasan/${id}/restore`)
+  ).data,
+  togglePublishLmsPenugasan: async (id: string) => (
+    await api.post(`/lms/penugasan/${id}/toggle-publish`)
+  ).data,
+  gradeLmsPenugasan: async (id: string, payload: Record<string, unknown>) => (
+    await api.post(`/lms/penugasan/${id}/nilai`, payload)
+  ).data,
   submitLmsTugas: async (penugasanId: string, payload: Record<string, unknown>) => (
     await api.post(`/lms/penugasan/${penugasanId}/submit`, payload)
   ).data,
@@ -475,5 +969,16 @@ export const mobileApiService = {
   // Prayer assessment (62 Daily Prayers)
   getParentPrayerAssessment: async (studentId: string) => (
     await api.get(`/parent/children/${studentId}/prayer-assessment`)
+  ).data,
+
+  // Master Dynamic Business Options & Code Generator (Single Source of Truth)
+  getBusinessOptions: async (group: string) => (
+    await api.get(`/master/options/dropdown/${group}`)
+  ).data,
+  getModaTransportasiOptions: async () => (
+    await api.get('/master/moda-transportasi/dropdown')
+  ).data,
+  getCodeGeneratorPreview: async (params: { entity_type: string; unit_id?: string; extra?: string }) => (
+    await api.get('/code-generator/preview', { params })
   ).data,
 };

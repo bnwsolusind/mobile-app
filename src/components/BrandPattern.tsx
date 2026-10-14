@@ -12,7 +12,7 @@ export default function BrandPattern({ opacity = 0.08 }: BrandPatternProps) {
   const tiles = Array.from({ length: 15 });
 
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+    <View style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}>
       {tiles.map((_, index) => {
         const column = index % 3;
         const row = Math.floor(index / 3);

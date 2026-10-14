@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { PaperProvider, MD3LightTheme, configureFonts } from 'react-native-paper';
 import { useFonts } from 'expo-font';
+import * as ExpoSplashScreen from 'expo-splash-screen';
 import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
@@ -18,6 +19,7 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import NetworkStatusBar from './src/components/NetworkStatusBar';
 import { useAuthStore } from './src/stores/authStore';
 import { useMobileConfigStore } from './src/stores/mobileConfigStore';
+import { useServerConfigStore } from './src/stores/serverConfigStore';
 import { isForceUpdateRequired } from './src/utils/semver';
 
 const CURRENT_APP_VERSION = '1.0.0';
@@ -57,19 +59,26 @@ export default function App() {
     // 1. Hydrate auth session from storage
     void hydrateAuth();
 
-    // 2. Hydrate cached config first, then refresh from server
-    void hydrateConfig().then(() => {
-      void refreshConfig();
+    // 2. Hydrate dynamic server config, then hydrate & refresh app config
+    void useServerConfigStore.getState().hydrate().then(() => {
+      void hydrateConfig().then(() => {
+        void refreshConfig();
+      });
     });
 
-    // 4. Font fallback timeout: never block app indefinitely if fonts fail
-    const fontTimer = setTimeout(() => setFontTimeout(true), 2500);
+    // 3. Pastikan splash screen native OS segera tertutup jika masih aktif
+    void ExpoSplashScreen.hideAsync().catch(() => {});
 
-    // 5. Maximum splash timeout guard: force transition even if storage/network hangs
-    const maxSplashTimer = setTimeout(() => setForceHideSplash(true), 4500);
+    // 4. Font fallback timeout: batas cepat 1.2 detik agar tidak menghambat pembukaan aplikasi
+    const fontTimer = setTimeout(() => setFontTimeout(true), 1200);
+
+    // 5. Maximum splash timeout guard: jaminan transisi maksimal 2.2 detik (mencegah stuck)
+    const maxSplashTimer = setTimeout(() => {
+      setForceHideSplash(true);
+      void ExpoSplashScreen.hideAsync().catch(() => {});
+    }, 2200);
 
     return () => {
-      // progress handles splash transition
       clearTimeout(fontTimer);
       clearTimeout(maxSplashTimer);
     };
@@ -77,6 +86,12 @@ export default function App() {
 
   const fontsReady = fontsLoaded || fontTimeout;
   const showingSplash = !forceHideSplash && (!isHydrated || !configHydrated || !splashFinished || !fontsReady);
+
+  useEffect(() => {
+    if (!showingSplash) {
+      void ExpoSplashScreen.hideAsync().catch(() => {});
+    }
+  }, [showingSplash]);
 
   // Runtime Guards: Maintenance & Force Update
   const isMaintenance = Boolean(config.system?.maintenance_mode);
@@ -102,22 +117,36 @@ export default function App() {
       ? 'Nunito_400Regular'
       : undefined;
 
-  const baseFonts = fontFamily ? configureFonts({ config: { fontFamily } }) : MD3LightTheme.fonts;
+  const baseFonts = (() => {
+    try {
+      return fontFamily ? configureFonts({ config: { fontFamily } as any }) : MD3LightTheme.fonts;
+    } catch {
+      // Fallback aman: jangan biarkan configureFonts melempar
+      // "Object is not a function" dan meruntuhkan seluruh App.
+      return MD3LightTheme.fonts;
+    }
+  })();
   const typeScale =
     theme.font_scale === 'compact' ? 0.92 : theme.font_scale === 'large' ? 1.1 : 1;
 
-  const fonts = Object.fromEntries(
-    Object.entries(baseFonts).map(([name, value]) => [
-      name,
-      'fontSize' in value
-        ? {
-            ...value,
-            fontSize: value.fontSize * typeScale,
-            lineHeight: value.lineHeight * typeScale,
-          }
-        : value,
-    ])
-  ) as unknown as typeof MD3LightTheme.fonts;
+  const fonts = (() => {
+    try {
+      return Object.fromEntries(
+        Object.entries(baseFonts).map(([name, value]) => [
+          name,
+          value && typeof value === 'object' && 'fontSize' in (value as object)
+            ? {
+                ...(value as Record<string, unknown>),
+                fontSize: (value as any).fontSize * typeScale,
+                lineHeight: (value as any).lineHeight * typeScale,
+              }
+            : value,
+        ])
+      ) as unknown as typeof MD3LightTheme.fonts;
+    } catch {
+      return MD3LightTheme.fonts;
+    }
+  })();
 
   return (
     <SafeAreaProvider>
