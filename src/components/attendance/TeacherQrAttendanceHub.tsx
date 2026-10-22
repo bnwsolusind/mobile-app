@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -19,13 +21,24 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { AttendancePayload, mobileApiService, unwrapApiData } from '../../services/mobileApiService';
+import { AttendancePayload, mobileApiService, unwrapApiData, unwrapCollection } from '../../services/mobileApiService';
 import { getApiErrorMessage } from '../../services/api';
 import { getProfileImageUrl, DEFAULT_PARENT_AVATAR, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_STUDENT_GIRL_AVATAR } from '../../utils/profile';
 import { getDynamicAcademicYear } from '../../utils/academicYear';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
+import { AttendanceRejectedModal, AttendanceRejectionDetails } from './AttendanceRejectedModal';
 import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
+import { useMobileConfigStore } from '../../stores/mobileConfigStore';
 import { resolveUnitName } from '../../utils/employeeUtils';
+
+// Safe dynamic loader for expo-location to prevent crashing if native module ExpoLocation is unlinked
+const getLocationModule = (): any => {
+  try {
+    return require('expo-location');
+  } catch {
+    return null;
+  }
+};
 
 let CameraViewComponent: any = null;
 let useCameraPermissionsHook: any = null;
@@ -81,6 +94,7 @@ export default function TeacherQrAttendanceHub({
   const incomingSchedId = route?.params?.schedule_id ? String(route.params.schedule_id) : undefined;
   const incomingClassId = (route?.params?.kelas_id || route?.params?.class_id) ? String(route?.params?.kelas_id || route?.params?.class_id) : undefined;
   const incomingClassName = route?.params?.class_name ? String(route.params.class_name) : undefined;
+  const isCorrectionMode = Boolean(route?.params?.is_correction);
 
   const [activeMode, setActiveMode] = useState<TeacherMode>(() => {
     if (incomingMode === 'mandiri' || incomingMode === 'attendance' || incomingMode === 'self') return 'mandiri';
@@ -457,11 +471,18 @@ export default function TeacherQrAttendanceHub({
         // Guru / TU menandai kehadiran santri/siswa secara manual atau memindai kartu QR.
         setStudentStatuses((prev) => {
           const preserved: Record<string, AttendanceStatus> = {};
-          // Hanya pertahankan status yang sudah dipilih/di-scan secara eksplisit pada sesi saat ini
           list.forEach((st) => {
             const sId = String(st.id || st.student_id);
             if (prev[sId]) {
               preserved[sId] = prev[sId];
+            } else if (isCorrectionMode && (st.status || st.status_hadir || st.recommended_status)) {
+              // Mode koreksi: Muat status kehadiran lampau agar guru dapat langsung mengoreksi santri yang salah input
+              const raw = String(st.status || st.status_hadir || st.recommended_status).toLowerCase();
+              if (raw.includes('hadir') || raw === 'present') preserved[sId] = 'present';
+              else if (raw.includes('terlambat') || raw === 'late') preserved[sId] = 'late';
+              else if (raw.includes('sakit') || raw === 'sick') preserved[sId] = 'sick';
+              else if (raw.includes('izin') || raw.includes('permission') || raw.includes('permit')) preserved[sId] = 'permission';
+              else if (raw.includes('alpha') || raw.includes('alpa') || raw === 'absent') preserved[sId] = 'absent';
             }
           });
           return preserved;
@@ -842,11 +863,41 @@ export default function TeacherQrAttendanceHub({
         await Promise.all(promises);
       }
 
+      // Persistensi ganda ke backend modul Guru (LmsPresensi) selaras web-dashboard
+      if (effectiveScheduleId && !String(effectiveScheduleId).startsWith('virtual-')) {
+        const statusMapForBackend: Record<string, string> = {
+          present: 'Hadir',
+          late: 'Terlambat',
+          sick: 'Sakit',
+          permission: 'Izin',
+          absent: 'Alpha',
+        };
+        const studentPayload = markedStudents.map((st) => {
+          const sId = String(st.id || st.student_id);
+          const rawSt = studentStatuses[sId] || 'present';
+          return {
+            student_id: sId,
+            status: statusMapForBackend[rawSt] || 'Hadir',
+            notes: studentNotes[sId] || (isCorrectionMode ? 'Koreksi presensi KBM mobile oleh guru' : undefined),
+          };
+        });
+
+        await mobileApiService.saveTeacherAttendance?.({
+          class_schedule_id: effectiveScheduleId,
+          date: new Date().toISOString().slice(0, 10),
+          meeting_number: 1,
+          topic: selectedSchedule?.subject?.name || 'Presensi KBM Terpadu',
+          students: studentPayload,
+        }).catch(() => null);
+      }
+
       setFeedbackModal({
         visible: true,
         type: 'success',
-        title: 'Presensi Disimpan',
-        message: `Presensi KBM ${selectedSchedule?.subject?.name || 'Mata Pelajaran'} (${markedStudents.length} santri) berhasil disimpan dan disinkronkan ke sistem.`,
+        title: isCorrectionMode ? 'Koreksi Presensi Disimpan' : 'Presensi Disimpan',
+        message: isCorrectionMode
+          ? `Koreksi presensi KBM ${selectedSchedule?.subject?.name || 'Mata Pelajaran'} (${markedStudents.length} santri) berhasil disimpan dan diperbarui di sistem.`
+          : `Presensi KBM ${selectedSchedule?.subject?.name || 'Mata Pelajaran'} (${markedStudents.length} santri) berhasil disimpan dan disinkronkan ke sistem.`,
       });
     } catch (err) {
       setFeedbackModal({
@@ -1010,6 +1061,315 @@ export default function TeacherQrAttendanceHub({
   const hasCheckOut = Boolean(todayEmpRecord?.check_out_time || (todayEmpRecord?.check_out && todayEmpRecord?.check_out !== '--:--'));
   const checkedIn = Boolean(hasCheckIn && !hasCheckOut);
 
+  // ── Realtime Clock & Status Display untuk Mode Mandiri Pendidik ──
+  const [currentTime, setCurrentTime] = useState<string>('');
+  const [currentDateText, setCurrentDateText] = useState<string>('');
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(
+        now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace('.', ':') + ' WIB'
+      );
+      setCurrentDateText(
+        now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      );
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const todayIn = todayEmpRecord?.check_in_time
+    ? formatJamIndo(todayEmpRecord.check_in_time)
+    : todayEmpRecord?.check_in
+      ? todayEmpRecord.check_in
+      : '--:--';
+
+  const todayOut = todayEmpRecord?.check_out_time
+    ? formatJamIndo(todayEmpRecord.check_out_time)
+    : todayEmpRecord?.check_out && todayEmpRecord.check_out !== '--:--'
+      ? todayEmpRecord.check_out
+      : '--:--';
+
+  const todayStatusLabel = checkedIn ? 'Sedang Bekerja' : hasCheckOut ? 'Selesai' : hasCheckIn ? 'Hadir' : 'Belum Presensi';
+  const isStatusPositive = hasCheckIn || hasCheckOut;
+
+  // ── GEOLOKASI & MAPBOX PRESENSI MANDIRI PENDIDIK ──
+  const userAny = user as any;
+  const storeMapboxToken = useMobileConfigStore(
+    (state) => state.config?.mapbox_token || state.config?.system?.mapbox_token
+  );
+  const [mapboxToken, setMapboxToken] = useState<string | undefined>(storeMapboxToken);
+
+  useEffect(() => {
+    if (storeMapboxToken) {
+      setMapboxToken(storeMapboxToken);
+    }
+  }, [storeMapboxToken]);
+
+  // Modal Penolakan Presensi Geofence
+  const [rejectionModal, setRejectionModal] = useState<{
+    visible: boolean;
+    title?: string;
+    message?: string;
+    details?: AttendanceRejectionDetails | null;
+  } | null>(null);
+
+  // Koordinat Unit Pendidikan Acuan
+  const [unitLocation, setUnitLocation] = useState<{
+    id?: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+    radiusMeter: number;
+  }>({
+    name: teacherUnit,
+    latitude: Number(userAny?.unit?.latitude ?? userAny?.education_unit?.latitude ?? -0.9242000),
+    longitude: Number(userAny?.unit?.longitude ?? userAny?.education_unit?.longitude ?? 100.3621000),
+    radiusMeter: Math.min(Number(userAny?.unit?.radius_meter ?? userAny?.education_unit?.radius_meter ?? 30), 30),
+  });
+
+  // Posisi Geolocation Pengguna (Live GPS)
+  const [userLocation, setUserLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null>(null);
+  const [locatingUser, setLocatingUser] = useState<boolean>(false);
+
+  // Sinkronisasi data unit dari server
+  useEffect(() => {
+    let isMounted = true;
+    const fetchUnitDetails = async () => {
+      try {
+        const unitsRes = await mobileApiService.getEducationUnits?.({ per_page: 50 });
+        const units = unwrapCollection<any>(unitsRes);
+        if (isMounted && Array.isArray(units) && units.length > 0) {
+          const targetId = userAny?.unit?.id ?? userAny?.unit_id ?? userAny?.scope?.unit_id ?? userAny?.education_unit_id;
+          const matched = units.find(
+            (u) =>
+              (targetId && (String(u.id) === String(targetId) || String(u.code) === String(targetId))) ||
+              (teacherUnit && (u.name?.toLowerCase().includes(teacherUnit.toLowerCase()) || teacherUnit.toLowerCase().includes(u.name?.toLowerCase())))
+          ) || units[0];
+
+          if (matched && matched.latitude && matched.longitude) {
+            setUnitLocation({
+              id: matched.id,
+              name: matched.name || teacherUnit,
+              latitude: Number(matched.latitude),
+              longitude: Number(matched.longitude),
+              radiusMeter: Math.min(Number(matched.radius_meter || 30), 30),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[TeacherQrAttendanceHub] fetchUnitDetails warning:', err);
+      }
+    };
+    void fetchUnitDetails();
+    return () => {
+      isMounted = false;
+    };
+  }, [userAny, teacherUnit]);
+
+  // Haversine Distance Formula (Meter)
+  const calculateHaversineDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371000;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }, []);
+
+  // Jarak Live User ke Unit
+  const distanceToUnit = useMemo(() => {
+    if (!userLocation || !unitLocation.latitude || !unitLocation.longitude) return null;
+    return calculateHaversineDistance(
+      userLocation.latitude,
+      userLocation.longitude,
+      unitLocation.latitude,
+      unitLocation.longitude
+    );
+  }, [userLocation, unitLocation, calculateHaversineDistance]);
+
+  // Status Validasi Radius (Maks. 30 Meter)
+  const isWithinRadius = useMemo(() => {
+    if (distanceToUnit === null) return false;
+    return distanceToUnit <= unitLocation.radiusMeter;
+  }, [distanceToUnit, unitLocation.radiusMeter]);
+
+  const formatDistance = (meters: number | null): string => {
+    if (meters === null || meters === undefined || isNaN(meters)) return '-- m';
+    if (meters < 1000) return `${Math.round(meters)} m`;
+    return `${(meters / 1000).toFixed(2)} km`;
+  };
+
+  // Mapbox Static Map Tile Generator
+  const mapTileInfo = useMemo(() => {
+    const uLat = unitLocation.latitude;
+    const uLng = unitLocation.longitude;
+    if (!uLat || !uLng) return null;
+
+    const token = mapboxToken?.trim();
+    const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 58), 420);
+    const mapHeight = 165;
+
+    if (token) {
+      if (userLocation && userLocation.latitude && userLocation.longitude) {
+        const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
+        const pUser = `pin-s-circle+2563eb(${userLocation.longitude.toFixed(6)},${userLocation.latitude.toFixed(6)})`;
+        const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${token}`;
+        return { url, isMapbox: true };
+      } else {
+        const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
+        const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit}/${uLng.toFixed(6)},${uLat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${token}`;
+        return { url, isMapbox: true };
+      }
+    }
+
+    const centerLat = userLocation ? (userLocation.latitude + uLat) / 2 : uLat;
+    const centerLng = userLocation ? (userLocation.longitude + uLng) / 2 : uLng;
+    const zoom = 16;
+    const lon2tile = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+    const lat2tile = (lat: number, z: number) => {
+      const rad = (lat * Math.PI) / 180;
+      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, z));
+    };
+    const tileX = lon2tile(centerLng, zoom);
+    const tileY = lat2tile(centerLat, zoom);
+    return {
+      url: `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`,
+      isMapbox: false,
+    };
+  }, [mapboxToken, unitLocation, userLocation]);
+
+  // Request & Update User GPS Location
+  const requestUserLocation = useCallback(async (silent = false): Promise<{ latitude: number; longitude: number } | null> => {
+    setLocatingUser(true);
+    try {
+      const Location = getLocationModule();
+
+      if (Location && typeof Location.requestForegroundPermissionsAsync === 'function') {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          if (!silent) {
+            setRejectionModal({
+              visible: true,
+              title: 'Izin Lokasi Diperlukan',
+              message: 'Aplikasi membutuhkan izin GPS untuk memverifikasi jarak Anda ke unit pendidikan.',
+            });
+          }
+          return null;
+        }
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy?.High ?? 4,
+        });
+        if (loc?.coords?.latitude !== undefined && loc?.coords?.longitude !== undefined) {
+          const coords = {
+            latitude: Number(loc.coords.latitude),
+            longitude: Number(loc.coords.longitude),
+            accuracy: loc.coords.accuracy ? Number(loc.coords.accuracy) : undefined,
+          };
+          setUserLocation(coords);
+          return coords;
+        }
+      }
+
+      if (typeof navigator !== 'undefined' && (navigator as any)?.geolocation?.getCurrentPosition) {
+        const navCoords = await new Promise<{ latitude: number; longitude: number; accuracy?: number } | null>((resolve) => {
+          (navigator as any).geolocation.getCurrentPosition(
+            (pos: any) => {
+              if (pos?.coords?.latitude !== undefined && pos?.coords?.longitude !== undefined) {
+                resolve({
+                  latitude: Number(pos.coords.latitude),
+                  longitude: Number(pos.coords.longitude),
+                  accuracy: pos.coords.accuracy ? Number(pos.coords.accuracy) : undefined,
+                });
+              } else {
+                resolve(null);
+              }
+            },
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+          );
+        });
+        if (navCoords) {
+          setUserLocation(navCoords);
+          return navCoords;
+        }
+      }
+
+      if (silent) {
+        return null;
+      }
+
+      return await new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
+        Alert.alert(
+          'Modul GPS Native Belum Terpasang',
+          'Modul native GPS (ExpoLocation) belum terkompilasi di APK Android saat ini.\n\nApakah Anda ingin menggunakan koordinat simulasi area sekolah untuk pengujian jarak?',
+          [
+            { text: 'Batal', style: 'cancel', onPress: () => resolve(null) },
+            {
+              text: 'Simulasi Area Unit',
+              onPress: () => {
+                const fallbackLat = Number(unitLocation.latitude || -0.9242000);
+                const fallbackLng = Number(unitLocation.longitude || 100.3621000);
+                const simulated = { latitude: fallbackLat, longitude: fallbackLng, accuracy: 5 };
+                setUserLocation(simulated);
+                resolve(simulated);
+              },
+            },
+          ]
+        );
+      });
+    } catch (e: any) {
+      if (!silent) {
+        setRejectionModal({
+          visible: true,
+          title: 'GPS Tidak Terdeteksi',
+          message: 'Gagal membaca posisi GPS perangkat. Pastikan layanan lokasi pada smartphone Anda telah diaktifkan dengan akurasi tinggi.',
+        });
+      }
+      return null;
+    } finally {
+      setLocatingUser(false);
+    }
+  }, [unitLocation]);
+
+  useEffect(() => {
+    if (activeMode === 'mandiri') {
+      void requestUserLocation(true);
+    }
+  }, [activeMode, requestUserLocation]);
+
+  const handleOpenNavigationMaps = () => {
+    const uLat = unitLocation.latitude;
+    const uLng = unitLocation.longitude;
+    if (!uLat || !uLng) return;
+
+    if (userLocation && userLocation.latitude && userLocation.longitude) {
+      const url = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.latitude},${userLocation.longitude}&destination=${uLat},${uLng}`;
+      void Linking.openURL(url);
+    } else {
+      const url = `https://www.google.com/maps/search/?api=1&query=${uLat},${uLng}`;
+      void Linking.openURL(url);
+    }
+  };
+
+  const getDeviceLocation = async (): Promise<{ latitude: number; longitude: number } | null> => {
+    if (userLocation && userLocation.latitude && userLocation.longitude) {
+      return userLocation;
+    }
+    return await requestUserLocation(false);
+  };
+
   const computedEmpStats = useMemo(() => {
     if (employeeStats && typeof employeeStats === 'object') {
       return {
@@ -1076,7 +1436,11 @@ export default function TeacherQrAttendanceHub({
   const handleEmployeeCheckIn = async () => {
     if (!effectiveEmployeeId) return;
     setSavingEmpAttendance(true);
+    let capturedCoords: { latitude: number; longitude: number } | null = null;
     try {
+      const coords = await getDeviceLocation();
+      capturedCoords = coords;
+
       const payload: AttendancePayload = {
         tipe_presensi: 'Pegawai',
         employee_id: String(effectiveEmployeeId),
@@ -1084,8 +1448,10 @@ export default function TeacherQrAttendanceHub({
         attendance_date: todayDateStr,
         status: 'HADIR',
         attendance_method: 'MOBILE',
-        location: 'SIMS Mobile Android',
-        keterangan: 'Presensi mandiri melalui aplikasi mobile.',
+        latitude: coords?.latitude,
+        longitude: coords?.longitude,
+        location: coords ? 'Presensi Mandiri Mobile (GPS Terverifikasi)' : 'SIMS Mobile Android',
+        keterangan: 'Presensi mandiri melalui aplikasi mobile (Radius Maksimal 30 Meter).',
       };
       await mobileApiService.checkIn(payload);
       setFeedbackModal({
@@ -1095,13 +1461,42 @@ export default function TeacherQrAttendanceHub({
         message: 'Presensi masuk Anda berhasil dicatat di server sekolah.',
       });
       await fetchEmployeeAttendance();
-    } catch (err) {
-      setFeedbackModal({
-        visible: true,
-        type: 'error',
-        title: 'Presensi Masuk Gagal',
-        message: getApiErrorMessage(err, 'Presensi masuk belum berhasil dicatat.'),
-      });
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.message || err?.message || 'Presensi masuk belum berhasil dicatat.';
+      const errData = err?.response?.data?.data;
+      if (errData || errMsg.includes('radius') || errMsg.includes('di luar radius')) {
+        setRejectionModal({
+          visible: true,
+          title: 'Presensi Masuk Ditolak',
+          message: errMsg,
+          details: errData
+            ? {
+                unitName: errData.unit_name,
+                distanceMeter: errData.distance_meter,
+                maxRadiusMeter: errData.max_radius_meter,
+                userLatitude: errData.user_latitude,
+                userLongitude: errData.user_longitude,
+                unitLatitude: errData.unit_latitude,
+                unitLongitude: errData.unit_longitude,
+              }
+            : {
+                unitName: teacherUnit,
+                userLatitude: capturedCoords?.latitude,
+                userLongitude: capturedCoords?.longitude,
+                unitLatitude: unitLocation.latitude,
+                unitLongitude: unitLocation.longitude,
+                maxRadiusMeter: unitLocation.radiusMeter,
+                distanceMeter: distanceToUnit || undefined,
+              },
+        });
+      } else {
+        setFeedbackModal({
+          visible: true,
+          type: 'error',
+          title: 'Presensi Masuk Gagal',
+          message: getApiErrorMessage(err, 'Presensi masuk belum berhasil dicatat.'),
+        });
+      }
     } finally {
       setSavingEmpAttendance(false);
     }
@@ -1110,11 +1505,17 @@ export default function TeacherQrAttendanceHub({
   const handleEmployeeCheckOut = async () => {
     if (!effectiveEmployeeId) return;
     setSavingEmpAttendance(true);
+    let capturedCoords: { latitude: number; longitude: number } | null = null;
     try {
+      const coords = await getDeviceLocation();
+      capturedCoords = coords;
+
       await mobileApiService.checkOut({
         attendance_id: todayEmpRecord?.id ? String(todayEmpRecord.id) : undefined,
         employee_id: String(effectiveEmployeeId),
-        location: 'SIMS Mobile Android',
+        latitude: coords?.latitude,
+        longitude: coords?.longitude,
+        location: coords ? 'Presensi Mandiri Mobile (GPS Terverifikasi)' : 'SIMS Mobile Android',
       });
       setFeedbackModal({
         visible: true,
@@ -1123,13 +1524,42 @@ export default function TeacherQrAttendanceHub({
         message: 'Presensi pulang Anda berhasil dicatat di server sekolah.',
       });
       await fetchEmployeeAttendance();
-    } catch (err) {
-      setFeedbackModal({
-        visible: true,
-        type: 'error',
-        title: 'Presensi Pulang Gagal',
-        message: getApiErrorMessage(err, 'Presensi pulang belum berhasil dicatat.'),
-      });
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.message || err?.message || 'Presensi pulang belum berhasil dicatat.';
+      const errData = err?.response?.data?.data;
+      if (errData || errMsg.includes('radius') || errMsg.includes('di luar radius')) {
+        setRejectionModal({
+          visible: true,
+          title: 'Presensi Pulang Ditolak',
+          message: errMsg,
+          details: errData
+            ? {
+                unitName: errData.unit_name,
+                distanceMeter: errData.distance_meter,
+                maxRadiusMeter: errData.max_radius_meter,
+                userLatitude: errData.user_latitude,
+                userLongitude: errData.user_longitude,
+                unitLatitude: errData.unit_latitude,
+                unitLongitude: errData.unit_longitude,
+              }
+            : {
+                unitName: teacherUnit,
+                userLatitude: capturedCoords?.latitude,
+                userLongitude: capturedCoords?.longitude,
+                unitLatitude: unitLocation.latitude,
+                unitLongitude: unitLocation.longitude,
+                maxRadiusMeter: unitLocation.radiusMeter,
+                distanceMeter: distanceToUnit || undefined,
+              },
+        });
+      } else {
+        setFeedbackModal({
+          visible: true,
+          type: 'error',
+          title: 'Presensi Pulang Gagal',
+          message: getApiErrorMessage(err, 'Presensi pulang belum berhasil dicatat.'),
+        });
+      }
     } finally {
       setSavingEmpAttendance(false);
     }
@@ -1330,11 +1760,17 @@ export default function TeacherQrAttendanceHub({
           </TouchableOpacity>
 
           <View style={s.headerCenterCol}>
+            {activeMode === 'mandiri' && !scanDetailStudent && !showRekapView && (
+              <View style={s.mandiriRoleTag}>
+                <View style={s.mandiriPulseDot} />
+                <Text style={s.mandiriRoleTagText}>PENDIDIK & GURU • PRESENSI TERPADU</Text>
+              </View>
+            )}
             <Text style={s.headerTitle}>
               {scanDetailStudent ? 'Detail Kehadiran' : showRekapView ? 'Rekap Presensi KBM' : activeMode === 'mandiri' ? 'Presensi Mandiri' : activeMode === 'scan' ? 'Presensi Scan Gerbang' : activeMode === 'manual' ? 'Presensi Kelas (KBM)' : 'Kartu & QR Pegawai'}
             </Text>
             <Text style={s.headerSubtitle}>
-              {scanDetailStudent ? 'Informasi Riwayat Siswa' : showRekapView ? 'Ringkasan Kehadiran Rombel' : activeMode === 'mandiri' ? 'Presensi Mandiri Pendidik & Tenaga Kependidikan' : activeMode === 'scan' ? 'Pemindai Kartu & QR Siswa Terpadu' : activeMode === 'manual' ? 'Checklist Roster & Jam Mengajar Siswa' : 'Identitas QR Resmi Pendidik / Staf'}
+              {scanDetailStudent ? 'Informasi Riwayat Siswa' : showRekapView ? 'Ringkasan Kehadiran Rombel' : activeMode === 'mandiri' ? (currentDateText || 'Presensi Mandiri Pendidik & Tenaga Kependidikan') : activeMode === 'scan' ? 'Pemindai Kartu & QR Siswa Terpadu' : activeMode === 'manual' ? 'Checklist Roster & Jam Mengajar Siswa' : 'Identitas QR Resmi Pendidik / Staf'}
             </Text>
           </View>
 
@@ -1405,123 +1841,330 @@ export default function TeacherQrAttendanceHub({
               />
             }
           >
-            {/* 1. STATUS CARD HARI INI */}
-            <View style={s.mandiriStatusCard}>
-              <View style={s.mandiriHeaderRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.mandiriTitle}>Status Presensi Pegawai</Text>
-                  <Text style={s.mandiriDate}>{formatTanggalIndo(new Date().toISOString())}</Text>
-                </View>
-                <View
-                  style={[
-                    s.mandiriStatusBadge,
-                    {
-                      backgroundColor: checkedIn ? '#ECFDF5' : hasCheckOut ? '#F1F5F9' : '#FFF7ED',
-                      borderColor: checkedIn ? '#A7F3D0' : hasCheckOut ? '#CBD5E1' : '#FFEDD5',
-                    },
-                  ]}
-                >
-                  <Text
+            {/* 1. HERO / LIVE CLOCK & STATUS CARD (Harmonized with Staff Attendance Style) */}
+            <View style={s.mandiriLiveCard}>
+              <LinearGradient colors={['#F0FDFA', '#CCFBF1']} style={s.mandiriLiveGradient}>
+                <View style={s.mandiriLiveTopRow}>
+                  <View style={s.mandiriUnitBadge}>
+                    <MaterialCommunityIcons name="office-building-marker" size={13} color="#0D9488" />
+                    <Text style={s.mandiriUnitBadgeText} numberOfLines={1}>{teacherUnit}</Text>
+                  </View>
+                  <View
                     style={[
-                      s.mandiriStatusBadgeText,
-                      { color: checkedIn ? '#059669' : hasCheckOut ? '#475569' : '#EA580C' },
+                      s.mandiriStatusBadge,
+                      {
+                        backgroundColor: checkedIn ? '#ECFDF5' : hasCheckOut ? '#F1F5F9' : '#FFF7ED',
+                        borderColor: checkedIn ? '#A7F3D0' : hasCheckOut ? '#CBD5E1' : '#FFEDD5',
+                      },
                     ]}
                   >
-                    {checkedIn ? 'Sedang Bekerja' : hasCheckOut ? 'Selesai' : 'Belum Presensi'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Time display: Jam Masuk & Jam Pulang */}
-              <View style={s.mandiriTimeRow}>
-                <View style={s.mandiriTimeBox}>
-                  <Text style={s.mandiriTimeLabel}>Jam Masuk</Text>
-                  <Text style={s.mandiriTimeVal}>
-                    {todayEmpRecord?.check_in_time
-                      ? formatJamIndo(todayEmpRecord.check_in_time)
-                      : todayEmpRecord?.check_in
-                        ? todayEmpRecord.check_in
-                        : '--:--'}
-                  </Text>
-                </View>
-                <View style={s.mandiriTimeBox}>
-                  <Text style={s.mandiriTimeLabel}>Jam Pulang</Text>
-                  <Text style={s.mandiriTimeVal}>
-                    {todayEmpRecord?.check_out_time
-                      ? formatJamIndo(todayEmpRecord.check_out_time)
-                      : todayEmpRecord?.check_out && todayEmpRecord.check_out !== '--:--'
-                        ? todayEmpRecord.check_out
-                        : '--:--'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Primary action button: Masuk / Pulang / Selesai */}
-              <TouchableOpacity
-                activeOpacity={0.88}
-                disabled={savingEmpAttendance || hasCheckOut}
-                onPress={() => void (checkedIn ? handleEmployeeCheckOut() : handleEmployeeCheckIn())}
-                style={[
-                  s.mandiriActionBtn,
-                  checkedIn ? s.mandiriActionBtnOrange : s.mandiriActionBtnGreen,
-                  (savingEmpAttendance || hasCheckOut) && { opacity: 0.6 },
-                ]}
-              >
-                {savingEmpAttendance ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <MaterialCommunityIcons
-                      name={checkedIn ? 'logout-variant' : hasCheckOut ? 'check-decagram' : 'login-variant'}
-                      size={18}
-                      color="#FFFFFF"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text style={s.mandiriActionBtnText}>
-                      {checkedIn ? 'Presensi Pulang Sekarang' : hasCheckOut ? 'Presensi Hari Ini Selesai' : 'Presensi Masuk Sekarang'}
+                    <Text
+                      style={[
+                        s.mandiriStatusBadgeText,
+                        { color: checkedIn ? '#059669' : hasCheckOut ? '#475569' : '#EA580C' },
+                      ]}
+                    >
+                      {checkedIn ? 'Sedang Bekerja' : hasCheckOut ? 'Selesai' : 'Belum Presensi'}
                     </Text>
-                  </>
-                )}
-              </TouchableOpacity>
+                  </View>
+                </View>
 
-              {/* 3 Quick Action buttons: Ajukan Izin / Lapor Sakit / Dinas Luar */}
-              <View style={s.mandiriQuickBtnRow}>
+                {/* Digital Clock Realtime */}
+                <Text style={s.mandiriClockDigits}>{currentTime || '--:--:-- WIB'}</Text>
+                <Text style={s.mandiriDateSubText}>{currentDateText || formatTanggalIndo(new Date().toISOString())}</Text>
+
+                {/* ── MAP LOKASI UNIT & POSISI PENDIDIK DENGAN INDIKATOR JARAK REALTIME ── */}
+                <View style={s.liveMapContainer}>
+                  {/* Map Image View (Mapbox Retina 2x) */}
+                  <View style={s.mapFrame}>
+                    {mapTileInfo?.url ? (
+                      <Image
+                        source={{ uri: mapTileInfo.url }}
+                        style={s.mapImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={s.mapLoadingBox}>
+                        <ActivityIndicator size="small" color="#0D9488" />
+                        <Text style={s.mapLoadingText}>Memuat peta lokasi...</Text>
+                      </View>
+                    )}
+
+                    {/* Gradient overlay to soften bottom & top edges */}
+                    <LinearGradient
+                      colors={['rgba(0,0,0,0.4)', 'transparent', 'rgba(0,0,0,0.55)']}
+                      style={StyleSheet.absoluteFill}
+                      pointerEvents="none"
+                    />
+
+                    {/* Top Row Badges over Map */}
+                    <View style={s.mapTopBadgesRow}>
+                      <View style={s.mapUnitBadge}>
+                        <MaterialCommunityIcons name="office-building-marker" size={13} color="#059669" />
+                        <Text style={s.mapUnitBadgeText} numberOfLines={1}>{unitLocation.name}</Text>
+                      </View>
+                      <View style={[
+                        s.mapRadiusPill,
+                        distanceToUnit !== null && (isWithinRadius ? s.mapRadiusPillSuccess : s.mapRadiusPillDanger)
+                      ]}>
+                        <MaterialCommunityIcons
+                          name={distanceToUnit !== null ? (isWithinRadius ? 'check-circle' : 'alert-circle') : 'crosshairs-gps'}
+                          size={12}
+                          color="#FFFFFF"
+                        />
+                        <Text style={s.mapRadiusPillText}>
+                          {distanceToUnit !== null
+                            ? isWithinRadius
+                              ? 'Dalam Radius'
+                              : 'Di Luar Radius'
+                            : `Maks. ${unitLocation.radiusMeter}m`}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Bottom Row inside Map: Legend & External Maps Button */}
+                    <View style={s.mapBottomRow}>
+                      <View style={s.mapLegendBox}>
+                        <View style={s.legendItem}>
+                          <View style={[s.legendDot, { backgroundColor: '#059669' }]} />
+                          <Text style={s.legendText}>Unit</Text>
+                        </View>
+                        <View style={s.legendItem}>
+                          <View style={[s.legendDot, { backgroundColor: '#2563EB' }]} />
+                          <Text style={s.legendText}>Anda</Text>
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleOpenNavigationMaps}
+                        style={s.mapNavigateBtn}
+                      >
+                        <MaterialCommunityIcons name="google-maps" size={13} color="#0F172A" />
+                        <Text style={s.mapNavigateBtnText}>Rute</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Distance & GPS Status Card */}
+                  <View style={s.distanceInfoCard}>
+                    <View style={s.distancePrimaryRow}>
+                      {/* Left: Distance Value */}
+                      <View style={s.distanceValueCol}>
+                        <Text style={s.distanceLabel}>Jarak Anda ke Unit</Text>
+                        <View style={s.distanceNumberRow}>
+                          <MaterialCommunityIcons
+                            name="map-marker-distance"
+                            size={20}
+                            color={distanceToUnit !== null ? (isWithinRadius ? '#059669' : '#E11D48') : '#64748B'}
+                          />
+                          <Text style={[
+                            s.distanceNumberText,
+                            distanceToUnit !== null && (isWithinRadius ? { color: '#047857' } : { color: '#E11D48' })
+                          ]}>
+                            {formatDistance(distanceToUnit)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Middle: Status Note */}
+                      <View style={s.distanceStatusCol}>
+                        <View style={[
+                          s.distanceStatusTag,
+                          distanceToUnit !== null
+                            ? isWithinRadius
+                              ? s.distanceStatusTagSuccess
+                              : s.distanceStatusTagDanger
+                            : s.distanceStatusTagPending
+                        ]}>
+                          <Text style={[
+                            s.distanceStatusTagText,
+                            distanceToUnit !== null
+                              ? isWithinRadius
+                                ? { color: '#047857' }
+                                : { color: '#BE123C' }
+                              : { color: '#D97706' }
+                          ]}>
+                            {distanceToUnit !== null
+                              ? isWithinRadius
+                                ? '✓ Radius Aman'
+                                : `✕ Lebih ${Math.round(distanceToUnit - unitLocation.radiusMeter)}m`
+                              : 'Menunggu GPS'}
+                          </Text>
+                        </View>
+                        <Text style={s.distanceSubHint}>
+                          Toleransi: {unitLocation.radiusMeter} meter
+                        </Text>
+                      </View>
+
+                      {/* Right: Refresh GPS Button */}
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => void requestUserLocation(false)}
+                        disabled={locatingUser}
+                        style={s.refreshGpsBtn}
+                      >
+                        {locatingUser ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <MaterialCommunityIcons name="crosshairs-gps" size={15} color="#FFFFFF" />
+                            <Text style={s.refreshGpsBtnText}>GPS</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Bottom: Coords Strip */}
+                    <View style={s.coordsStripRow}>
+                      <Text style={s.coordsStripText} numberOfLines={1}>
+                        GPS: {userLocation ? `${userLocation.latitude.toFixed(5)}, ${userLocation.longitude.toFixed(5)}` : 'Mencari...'}
+                      </Text>
+                      <Text style={s.coordsStripDivider}>•</Text>
+                      <Text style={s.coordsStripText} numberOfLines={1}>
+                        Unit: {unitLocation.latitude.toFixed(5)}, {unitLocation.longitude.toFixed(5)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Status Box: 3 Kartu Terpisah (Masuk, Pulang, Status) Bebas Tumpang Tindih */}
+                <View style={s.mandiriStatusPillsRow}>
+                  {/* Card 1: Masuk */}
+                  <View style={[s.mandiriPillBox, hasCheckIn ? s.mandiriPillActiveIn : s.mandiriPillNeutral]}>
+                    <View style={s.mandiriPillHeader}>
+                      <MaterialCommunityIcons name="login" size={13} color="#059669" />
+                      <Text style={[s.mandiriPillLabel, hasCheckIn && { color: '#047857' }]}>MASUK</Text>
+                    </View>
+                    <Text style={s.mandiriPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                      {todayIn}
+                    </Text>
+                    <Text style={[s.mandiriPillSub, hasCheckIn && { color: '#059669' }]} numberOfLines={1}>
+                      {hasCheckIn ? 'WIB • Tercatat' : 'Belum Absen'}
+                    </Text>
+                  </View>
+
+                  {/* Card 2: Pulang */}
+                  <View style={[s.mandiriPillBox, hasCheckOut ? s.mandiriPillActiveOut : s.mandiriPillNeutral]}>
+                    <View style={s.mandiriPillHeader}>
+                      <MaterialCommunityIcons name="logout" size={13} color="#0D9488" />
+                      <Text style={[s.mandiriPillLabel, hasCheckOut && { color: '#0F766E' }]}>PULANG</Text>
+                    </View>
+                    <Text style={s.mandiriPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                      {todayOut}
+                    </Text>
+                    <Text style={[s.mandiriPillSub, hasCheckOut && { color: '#0D9488' }]} numberOfLines={1}>
+                      {hasCheckOut ? 'WIB • Selesai' : 'Belum Absen'}
+                    </Text>
+                  </View>
+
+                  {/* Card 3: Status */}
+                  <View style={[
+                    s.mandiriPillBox,
+                    isStatusPositive ? s.mandiriPillSuccess : s.mandiriPillNeutral
+                  ]}>
+                    <View style={s.mandiriPillHeader}>
+                      <MaterialCommunityIcons
+                        name={isStatusPositive ? 'check-circle' : 'clock-outline'}
+                        size={13}
+                        color={isStatusPositive ? '#047857' : '#64748B'}
+                      />
+                      <Text style={[
+                        s.mandiriPillLabel,
+                        isStatusPositive ? { color: '#047857' } : { color: '#64748B' }
+                      ]}>
+                        STATUS
+                      </Text>
+                    </View>
+                    <Text
+                      style={[
+                        s.mandiriPillValue,
+                        isStatusPositive ? { color: '#047857' } : { color: '#64748B' }
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                    >
+                      {todayStatusLabel}
+                    </Text>
+                    <Text style={[
+                      s.mandiriPillSub,
+                      isStatusPositive ? { color: '#059669' } : { color: '#94A3B8' }
+                    ]} numberOfLines={1}>
+                      {hasCheckIn ? 'Tercatat' : 'Mandiri'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Primary action button: Masuk / Pulang / Selesai */}
                 <TouchableOpacity
-                  activeOpacity={0.8}
-                  disabled={savingEmpAttendance}
-                  onPress={() => openLeaveModal('IZIN')}
-                  style={[s.mandiriQuickBtn, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}
+                  activeOpacity={0.88}
+                  disabled={savingEmpAttendance || hasCheckOut}
+                  onPress={() => void (checkedIn ? handleEmployeeCheckOut() : handleEmployeeCheckIn())}
+                  style={[
+                    s.mandiriActionBtn,
+                    checkedIn ? s.mandiriActionBtnOrange : s.mandiriActionBtnGreen,
+                    (savingEmpAttendance || hasCheckOut) && { opacity: 0.6 },
+                  ]}
                 >
-                  <MaterialCommunityIcons name="file-document-edit-outline" size={15} color="#2563EB" />
-                  <Text style={[s.mandiriQuickBtnText, { color: '#2563EB' }]}>Ajukan Izin</Text>
+                  {savingEmpAttendance ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <MaterialCommunityIcons
+                        name={checkedIn ? 'logout-variant' : hasCheckOut ? 'check-decagram' : 'login-variant'}
+                        size={18}
+                        color="#FFFFFF"
+                        style={{ marginRight: 8 }}
+                      />
+                      <Text style={s.mandiriActionBtnText}>
+                        {checkedIn ? 'Presensi Pulang Sekarang' : hasCheckOut ? 'Presensi Hari Ini Selesai' : 'Presensi Masuk Sekarang'}
+                      </Text>
+                    </>
+                  )}
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  disabled={savingEmpAttendance}
-                  onPress={() => openLeaveModal('SAKIT')}
-                  style={[s.mandiriQuickBtn, { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF' }]}
-                >
-                  <MaterialCommunityIcons name="medical-bag" size={15} color="#7C3AED" />
-                  <Text style={[s.mandiriQuickBtnText, { color: '#7C3AED' }]}>Lapor Sakit</Text>
-                </TouchableOpacity>
+                {/* 3 Quick Action buttons: Ajukan Izin / Lapor Sakit / Dinas Luar */}
+                <View style={s.mandiriQuickBtnRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    disabled={savingEmpAttendance}
+                    onPress={() => openLeaveModal('IZIN')}
+                    style={[s.mandiriQuickBtn, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}
+                  >
+                    <MaterialCommunityIcons name="file-document-edit-outline" size={15} color="#2563EB" />
+                    <Text style={[s.mandiriQuickBtnText, { color: '#2563EB' }]}>Ajukan Izin</Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  disabled={savingEmpAttendance}
-                  onPress={() => openLeaveModal('DINAS_LUAR')}
-                  style={[s.mandiriQuickBtn, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}
-                >
-                  <MaterialCommunityIcons name="briefcase-check-outline" size={15} color="#0D9488" />
-                  <Text style={[s.mandiriQuickBtnText, { color: '#0D9488' }]}>Dinas Luar</Text>
-                </TouchableOpacity>
-              </View>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    disabled={savingEmpAttendance}
+                    onPress={() => openLeaveModal('SAKIT')}
+                    style={[s.mandiriQuickBtn, { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF' }]}
+                  >
+                    <MaterialCommunityIcons name="medical-bag" size={15} color="#7C3AED" />
+                    <Text style={[s.mandiriQuickBtnText, { color: '#7C3AED' }]}>Lapor Sakit</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    disabled={savingEmpAttendance}
+                    onPress={() => openLeaveModal('DINAS_LUAR')}
+                    style={[s.mandiriQuickBtn, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}
+                  >
+                    <MaterialCommunityIcons name="briefcase-check-outline" size={15} color="#0D9488" />
+                    <Text style={[s.mandiriQuickBtnText, { color: '#0D9488' }]}>Dinas Luar</Text>
+                  </TouchableOpacity>
+                </View>
+              </LinearGradient>
             </View>
 
             {/* 2. STATISTIK KPI KEHADIRAN PEGAWAI BULAN INI */}
             <View style={s.mandiriKpiSection}>
               <View style={s.mandiriSectionTitleRow}>
-                <MaterialCommunityIcons name="chart-box-outline" size={17} color="#059669" />
+                <View style={[s.sectionIconBadge, { backgroundColor: '#CCFBF1' }]}>
+                  <MaterialCommunityIcons name="chart-box-outline" size={15} color="#0D9488" />
+                </View>
                 <Text style={s.mandiriSectionTitle}>Ringkasan Kehadiran Saya</Text>
               </View>
               <View style={s.mandiriKpiGrid}>
@@ -1570,7 +2213,9 @@ export default function TeacherQrAttendanceHub({
             {/* 4. RIWAYAT PRESENSI MANDIRI */}
             <View style={s.mandiriHistorySection}>
               <View style={s.mandiriSectionTitleRow}>
-                <MaterialCommunityIcons name="history" size={17} color="#059669" />
+                <View style={[s.sectionIconBadge, { backgroundColor: '#E0F2FE' }]}>
+                  <MaterialCommunityIcons name="history" size={15} color="#0284C7" />
+                </View>
                 <Text style={s.mandiriSectionTitle}>Riwayat Presensi Mandiri</Text>
               </View>
               {employeeHistory.length === 0 ? (
@@ -1599,12 +2244,23 @@ export default function TeacherQrAttendanceHub({
                       <View style={{ flex: 1 }}>
                         <Text style={s.mandiriHistoryDate}>{formatTanggalIndo(tglStr)}</Text>
                         <View style={s.mandiriHistoryTimeRow}>
-                          <Text style={s.mandiriHistoryTimeLabel}>Masuk: <Text style={s.mandiriHistoryTimeVal}>{inTime}</Text></Text>
+                          <View style={s.mandiriHistoryTimePill}>
+                            <MaterialCommunityIcons name="login" size={12} color="#059669" />
+                            <Text style={s.mandiriHistoryTimeVal}>{inTime}</Text>
+                          </View>
                           <Text style={s.mandiriHistoryTimeDot}>•</Text>
-                          <Text style={s.mandiriHistoryTimeLabel}>Pulang: <Text style={s.mandiriHistoryTimeVal}>{outTime}</Text></Text>
+                          <View style={s.mandiriHistoryTimePill}>
+                            <MaterialCommunityIcons name="logout" size={12} color="#0D9488" />
+                            <Text style={s.mandiriHistoryTimeVal}>{outTime}</Text>
+                          </View>
                         </View>
-                        {item.keterangan ? (
-                          <Text numberOfLines={1} style={s.mandiriHistoryKet}>{item.keterangan}</Text>
+                        {item.keterangan || item.location ? (
+                          <View style={s.mandiriHistoryLocationRow}>
+                            <MaterialCommunityIcons name="map-marker-outline" size={12} color="#64748B" />
+                            <Text numberOfLines={1} style={s.mandiriHistoryKet}>
+                              {item.location || item.keterangan}
+                            </Text>
+                          </View>
                         ) : null}
                       </View>
                       <View style={[s.mandiriHistoryBadge, { backgroundColor: badgeBg }]}>
@@ -2140,6 +2796,18 @@ export default function TeacherQrAttendanceHub({
             >
               {/* Sticky toolbar block */}
               <View style={s.manualStickyHeader}>
+                {isCorrectionMode && (
+                  <View style={s.correctionBanner}>
+                    <MaterialCommunityIcons name="clipboard-edit-outline" size={20} color="#B45309" />
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={s.correctionBannerTitle}>Mode Koreksi Presensi (Human Error)</Text>
+                      <Text style={s.correctionBannerSubtitle}>
+                        Perubahan status kehadiran santri akan langsung memperbarui data sesi KBM ini di server.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
                 {/* KBM Aktif Card */}
                 <KBMCard />
 
@@ -2339,12 +3007,23 @@ export default function TeacherQrAttendanceHub({
                         </View>
                       )}
 
-                      {/* 4 Quick Status Buttons */}
+                      {/* Student Late Reason Badge if exists */}
+                      {curStatus === 'late' && studentNotes[sId] ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginBottom: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
+                          <MaterialCommunityIcons name="clock-alert-outline" size={12} color="#D97706" style={{ marginRight: 4 }} />
+                          <Text style={{ fontSize: 11, color: '#B45309', fontWeight: '600' }} numberOfLines={1}>
+                            Alasan Terlambat: "{studentNotes[sId]}"
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      {/* 5 Quick Status Buttons (Hadir, Terlambat, Izin, Sakit, Alpha) */}
                       <View style={s.toggleRow}>
                         {([
                           { status: 'present' as AttendanceStatus, label: 'Hadir', icon: 'check', activeColor: '#059669', activeStyle: s.toggleHadir },
+                          { status: 'late' as AttendanceStatus, label: 'Terlambat', icon: 'clock-alert-outline', activeColor: '#D97706', activeStyle: s.toggleTerlambat },
                           { status: 'permission' as AttendanceStatus, label: 'Izin', icon: 'file-document-outline', activeColor: '#2563EB', activeStyle: s.toggleIzin },
-                          { status: 'sick' as AttendanceStatus, label: 'Sakit', icon: 'heart', activeColor: '#D97706', activeStyle: s.toggleSakit },
+                          { status: 'sick' as AttendanceStatus, label: 'Sakit', icon: 'heart', activeColor: '#7C3AED', activeStyle: s.toggleSakit },
                           { status: 'absent' as AttendanceStatus, label: 'Alpha', icon: 'close', activeColor: '#DC2626', activeStyle: s.toggleAlpha },
                         ] as const).map((btn) => {
                           const isActive = curStatus === btn.status;
@@ -2352,10 +3031,18 @@ export default function TeacherQrAttendanceHub({
                             <TouchableOpacity
                               key={btn.status}
                               activeOpacity={0.7}
-                              onPress={() => setStudentStatuses((prev) => ({
-                                ...prev,
-                                [sId]: prev[sId] === btn.status ? (undefined as any) : btn.status,
-                              }))}
+                              onPress={() => {
+                                if (btn.status === 'late') {
+                                  setUbahStatusSelected('late');
+                                  setUbahStatusNote(studentNotes[sId] || '');
+                                  setShowUbahStatusSheet(st);
+                                  return;
+                                }
+                                setStudentStatuses((prev) => ({
+                                  ...prev,
+                                  [sId]: prev[sId] === btn.status ? (undefined as any) : btn.status,
+                                }));
+                              }}
                               style={[s.toggleBtn, isActive && btn.activeStyle]}
                             >
                               <MaterialCommunityIcons
@@ -2383,8 +3070,9 @@ export default function TeacherQrAttendanceHub({
               <View style={s.manualBottomSummary}>
                 <Text style={s.manualBottomSummaryItem}>
                   <Text style={{ color: '#059669' }}>✓ {statusCounts.p} Hadir</Text>
+                  {'  '}<Text style={{ color: '#D97706' }}>⏱ {statusCounts.t} Terlambat</Text>
                   {'  '}<Text style={{ color: '#2563EB' }}>ℹ {statusCounts.i} Izin</Text>
-                  {'  '}<Text style={{ color: '#D97706' }}>❤ {statusCounts.s} Sakit</Text>
+                  {'  '}<Text style={{ color: '#7C3AED' }}>❤ {statusCounts.s} Sakit</Text>
                   {'  '}<Text style={{ color: '#DC2626' }}>✕ {statusCounts.a} Alpha</Text>
                 </Text>
               </View>
@@ -2405,7 +3093,7 @@ export default function TeacherQrAttendanceHub({
                   ) : (
                     <>
                       <MaterialCommunityIcons name="content-save" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
-                      <Text style={s.manualSaveBtnText}>Simpan Presensi KBM ({statusCounts.p} Hadir)</Text>
+                      <Text style={s.manualSaveBtnText}>Simpan Presensi KBM ({statusCounts.p + statusCounts.t} Masuk)</Text>
                     </>
                   )}
                 </LinearGradient>
@@ -2782,12 +3470,13 @@ export default function TeacherQrAttendanceHub({
               </View>
             </View>
 
-            {/* 4 Status Cards */}
+            {/* 5 Status Cards */}
             <View style={s.ubahStatusGrid}>
               {([
                 { status: 'present' as AttendanceStatus, label: 'Hadir', icon: 'check-circle', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+                { status: 'late' as AttendanceStatus, label: 'Terlambat', icon: 'clock-alert-outline', color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
                 { status: 'permission' as AttendanceStatus, label: 'Izin', icon: 'file-document-outline', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
-                { status: 'sick' as AttendanceStatus, label: 'Sakit', icon: 'heart', color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+                { status: 'sick' as AttendanceStatus, label: 'Sakit', icon: 'heart', color: '#7C3AED', bg: '#FAF5FF', border: '#DDD6FE' },
                 { status: 'absent' as AttendanceStatus, label: 'Alpha', icon: 'close-circle-outline', color: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
               ] as const).map((opt) => {
                 const isActive = ubahStatusSelected === opt.status;
@@ -2811,12 +3500,17 @@ export default function TeacherQrAttendanceHub({
               })}
             </View>
 
-            {/* Catatan */}
-            <Text style={s.sheetFieldLabel}>Catatan (Opsional)</Text>
+            {/* Catatan / Alasan Terlambat */}
+            <Text style={s.sheetFieldLabel}>
+              {ubahStatusSelected === 'late' ? 'Alasan Keterlambatan (Wajib Diisi)' : 'Catatan (Opsional)'}
+            </Text>
             <TextInput
-              style={s.ubahCatatanInput}
-              placeholder="Contoh: izin ada urusan, ada suhu, dll."
-              placeholderTextColor="#CBD5E1"
+              style={[
+                s.ubahCatatanInput,
+                ubahStatusSelected === 'late' && !ubahStatusNote.trim() && { borderColor: '#F59E0B', borderWidth: 1.5 }
+              ]}
+              placeholder={ubahStatusSelected === 'late' ? 'Tuliskan alasan keterlambatan santri...' : 'Contoh: izin ada urusan, ada suhu, dll.'}
+              placeholderTextColor="#94A3B8"
               value={ubahStatusNote}
               onChangeText={setUbahStatusNote}
               multiline
@@ -2827,10 +3521,25 @@ export default function TeacherQrAttendanceHub({
               activeOpacity={0.88}
               onPress={() => {
                 if (ubahStatusSelected && showUbahStatusSheet) {
+                  // Validasi wajib alasan jika status Terlambat
+                  if (ubahStatusSelected === 'late' && (!ubahStatusNote || ubahStatusNote.trim().length < 3)) {
+                    setFeedbackModal({
+                      visible: true,
+                      type: 'warning',
+                      title: 'Alasan Terlambat Wajib',
+                      message: 'Mohon isi catatan alasan keterlambatan santri (minimal 3 karakter) agar tersinkron ke orang tua.',
+                      actionLabel: 'Mengerti',
+                      onClose: () => setFeedbackModal(null),
+                      onConfirm: () => setFeedbackModal(null),
+                    });
+                    return;
+                  }
+
                   const sId = String(showUbahStatusSheet.id || showUbahStatusSheet.student_id);
                   const stName = showUbahStatusSheet.full_name || showUbahStatusSheet.nama_lengkap || showUbahStatusSheet.name || 'Santri/Siswa';
                   const statusMap: Record<string, string> = {
                     present: 'Hadir',
+                    late: 'Terlambat',
                     permission: 'Izin',
                     sick: 'Sakit',
                     absent: 'Alpha',
@@ -2885,11 +3594,15 @@ export default function TeacherQrAttendanceHub({
                 <Text style={s.konfirmasiStatText}>{statusCounts.p} Hadir ({students.length > 0 ? Math.round((statusCounts.p / students.length) * 100) : 0}%)</Text>
               </View>
               <View style={s.konfirmasiStatRow}>
+                <MaterialCommunityIcons name="clock-alert-outline" size={14} color="#D97706" />
+                <Text style={s.konfirmasiStatText}>{statusCounts.t} Terlambat ({students.length > 0 ? Math.round((statusCounts.t / students.length) * 100) : 0}%)</Text>
+              </View>
+              <View style={s.konfirmasiStatRow}>
                 <MaterialCommunityIcons name="file-document-outline" size={14} color="#2563EB" />
                 <Text style={s.konfirmasiStatText}>{statusCounts.i} Izin ({students.length > 0 ? Math.round((statusCounts.i / students.length) * 100) : 0}%)</Text>
               </View>
               <View style={s.konfirmasiStatRow}>
-                <MaterialCommunityIcons name="heart" size={14} color="#D97706" />
+                <MaterialCommunityIcons name="heart" size={14} color="#7C3AED" />
                 <Text style={s.konfirmasiStatText}>{statusCounts.s} Sakit ({students.length > 0 ? Math.round((statusCounts.s / students.length) * 100) : 0}%)</Text>
               </View>
               <View style={s.konfirmasiStatRow}>
@@ -3028,6 +3741,19 @@ export default function TeacherQrAttendanceHub({
           onClose={() => setFeedbackModal(null)}
         />
       )}
+
+      {/* GEOLOCATION ATTENDANCE REJECTION MODAL */}
+      <AttendanceRejectedModal
+        visible={Boolean(rejectionModal?.visible)}
+        title={rejectionModal?.title}
+        message={rejectionModal?.message}
+        details={rejectionModal?.details}
+        onClose={() => setRejectionModal(null)}
+        onRetry={() => {
+          setRejectionModal(null);
+          void requestUserLocation(false);
+        }}
+      />
     </View>
   );
 }
@@ -3575,6 +4301,28 @@ const s = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     paddingBottom: 4,
   },
+  correctionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1.2,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+    padding: 10,
+    marginBottom: 8,
+  },
+  correctionBannerTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  correctionBannerSubtitle: {
+    fontSize: 10.5,
+    fontWeight: '500',
+    color: '#92400E',
+    marginTop: 1,
+    lineHeight: 14,
+  },
   searchBarWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3876,8 +4624,9 @@ const s = StyleSheet.create({
     gap: 3,
   },
   toggleHadir: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+  toggleTerlambat: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
   toggleIzin: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
-  toggleSakit: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
+  toggleSakit: { backgroundColor: '#FAF5FF', borderColor: '#DDD6FE' },
   toggleAlpha: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
   toggleBtnText: { fontSize: 11, fontWeight: '600', color: '#475569' },
   toggleBtnTextActive: { color: '#0F172A', fontWeight: '800' },
@@ -4832,83 +5581,382 @@ const s = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // ── PRESENSI MANDIRI STYLES ──
-  mandiriStatusCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+  // ── PRESENSI MANDIRI STYLES (Harmonized with SIMSIT Emerald Design System) ──
+  mandiriRoleTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    alignSelf: 'center',
   },
-  mandiriHeaderRow: {
+  mandiriPulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#34D399',
+    marginRight: 5,
+  },
+  mandiriRoleTagText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.6,
+  },
+  mandiriLiveCard: {
+    borderRadius: 22,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    marginBottom: 16,
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  mandiriLiveGradient: {
+    padding: 16,
+  },
+  mandiriLiveTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 12,
   },
-  mandiriTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0F172A',
+  mandiriUnitBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    maxWidth: '65%',
   },
-  mandiriDate: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
+  mandiriUnitBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F766E',
+    marginLeft: 5,
   },
   mandiriStatusBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
     borderWidth: 1,
   },
   mandiriStatusBadgeText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  mandiriTimeRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 14,
+  mandiriClockDigits: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#047857',
+    textAlign: 'center',
+    letterSpacing: 1.5,
+    fontVariant: ['tabular-nums'],
+    marginTop: 2,
   },
-  mandiriTimeBox: {
+  mandiriDateSubText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#0D9488',
+    textAlign: 'center',
+    marginTop: 2,
+    marginBottom: 16,
+  },
+  liveMapContainer: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 16,
+  },
+  mapFrame: {
+    width: '100%',
+    height: 165,
+    position: 'relative',
+    backgroundColor: '#CCFBF1',
+  },
+  mapImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mapLoadingBox: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0FDFA',
+  },
+  mapLoadingText: {
+    fontSize: 11,
+    color: '#0F766E',
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  mapTopBadgesRow: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  mandiriTimeLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-    marginBottom: 4,
+  mapUnitBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    maxWidth: '65%',
+    gap: 4,
   },
-  mandiriTimeVal: {
-    fontSize: 16,
+  mapUnitBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  mapRadiusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0D9488',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    gap: 4,
+  },
+  mapRadiusPillSuccess: {
+    backgroundColor: '#059669',
+  },
+  mapRadiusPillDanger: {
+    backgroundColor: '#E11D48',
+  },
+  mapRadiusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  mapBottomRow: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  mapLegendBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    gap: 8,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  legendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  legendText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  mapNavigateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 3,
+    elevation: 1,
+  },
+  mapNavigateBtnText: {
+    fontSize: 10,
     fontWeight: '800',
     color: '#0F172A',
+  },
+  distanceInfoCard: {
+    padding: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  distancePrimaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  distanceValueCol: {
+    flex: 1.1,
+  },
+  distanceLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  distanceNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    gap: 4,
+  },
+  distanceNumberText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  distanceStatusCol: {
+    flex: 1.3,
+    alignItems: 'center',
+  },
+  distanceStatusTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  distanceStatusTagSuccess: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  distanceStatusTagDanger: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  distanceStatusTagPending: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  distanceStatusTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  distanceSubHint: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  refreshGpsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
+    gap: 4,
+  },
+  refreshGpsBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  coordsStripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 8,
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    gap: 6,
+  },
+  coordsStripText: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  coordsStripDivider: {
+    fontSize: 10,
+    color: '#CBD5E1',
+  },
+  mandiriStatusPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  mandiriPillBox: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 82,
+  },
+  mandiriPillNeutral: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  mandiriPillActiveIn: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  mandiriPillActiveOut: {
+    backgroundColor: '#F0FDFA',
+    borderColor: '#99F6E4',
+  },
+  mandiriPillSuccess: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  mandiriPillHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 3,
+  },
+  mandiriPillLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  mandiriPillValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginVertical: 1,
+    textAlign: 'center',
+  },
+  mandiriPillSub: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textAlign: 'center',
   },
   mandiriActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: 16,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   mandiriActionBtnGreen: {
     backgroundColor: '#059669',
@@ -4917,9 +5965,10 @@ const s = StyleSheet.create({
     backgroundColor: '#EA580C',
   },
   mandiriActionBtnText: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
   mandiriQuickBtnRow: {
     flexDirection: 'row',
@@ -4930,26 +5979,33 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
-    borderRadius: 10,
-    borderWidth: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
     gap: 5,
   },
   mandiriQuickBtnText: {
-    fontSize: 11.5,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '800',
   },
   mandiriKpiSection: {
-    marginBottom: 14,
+    marginBottom: 16,
   },
   mandiriSectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     marginBottom: 10,
   },
+  sectionIconBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   mandiriSectionTitle: {
-    fontSize: 13.5,
+    fontSize: 14,
     fontWeight: '800',
     color: '#0F172A',
   },
@@ -4959,39 +6015,49 @@ const s = StyleSheet.create({
   },
   mandiriKpiCard: {
     flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    paddingVertical: 11,
     paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
   },
   mandiriKpiVal: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 17,
+    fontWeight: '900',
     marginBottom: 2,
   },
   mandiriKpiLabel: {
     fontSize: 9.5,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#475569',
     textAlign: 'center',
   },
   mandiriQrBox: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#F0FDFA',
     borderWidth: 1.5,
-    borderColor: '#BBF7D0',
-    borderRadius: 16,
+    borderColor: '#99F6E4',
+    borderRadius: 18,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 16,
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 2,
   },
   mandiriQrBoxTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#059669',
+    color: '#0D9488',
   },
   mandiriQrBoxSub: {
     fontSize: 11,
@@ -5003,60 +6069,74 @@ const s = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
   },
   mandiriQrBoxBtnText: {
     fontSize: 11.5,
-    fontWeight: '700',
-    color: '#059669',
+    fontWeight: '800',
+    color: '#0D9488',
   },
   mandiriHistorySection: {
-    marginBottom: 20,
+    marginBottom: 24,
   },
   mandiriEmptyBox: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 24,
+    borderRadius: 16,
+    padding: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
   },
   mandiriEmptyText: {
-    fontSize: 12,
+    fontSize: 12.5,
     color: '#94A3B8',
-    marginTop: 6,
+    marginTop: 8,
+    fontWeight: '600',
   },
   mandiriHistoryItem: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 9,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   mandiriHistoryDate: {
-    fontSize: 12.5,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
     color: '#0F172A',
   },
   mandiriHistoryTimeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 3,
+    marginTop: 6,
   },
-  mandiriHistoryTimeLabel: {
-    fontSize: 11,
-    color: '#64748B',
+  mandiriHistoryTimePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 4,
   },
   mandiriHistoryTimeVal: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#0F172A',
   },
@@ -5064,15 +6144,21 @@ const s = StyleSheet.create({
     fontSize: 10,
     color: '#CBD5E1',
   },
+  mandiriHistoryLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 5,
+  },
   mandiriHistoryKet: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 2,
+    flex: 1,
   },
   mandiriHistoryBadge: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
   },
   mandiriHistoryBadgeText: {
     fontSize: 10.5,
