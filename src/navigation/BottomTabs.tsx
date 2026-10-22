@@ -100,17 +100,28 @@ function ModuleHeader({
   const activeChildId = useActiveChildStore((state) => state.activeChildId);
   const setActiveChildId = useActiveChildStore((state) => state.setActiveChildId);
 
+  // Sinkronkan ke activeChildId jika dari route params berbeda
+  useEffect(() => {
+    const routeChildId = route?.params?.child_id || route?.params?.student_id;
+    if (routeChildId && String(routeChildId) !== String(activeChildId)) {
+      setActiveChildId(String(routeChildId));
+    }
+  }, [route?.params?.child_id, route?.params?.student_id, activeChildId, setActiveChildId]);
+
   // Active student calculation
+  const targetId = route?.params?.child_id || route?.params?.student_id || activeChildId;
   const activeStudent: any = useMemo(() => {
     if (children && children.length > 0) {
-      const found = children.find(
-        (c) => String(c.id || c.student_id) === String(activeChildId)
-      );
-      if (found) return found;
+      if (targetId) {
+        const found = children.find(
+          (c) => String(c.id || c.student_id) === String(targetId)
+        );
+        if (found) return found;
+      }
       return children[0];
     }
     return (user as any)?.student || user || null;
-  }, [children, activeChildId, user]);
+  }, [children, targetId, user]);
 
   const studentName = activeStudent?.name || activeStudent?.full_name || activeStudent?.nama_lengkap || user?.name || 'Siswa';
   const studentGender = activeStudent?.gender || activeStudent?.jenis_kelamin || (user as any)?.gender || 'L';
