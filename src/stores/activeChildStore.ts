@@ -35,6 +35,7 @@ interface ActiveChildState {
   setActiveChildId: (id: string | number | null | undefined) => void;
   setChildren: (children: Child[]) => void;
   getActiveChild: () => Child | null;
+  updateChildBadge: (childId: string | number, count?: number) => void;
   clear: () => void;
 }
 
@@ -72,5 +73,15 @@ export const useActiveChildStore = create<ActiveChildState>((set, get) => ({
       children[0] ||
       null
     );
+  },
+  updateChildBadge: (childId: string | number, count: number = 0) => {
+    const sid = String(childId);
+    set((state) => ({
+      children: state.children.map((c) =>
+        String(c.id || c.student_id) === sid
+          ? { ...c, unread_notifications_count: count, unread_count: count }
+          : c
+      ),
+    }));
   },
 }));
