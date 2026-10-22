@@ -14,6 +14,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
   getProfileImageUrl,
 } from '../utils/profile';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -130,10 +131,7 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
     : styles.childCardHeroSize;
 
   return (
-    <TouchableOpacity
-      activeOpacity={onSelect ? 0.88 : 1}
-      onPress={onSelect}
-      disabled={!onSelect || isSingleChild}
+    <View
       style={[
         isSingleChild ? styles.singleTouchable : styles.multiTouchable,
         containerStyle,
@@ -147,78 +145,58 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
         style={[cardWidthStyle, !isSelected && { opacity: 0.88 }]}
       >
         {/* Lingkaran Dekoratif Glassmorphism */}
-        <View style={styles.cardDecorCircle} />
+        <View pointerEvents="none" style={styles.cardDecorCircle} />
 
-        {/* ── Top Row: Avatar + Info (Nama, NIS, Unit) + Right Indicator / Action ── */}
-        <View style={styles.childHeroTopRow}>
-          <TouchableOpacity
-            activeOpacity={onPressCard ? 0.8 : 1}
-            disabled={!onPressCard}
-            onPress={onPressCard}
-            style={[styles.avatarBorderWrapHero, !isSelected && styles.avatarBorderWrapHeroInactive]}
-          >
-            {avatarUri && !imageError ? (
-              <Image
-                source={{ uri: avatarUri }}
-                style={styles.childAvatarImgHero}
-                resizeMode="cover"
-                onError={() => setImageError(true)}
-              />
-            ) : (
-              <Image
-                source={isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR}
-                style={styles.childAvatarImgHero}
-                resizeMode="cover"
-              />
-            )}
-          </TouchableOpacity>
-
-          <View style={styles.childInfoCol}>
-            <View style={styles.studentNameBadgeRow}>
-              <Text numberOfLines={1} style={styles.studentFullName}>
-                {sName}
-              </Text>
-            </View>
-            <Text style={styles.studentNisText}>
-              NIS: {sNis} {sNisn && sNisn !== '-' ? `· NISN: ${sNisn}` : ''}
+        {/* Konten Kartu: nonaktifkan pointerEvents anak jika kartu belum terpilih agar seluruh area kartu dapat diklik untuk memilih anak */}
+        <View pointerEvents={(!onSelect || isSelected) ? 'auto' : 'none'}>
+          {/* 1. Baris Paling Atas: Lencana Unit Pendidikan (Kiri) & 3 Tombol Aksi / Indikator (Kanan) */}
+          <View style={styles.studentCardTopBar}>
+          <View style={styles.studentUnitBadgeTop}>
+            <MaterialCommunityIcons
+              name="school"
+              size={11}
+              color="#FFFFFF"
+              style={{ marginRight: 4 }}
+            />
+            <Text numberOfLines={1} style={styles.studentUnitText}>
+              {sUnit}
             </Text>
-            <View style={styles.studentUnitBadge}>
-              <MaterialCommunityIcons
-                name="school"
-                size={11}
-                color="#FFFFFF"
-                style={{ marginRight: 4 }}
-              />
-              <Text numberOfLines={1} style={styles.studentUnitText}>
-                {sUnit}
-              </Text>
-            </View>
           </View>
 
-          {/* Right Header: Sesuai Mode (Beranda/Modul: Bel, Laporan, & QR | Terpilih/Pilih jika tidak ada action buttons) */}
+          {/* Kanan: 3 Tombol Aksi (Notifikasi, Laporan, QR) ATAU Indikator Pilihan Anak */}
           {shouldShowButtons ? (
             <View style={styles.studentCardHeaderActions}>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={onPressNotifications || (() => {})}
-                style={[styles.studentQrBtn, { position: 'relative' }]}
-                accessibilityLabel="Pengingat & Notifikasi Siswa"
-              >
-                <MaterialCommunityIcons name="bell-ring-outline" size={19} color="#059669" />
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: -2,
-                    right: -2,
-                    width: 10,
-                    height: 10,
-                    borderRadius: 5,
-                    backgroundColor: '#EF4444',
-                    borderWidth: 1.5,
-                    borderColor: '#FFFFFF',
-                  }}
-                />
-              </TouchableOpacity>
+              {(() => {
+                const globalUnread = useNotificationBadgeStore.getState().unreadNotificationCount;
+                const childUnread = Number(child?.unread_notifications_count ?? child?.unread_count ?? 0);
+                const showBellDot = (globalUnread > 0 && isSelected) || childUnread > 0;
+
+                return (
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={onPressNotifications || (() => {})}
+                    style={[styles.studentQrBtn, { position: 'relative' }]}
+                    accessibilityLabel="Pengingat & Notifikasi Siswa"
+                  >
+                    <MaterialCommunityIcons name="bell-ring-outline" size={17} color="#059669" />
+                    {showBellDot ? (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: -2,
+                          right: -2,
+                          width: 9,
+                          height: 9,
+                          borderRadius: 4.5,
+                          backgroundColor: '#EF4444',
+                          borderWidth: 1.5,
+                          borderColor: '#FFFFFF',
+                        }}
+                      />
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })()}
 
               <TouchableOpacity
                 activeOpacity={0.75}
@@ -226,7 +204,7 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
                 style={styles.studentQrBtn}
                 accessibilityLabel="Laporan Perkembangan Pekanan Siswa"
               >
-                <MaterialCommunityIcons name="clipboard-text-outline" size={19} color="#059669" />
+                <MaterialCommunityIcons name="clipboard-text-outline" size={17} color="#059669" />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -235,7 +213,7 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
                 style={styles.studentQrBtn}
                 accessibilityLabel="Tampilkan QR Code Siswa"
               >
-                <MaterialCommunityIcons name="qrcode-scan" size={19} color="#059669" />
+                <MaterialCommunityIcons name="qrcode-scan" size={17} color="#059669" />
               </TouchableOpacity>
             </View>
           ) : (
@@ -262,7 +240,41 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
           )}
         </View>
 
-        {/* ── Middle Attributes Grid (Kelas | Jenjang | Presensi) ── */}
+        {/* 2. Baris Profil Tengah: Avatar + Nama Siswa Penuh (Sangat Lega 2 Baris, Tanpa Terpotong/Terhimpit) */}
+        <View style={styles.studentCardProfileRow}>
+          <TouchableOpacity
+            activeOpacity={onPressCard ? 0.8 : 1}
+            disabled={!onPressCard}
+            onPress={onPressCard}
+            style={[styles.studentAvatarBox, !isSelected && styles.avatarBorderWrapHeroInactive]}
+          >
+            {avatarUri && !imageError ? (
+              <Image
+                source={{ uri: avatarUri }}
+                style={styles.childAvatarImgHero}
+                resizeMode="cover"
+                onError={() => setImageError(true)}
+              />
+            ) : (
+              <Image
+                source={isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR}
+                style={styles.childAvatarImgHero}
+                resizeMode="cover"
+              />
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.studentInfoCol}>
+            <Text numberOfLines={2} style={styles.studentFullName}>
+              {sName}
+            </Text>
+            <Text numberOfLines={1} style={styles.studentNisText}>
+              NIS: {sNis} {sNisn && sNisn !== '-' ? `· NISN: ${sNisn}` : ''}
+            </Text>
+          </View>
+        </View>
+
+        {/* 3. Kotak Atribut (Kelas | Jenjang | Presensi) - Jarak Rapat Presisi (Total 10px) */}
         <View style={styles.studentAttributesGrid}>
           <View style={styles.studentAttrBox}>
             <View style={styles.studentAttrLabelRow}>
@@ -298,7 +310,7 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
           </View>
         </View>
 
-        {/* ── Bottom Action Row: Kartu Siswa, Jadwal, Menu (HANYA DITAMPILKAN JIKA shouldShowButtons = true) ── */}
+        {/* 4. Baris Tombol Aksi Bawah: Kartu Siswa, Jadwal, Menu (HANYA 1 BARIS RAMPING) */}
         {shouldShowButtons && (
           <View style={styles.studentCardActionsRow}>
             <TouchableOpacity
@@ -306,8 +318,8 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
               onPress={onPressCard}
               style={styles.studentActionBtnCard}
             >
-              <MaterialCommunityIcons name="card-account-details-outline" size={15} color="#059669" style={{ marginRight: 4 }} />
-              <Text style={styles.studentActionBtnCardText}>{cardLabel}</Text>
+              <MaterialCommunityIcons name="card-account-details" size={15} color="#059669" style={{ marginRight: 4 }} />
+              <Text numberOfLines={1} style={styles.studentActionBtnCardText}>{cardLabel}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -315,8 +327,8 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
               onPress={onPressCalendar}
               style={styles.studentActionBtnSecondary}
             >
-              <MaterialCommunityIcons name={(calendarIcon as any) || 'calendar-clock'} size={15} color="#2563EB" style={{ marginRight: 4 }} />
-              <Text style={styles.studentActionBtnSecondaryText}>{calendarLabel}</Text>
+              <MaterialCommunityIcons name={(calendarIcon as any) || 'calendar-month'} size={15} color="#2563EB" style={{ marginRight: 4 }} />
+              <Text numberOfLines={1} style={styles.studentActionBtnSecondaryText}>{calendarLabel}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -324,13 +336,23 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
               onPress={onPressPortal}
               style={styles.studentActionBtnPrimary}
             >
-              <MaterialCommunityIcons name={(portalIcon as any) || 'view-grid-outline'} size={14} color="#7C3AED" style={{ marginRight: 4 }} />
-              <Text style={styles.studentActionBtnPrimaryText}>{portalLabel}</Text>
+              <MaterialCommunityIcons name={portalIcon === 'view-grid-outline' ? 'view-grid' : ((portalIcon as any) || 'view-grid')} size={15} color="#7C3AED" style={{ marginRight: 4 }} />
+              <Text numberOfLines={1} style={styles.studentActionBtnPrimaryText}>{portalLabel}</Text>
             </TouchableOpacity>
           </View>
         )}
+        </View>
       </LinearGradient>
-    </TouchableOpacity>
+
+      {/* Overlay Transparan Khusus Kartu Non-Aktif: Menjamin 100% ketukan di titik mana pun langsung memilih anak */}
+      {!isSelected && onSelect && (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={StyleSheet.absoluteFill}
+          onPress={onSelect}
+        />
+      )}
+    </View>
   );
 };
 
@@ -380,15 +402,35 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
     zIndex: 0,
   },
-  childHeroTopRow: {
+  studentCardTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
     zIndex: 1,
   },
-  avatarBorderWrapHero: {
-    width: 62,
-    height: 62,
-    borderRadius: 22,
+  studentUnitBadgeTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 7,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    flexShrink: 1,
+    marginRight: 8,
+  },
+  studentCardProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    zIndex: 1,
+  },
+  studentAvatarBox: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -409,23 +451,20 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  childInfoCol: {
+  studentInfoCol: {
     flex: 1,
   },
-  studentNameBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   studentFullName: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '900',
     color: '#FFFFFF',
+    lineHeight: 22,
   },
   studentNisText: {
-    fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.9)',
     fontWeight: '600',
-    marginTop: 1,
+    marginTop: 2,
   },
   studentUnitBadge: {
     flexDirection: 'row',
@@ -453,9 +492,9 @@ const styles = StyleSheet.create({
   studentQrBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     backgroundColor: '#ECFDF5',
     borderWidth: 1.5,
     borderColor: 'rgba(5, 150, 105, 0.32)',
@@ -501,7 +540,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 8,
     paddingHorizontal: 6,
-    marginTop: 10,
+    marginTop: 4,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
@@ -544,30 +583,37 @@ const styles = StyleSheet.create({
     height: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
+  studentCardQuickActionsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 10,
+    zIndex: 1,
+  },
   studentCardActionsRow: {
     flexDirection: 'row',
     gap: 6,
-    marginTop: 12,
+    marginTop: 8,
     zIndex: 1,
   },
   studentActionBtnCard: {
-    flex: 1.1,
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7.5,
+    paddingHorizontal: 2,
     borderRadius: 12,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1.5,
-    borderColor: 'rgba(5, 150, 105, 0.32)',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: 'rgba(5, 150, 105, 0.28)',
     shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   studentActionBtnCardText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#059669',
   },
@@ -576,40 +622,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7.5,
+    paddingHorizontal: 2,
     borderRadius: 12,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: 'rgba(37, 99, 235, 0.32)',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: 'rgba(37, 99, 235, 0.28)',
     shadowColor: '#2563EB',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   studentActionBtnSecondaryText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#2563EB',
   },
   studentActionBtnPrimary: {
-    flex: 0.85,
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7.5,
+    paddingHorizontal: 2,
     borderRadius: 12,
-    backgroundColor: '#F5F3FF',
-    borderWidth: 1.5,
-    borderColor: 'rgba(124, 58, 237, 0.32)',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: 'rgba(124, 58, 237, 0.28)',
     shadowColor: '#7C3AED',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   studentActionBtnPrimaryText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#7C3AED',
   },
