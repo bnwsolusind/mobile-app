@@ -42,7 +42,7 @@ export const STICKY_HEADER_PALETTE = {
   miniActionIcon: '#059669',
   cardButtonText: '#059669',
   secondaryButtonText: '#2563EB',
-  primaryButtonBg: '#F5F3FF',
+  primaryButtonBg: '#FFFFFF',
   primaryButtonText: '#7C3AED',
   chipIconSelected: '#064E3B',
   chipIconIdle: '#FFFFFF',
@@ -71,8 +71,8 @@ export const STICKY_HEADER_ICONS = {
   weeklyReport: 'clipboard-text-outline',
   qr: 'qrcode-scan',
   school: 'school',
-  idCard: 'card-account-details-outline',
-  menu: 'view-grid-outline',
+  idCard: 'card-account-details',
+  menu: 'view-grid',
   chipSelected: 'check-circle',
   chipIdle: 'account-circle-outline',
 } as const;
@@ -96,7 +96,10 @@ export function resolveStudentDisplay(student: any, user?: any): ResolvedStudent
     student?.nama_lengkap ||
     user?.name ||
     STICKY_HEADER_TEXTS.fallbackName;
-  const firstName = String(student?.name || student?.full_name || '').split(' ')[0];
+  const firstName =
+    String(student?.name || student?.full_name || student?.nama_lengkap || '')
+      .trim()
+      .split(' ')[0] || STICKY_HEADER_TEXTS.fallbackChildShortName;
   const gender = student?.gender || student?.jenis_kelamin || user?.gender || 'L';
   const isGirl = gender === 'P' || gender === 'female' || gender === 'perempuan';
   const kelas =
@@ -165,6 +168,7 @@ export interface StudentStickyHeaderProps {
   onOpenIdCard: (student: any) => void;
   onOpenWeeklyReport: (student: any) => void;
   onOpenMenu: (student: any) => void;
+  onOpenNotifications?: (student: any) => void;
   /** Aksi khusus tombol QR (default: sama dengan onOpenIdCard). */
   onOpenQr?: (student: any) => void;
   palette?: Partial<typeof STICKY_HEADER_PALETTE>;
@@ -187,6 +191,7 @@ export const StudentStickyHeader: React.FC<StudentStickyHeaderProps> = ({
   onOpenIdCard,
   onOpenWeeklyReport,
   onOpenMenu,
+  onOpenNotifications,
   onOpenQr,
   palette: paletteOverride,
   texts: textsOverride,
@@ -303,7 +308,7 @@ export const StudentStickyHeader: React.FC<StudentStickyHeaderProps> = ({
 
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => navigation?.navigate('Notifikasi')}
+          onPress={onOpenNotifications ? () => onOpenNotifications(student) : () => navigation?.navigate('Notifikasi')}
           style={styles.stickySquircleBtn}
           accessibilityRole="button"
           accessibilityLabel={texts.notificationAccessibility}
@@ -343,7 +348,7 @@ export const StudentStickyHeader: React.FC<StudentStickyHeaderProps> = ({
               <Text numberOfLines={1} style={styles.stickyStudentFullName}>
                 {display.displayName}
               </Text>
-              <Text style={styles.stickyStudentNisText}>
+              <Text numberOfLines={1} style={styles.stickyStudentNisText}>
                 {texts.nisPrefix} {display.nis}{' '}
                 {showNisn ? `${texts.nisnSeparator} ${display.nisn}` : ''}
               </Text>
@@ -360,95 +365,98 @@ export const StudentStickyHeader: React.FC<StudentStickyHeaderProps> = ({
               </View>
             </View>
 
-            <View style={styles.stickyHeaderRightActions}>
+            {/* 3 Tombol Aksi Mini (Persis HomeScreen: Notifikasi, Laporan, QR) */}
+            <View style={styles.stickyRichMiniActions}>
               <TouchableOpacity
                 activeOpacity={0.75}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.stickyMiniActionBtn}
+                onPress={onOpenNotifications ? () => onOpenNotifications(student) : () => navigation?.navigate('Notifikasi')}
+                style={styles.stickyMiniBtn}
                 accessibilityLabel={texts.notificationAccessibility}
               >
-                <MaterialCommunityIcons
-                  name={icons.bellRing as never}
-                  size={16}
-                  color={palette.miniActionIcon}
-                />
+                <MaterialCommunityIcons name={icons.bellRing as never} size={16} color={palette.miniActionIcon} />
+                {unreadNotificationCount > 0 && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: -2,
+                      right: -2,
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: palette.bellDot,
+                      borderWidth: 1.5,
+                      borderColor: '#FFFFFF',
+                    }}
+                  />
+                )}
               </TouchableOpacity>
 
               <TouchableOpacity
                 activeOpacity={0.75}
                 onPress={() => onOpenWeeklyReport(student)}
-                style={styles.stickyMiniActionBtn}
+                style={styles.stickyMiniBtn}
                 accessibilityLabel={texts.weeklyReportAccessibility}
               >
-                <MaterialCommunityIcons
-                  name={icons.weeklyReport as never}
-                  size={16}
-                  color={palette.miniActionIcon}
-                />
+                <MaterialCommunityIcons name={icons.weeklyReport as never} size={16} color={palette.miniActionIcon} />
               </TouchableOpacity>
 
               <TouchableOpacity
                 activeOpacity={0.75}
                 onPress={() => (onOpenQr || onOpenIdCard)(student)}
-                style={styles.stickyMiniActionBtn}
+                style={styles.stickyMiniBtn}
                 accessibilityLabel={texts.qrAccessibility}
               >
-                <MaterialCommunityIcons
-                  name={icons.qr as never}
-                  size={16}
-                  color={palette.miniActionIcon}
-                />
+                <MaterialCommunityIcons name={icons.qr as never} size={16} color={palette.miniActionIcon} />
               </TouchableOpacity>
             </View>
           </View>
 
-          <View style={styles.stickyCardActionButtonsRow}>
+          {/* Quick Action Chips (HANYA 1 BARIS RAMPING Persis HomeScreen) */}
+          <View style={styles.stickyQuickChipRow}>
             <TouchableOpacity
-              activeOpacity={0.82}
+              activeOpacity={0.78}
               onPress={() => onOpenIdCard(student)}
-              style={styles.stickyActionBtnCard}
+              style={styles.stickyQuickChip}
             >
               <MaterialCommunityIcons
                 name={icons.idCard as never}
-                size={13}
+                size={14}
                 color={palette.cardButtonText}
-                style={{ marginRight: 4 }}
               />
-              <Text style={[styles.stickyActionBtnCardText, { color: palette.cardButtonText }]}>
+              <Text numberOfLines={1} style={[styles.stickyQuickChipText, { color: palette.cardButtonText }]}>
                 {texts.cardButton}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.82}
+              activeOpacity={0.78}
               onPress={middleAction.onPress}
-              style={styles.stickyActionBtnSecondary}
+              style={styles.stickyQuickChipSecondary}
             >
               <MaterialCommunityIcons
                 name={middleAction.icon as never}
-                size={13}
+                size={14}
                 color={palette.secondaryButtonText}
-                style={{ marginRight: 4 }}
               />
               <Text
-                style={[styles.stickyActionBtnSecondaryText, { color: palette.secondaryButtonText }]}
+                numberOfLines={1}
+                style={[styles.stickyQuickChipSecondaryText, { color: palette.secondaryButtonText }]}
               >
                 {middleAction.label}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.85}
+              activeOpacity={0.78}
               onPress={() => onOpenMenu(student)}
-              style={styles.stickyActionBtnPrimary}
+              style={styles.stickyQuickChipPrimary}
             >
               <MaterialCommunityIcons
                 name={icons.menu as never}
-                size={13}
+                size={14}
                 color={palette.primaryButtonText}
-                style={{ marginRight: 4 }}
               />
-              <Text style={[styles.stickyActionBtnPrimaryText, { color: palette.primaryButtonText }]}>
+              <Text numberOfLines={1} style={[styles.stickyQuickChipPrimaryText, { color: palette.primaryButtonText }]}>
                 {texts.menuButton}
               </Text>
             </TouchableOpacity>
@@ -544,7 +552,9 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   stickyStudentCardOuter: {
-    marginHorizontal: 16,
+    marginHorizontal: 12,
+    marginTop: 6,
+    marginBottom: 10,
     borderRadius: 18,
     overflow: 'hidden',
     borderWidth: 1,
@@ -556,7 +566,9 @@ const styles = StyleSheet.create({
     elevation: 0,
   },
   stickyStudentCardGradient: {
-    padding: 12,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 10,
     borderRadius: 18,
     position: 'relative',
     overflow: 'hidden',
@@ -588,9 +600,9 @@ const styles = StyleSheet.create({
     marginRight: 10,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.18,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
     overflow: 'hidden',
   },
   stickyAvatarImgLarge: {
@@ -601,25 +613,25 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   stickyStudentFullName: {
-    fontSize: 13.5,
+    fontSize: 14,
     fontWeight: '900',
     color: '#FFFFFF',
+    marginBottom: 2.5,
   },
   stickyStudentNisText: {
-    fontSize: 9.5,
-    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.88)',
     fontWeight: '600',
-    marginTop: 1,
+    marginBottom: 3.5,
   },
   stickyStudentUnitBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
     alignSelf: 'flex-start',
-    marginTop: 2,
     borderWidth: 0.5,
     borderColor: 'rgba(255, 255, 255, 0.35)',
   },
@@ -628,95 +640,107 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
-  stickyHeaderRightActions: {
+  stickyRichMiniActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    marginLeft: 6,
+    gap: 6,
+    marginLeft: 8,
   },
-  stickyMiniActionBtn: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  stickyMiniBtn: {
     width: 32,
     height: 32,
     borderRadius: 11,
     backgroundColor: '#ECFDF5',
     borderWidth: 1.5,
     borderColor: 'rgba(5, 150, 105, 0.32)',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 1.5 },
-    shadowOpacity: 0.12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
     shadowRadius: 3,
     elevation: 3,
+    position: 'relative',
   },
-  stickyCardActionButtonsRow: {
+  stickyQuickChipRow: {
     flexDirection: 'row',
-    gap: 6,
-    marginTop: 10,
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 2,
     zIndex: 1,
   },
-  stickyActionBtnCard: {
+  stickyQuickChip: {
     flex: 1.1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
     paddingVertical: 6.5,
+    paddingHorizontal: 4,
     borderRadius: 11,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: 'rgba(5, 150, 105, 0.32)',
+    borderColor: 'rgba(5, 150, 105, 0.28)',
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1.5 },
     shadowOpacity: 0.12,
     shadowRadius: 3,
     elevation: 3,
   },
-  stickyActionBtnCardText: {
+  stickyQuickChipText: {
     fontSize: 10.5,
     fontWeight: '800',
     color: '#059669',
+    letterSpacing: 0.1,
   },
-  stickyActionBtnSecondary: {
+  stickyQuickChipSecondary: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
     paddingVertical: 6.5,
+    paddingHorizontal: 4,
     borderRadius: 11,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: 'rgba(37, 99, 235, 0.32)',
+    borderColor: 'rgba(37, 99, 235, 0.28)',
     shadowColor: '#2563EB',
     shadowOffset: { width: 0, height: 1.5 },
     shadowOpacity: 0.12,
     shadowRadius: 3,
     elevation: 3,
   },
-  stickyActionBtnSecondaryText: {
+  stickyQuickChipSecondaryText: {
     fontSize: 10.5,
     fontWeight: '800',
     color: '#2563EB',
+    letterSpacing: 0.1,
   },
-  stickyActionBtnPrimary: {
-    flex: 0.85,
+  stickyQuickChipPrimary: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
     paddingVertical: 6.5,
+    paddingHorizontal: 4,
     borderRadius: 11,
-    backgroundColor: '#F5F3FF',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: 'rgba(124, 58, 237, 0.32)',
+    borderColor: 'rgba(124, 58, 237, 0.28)',
     shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 1.5 },
     shadowOpacity: 0.12,
     shadowRadius: 3,
     elevation: 3,
   },
-  stickyActionBtnPrimaryText: {
+  stickyQuickChipPrimaryText: {
     fontSize: 10.5,
     fontWeight: '800',
     color: '#7C3AED',
+    letterSpacing: 0.1,
   },
   stickyChildChipsContainer: {
     marginTop: 8,
