@@ -21,7 +21,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
+import {
+  isParentRole,
+  isTeacherRole,
+  isTuRole,
+  isPrincipalRole,
+  isSuperAdminRole,
+  isTahfizhTeacherRole,
+  isMusyrifRole,
+} from '../utils/roles';
 import TeacherTahfizhWorkspace from '../components/teacher/TeacherTahfizhWorkspace';
 import {
   getProfileImageUrl,
@@ -1225,11 +1233,26 @@ export default function TahfizhScreen({ route, navigation }: any) {
     return list;
   }, [logs, activeTab, timePeriodFilter, searchQuery]);
 
-  const isTeacher = isTeacherRole(user?.roles || []);
-  const isStaff = isTuRole(user?.roles || []) || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
-  const isTeacherOrStaff = isTeacher || isStaff;
+  const userRoles = user?.roles || [];
+  const userPermissions = (user as any)?.permissions || [];
+  const hasTahfizhAuth =
+    isTahfizhTeacherRole(userRoles) ||
+    isMusyrifRole(userRoles) ||
+    userPermissions.includes('teacher.tahfizh.view') ||
+    userPermissions.includes('tahfizh.view') ||
+    userPermissions.includes('tahfizh.monitoring_target');
 
-  if (isTeacherOrStaff) {
+  const isManagement = isTuRole(userRoles) || isPrincipalRole(userRoles) || isSuperAdminRole(userRoles);
+  const canAccessTahfizhWorkspace = hasTahfizhAuth || isManagement;
+
+  const isParentContext = Boolean(
+    isParent ||
+    route?.params?.child_id ||
+    route?.params?.student_id ||
+    route?.params?.from_child_portal
+  );
+
+  if (canAccessTahfizhWorkspace && !isParentContext) {
     return (
       <TeacherTahfizhWorkspace
         onBack={() => {

@@ -40,6 +40,7 @@ import { StudentQrModal } from '../components/StudentQrModal';
 import { StudentMenuModal } from '../components/StudentMenuModal';
 import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import InAppEmbedModal from '../components/InAppEmbedModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STUDENT_CARD_GAP = 12;
@@ -189,6 +190,65 @@ const cleanTaskTitle = (raw: string = ''): string => {
   return raw.replace(/\s*\((?:100%\s*)?(?:Database\s*Real|Real\s*DB|DB\s*Real|Real\s*Database)\)/gi, '').trim();
 };
 
+const STATUS_FILTER_THEMES: Record<
+  string,
+  {
+    activeBg: string;
+    activeBorder: string;
+    activeText: string;
+    activeIcon: string;
+    badgeBg: string;
+    badgeText: string;
+    icon: string;
+  }
+> = {
+  all: {
+    activeBg: '#ECFDF5',
+    activeBorder: '#10B981',
+    activeText: '#065F46',
+    activeIcon: '#059669',
+    badgeBg: '#059669',
+    badgeText: '#FFFFFF',
+    icon: 'format-list-bulleted',
+  },
+  pending: {
+    activeBg: '#FFFBEB',
+    activeBorder: '#F59E0B',
+    activeText: '#92400E',
+    activeIcon: '#D97706',
+    badgeBg: '#D97706',
+    badgeText: '#FFFFFF',
+    icon: 'clock-alert-outline',
+  },
+  submitted: {
+    activeBg: '#EFF6FF',
+    activeBorder: '#3B82F6',
+    activeText: '#1E40AF',
+    activeIcon: '#2563EB',
+    badgeBg: '#2563EB',
+    badgeText: '#FFFFFF',
+    icon: 'file-check-outline',
+  },
+  late: {
+    activeBg: '#FFF1F2',
+    activeBorder: '#F43F5E',
+    activeText: '#9F1239',
+    activeIcon: '#E11D48',
+    badgeBg: '#E11D48',
+    badgeText: '#FFFFFF',
+    icon: 'alert-circle-outline',
+  },
+  graded: {
+    activeBg: '#F5F3FF',
+    activeBorder: '#8B5CF6',
+    activeText: '#5B21B6',
+    activeIcon: '#7C3AED',
+    badgeBg: '#7C3AED',
+    badgeText: '#FFFFFF',
+    icon: 'star-circle-outline',
+  },
+};
+
 const getWeekDays = (baseDate: Date) => {
   const d = new Date(baseDate);
   const day = d.getDay();
@@ -233,19 +293,25 @@ export default function AssignmentScreen({ route, navigation }: any) {
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
   const studentScrollRef = useRef<ScrollView>(null);
 
-  // Hanya tangani perubahan parameter rute yang benar-benar baru dari luar halaman (bukan saat swipe internal)
+  // Sinkronkan selectedChildId dengan parameter rute atau store anak aktif global
   const handledParamIdRef = useRef<string | undefined>(
     route?.params?.child_id || route?.params?.student_id
   );
   useEffect(() => {
     const incomingParamId = route?.params?.child_id || route?.params?.student_id;
-    if (incomingParamId && String(incomingParamId) !== String(handledParamIdRef.current)) {
-      handledParamIdRef.current = String(incomingParamId);
+    if (incomingParamId) {
       const strId = String(incomingParamId);
-      setSelectedChildId(strId);
-      useActiveChildStore.getState().setActiveChildId(strId);
+      if (strId !== selectedChildId) {
+        setSelectedChildId(strId);
+      }
+      if (strId !== activeChildId) {
+        useActiveChildStore.getState().setActiveChildId(strId);
+      }
+      handledParamIdRef.current = strId;
+    } else if (activeChildId && activeChildId !== selectedChildId) {
+      setSelectedChildId(String(activeChildId));
     }
-  }, [route?.params?.child_id, route?.params?.student_id]);
+  }, [route?.params?.child_id, route?.params?.student_id, activeChildId, selectedChildId]);
 
   const studentCardWidth = useMemo(() => {
     return children.length > 1
@@ -468,9 +534,24 @@ export default function AssignmentScreen({ route, navigation }: any) {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedAssignment, setSelectedAssignment] = useState<AssignmentItem | null>(null);
   const [submissionText, setSubmissionText] = useState<string>('');
+  const [submissionUrlLink, setSubmissionUrlLink] = useState<string>('');
+  const [submissionTahfizhMode, setSubmissionTahfizhMode] = useState<'langsung' | 'audio' | 'video'>('langsung');
+  const [submissionGroupMembers, setSubmissionGroupMembers] = useState<string>('');
   const [quizAnswers, setQuizAnswers] = useState<Record<number, string>>({});
   const [pickedAttachment, setPickedAttachment] = useState<{ uri: string; name: string; type: string } | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  // In-App Embed Modal State (Pratinjau link/file tanpa meninggalkan mobile-app)
+  const [embedModalVisible, setEmbedModalVisible] = useState<boolean>(false);
+  const [embedTargetUrl, setEmbedTargetUrl] = useState<string | null>(null);
+  const [embedTargetTitle, setEmbedTargetTitle] = useState<string>('Pratinjau Berkas & Tautan');
+
+  const handleOpenEmbedUrl = (url?: string | null, title?: string) => {
+    if (!url) return;
+    setEmbedTargetUrl(url);
+    setEmbedTargetTitle(title || 'Pratinjau Berkas & Tautan');
+    setEmbedModalVisible(true);
+  };
 
   // View mode switcher (Batas Waktu | Jeda | Jadwal) - Layar 1 & 12
   const [activeViewMode, setActiveViewMode] = useState<'batas_waktu' | 'jeda' | 'jadwal'>('batas_waktu');
@@ -515,9 +596,9 @@ export default function AssignmentScreen({ route, navigation }: any) {
     if (storeChildren && storeChildren.length > 0) {
       setChildren(storeChildren);
       setSelectedChildId((prev) => {
-        if (prev) return prev;
         const targetChildId = route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId;
-        return targetChildId ? String(targetChildId) : String(storeChildren[0].id || storeChildren[0].student_id);
+        if (targetChildId) return String(targetChildId);
+        return prev || String(storeChildren[0].id || storeChildren[0].student_id);
       });
     }
 
@@ -526,9 +607,9 @@ export default function AssignmentScreen({ route, navigation }: any) {
       setChildren(cached);
       useActiveChildStore.getState().setChildren(cached);
       setSelectedChildId((prev) => {
-        if (prev) return prev;
         const targetChildId = route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId;
-        return targetChildId ? String(targetChildId) : String(cached[0].id || cached[0].student_id);
+        if (targetChildId) return String(targetChildId);
+        return prev || String(cached[0].id || cached[0].student_id);
       });
     }
 
@@ -539,9 +620,9 @@ export default function AssignmentScreen({ route, navigation }: any) {
         setChildren(list);
         useActiveChildStore.getState().setChildren(list);
         setSelectedChildId((prev) => {
-          if (prev) return prev;
           const targetChildId = route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId;
-          return targetChildId ? String(targetChildId) : String(list[0].id || list[0].student_id);
+          if (targetChildId) return String(targetChildId);
+          return prev || String(list[0].id || list[0].student_id);
         });
         void offlineCache.set(childCacheKey, list);
       }
@@ -632,6 +713,35 @@ export default function AssignmentScreen({ route, navigation }: any) {
       sudah_dinilai: backendKpi?.sudah_dinilai ?? sudah_dinilai,
     };
   }, [backendKpi, assignments]);
+
+  // Dynamic Tab Counts for Filter Tabs (Zero Hardcode)
+  const tabCounts = useMemo(() => {
+    let pending = 0;
+    let submitted = 0;
+    let late = 0;
+    let graded = 0;
+
+    assignments.forEach((item) => {
+      const statusKey = getAssignmentStatus(item).key;
+      if (statusKey === 'graded') {
+        graded++;
+      } else if (statusKey === 'late') {
+        late++;
+      } else if (statusKey === 'submitted') {
+        submitted++;
+      } else {
+        pending++;
+      }
+    });
+
+    return {
+      all: assignments.length,
+      pending,
+      submitted,
+      late,
+      graded,
+    };
+  }, [assignments]);
 
   // Available subjects for filter modal
   const availableSubjects = useMemo(() => {
@@ -814,19 +924,29 @@ export default function AssignmentScreen({ route, navigation }: any) {
 
   const handlePressSubmit = () => {
     if (!selectedAssignment?.id) return;
-    const isQuiz = selectedAssignment?.jenis_tugas === 'quiz';
+    const isQuiz = selectedAssignment?.jenis_tugas === 'quiz' || selectedAssignment?.jenis_tugas === 'kuis';
+    const isTahfizh = selectedAssignment?.jenis_tugas === 'tahfizh';
     const finalAnswersText = isQuiz && Object.keys(quizAnswers).length > 0
       ? JSON.stringify(quizAnswers)
       : submissionText.trim();
 
-    if (!finalAnswersText && !pickedAttachment) {
+    const hasValidSubmission = Boolean(
+      finalAnswersText ||
+      pickedAttachment ||
+      submissionUrlLink.trim() ||
+      (isTahfizh && submissionTahfizhMode === 'langsung')
+    );
+
+    if (!hasValidSubmission) {
       setFeedbackModal({
         visible: true,
         type: 'warning',
         title: 'Jawaban Belum Lengkap',
         message: isQuiz
           ? 'Mohon pilih jawaban kuis terlebih dahulu sebelum mengumpulkan.'
-          : 'Mohon tuliskan teks jawaban atau lampirkan berkas/foto tugas Anda.',
+          : isTahfizh
+          ? 'Mohon pilih metode setoran atau masukkan rekaman/tautan audio/video.'
+          : 'Mohon tuliskan teks jawaban, unggah berkas, atau masukkan tautan link tugas Anda.',
       });
       return;
     }
@@ -844,7 +964,7 @@ export default function AssignmentScreen({ route, navigation }: any) {
 
   const handleConfirmSubmitAssignment = async () => {
     if (!selectedAssignment?.id) return;
-    const isQuiz = selectedAssignment?.jenis_tugas === 'quiz';
+    const isQuiz = selectedAssignment?.jenis_tugas === 'quiz' || selectedAssignment?.jenis_tugas === 'kuis';
     const finalAnswersText = isQuiz && Object.keys(quizAnswers).length > 0
       ? JSON.stringify(quizAnswers)
       : submissionText.trim();
@@ -855,12 +975,23 @@ export default function AssignmentScreen({ route, navigation }: any) {
         selectedAssignment.id,
         finalAnswersText,
         isParent ? selectedChildId : undefined,
-        pickedAttachment
+        pickedAttachment,
+        submissionUrlLink.trim() || undefined,
+        {
+          tahfizh_mode: selectedAssignment?.jenis_tugas === 'tahfizh' ? submissionTahfizhMode : undefined,
+          group_members: submissionGroupMembers.trim() || undefined,
+          jenis_tugas: selectedAssignment?.jenis_tugas,
+          device: Platform.OS,
+          submitted_at: new Date().toISOString(),
+        }
       );
       setConfirmModalVisible(false);
       setLastSubmittedAssignment(selectedAssignment);
       setSelectedAssignment(null);
       setSubmissionText('');
+      setSubmissionUrlLink('');
+      setSubmissionGroupMembers('');
+      setSubmissionTahfizhMode('langsung');
       setQuizAnswers({});
       setPickedAttachment(null);
       setSuccessModalVisible(true);
@@ -965,7 +1096,7 @@ export default function AssignmentScreen({ route, navigation }: any) {
                   Tugas Siswa
                 </Text>
                 <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                  {activeChildName ? `Ananda ${activeChildName}` : `Tahun Ajaran ${getDynamicAcademicInfo(assignments[0])}`}
+                  {activeChildName || `Tahun Ajaran ${getDynamicAcademicInfo(assignments[0])}`}
                 </Text>
               </View>
 
@@ -996,135 +1127,71 @@ export default function AssignmentScreen({ route, navigation }: any) {
                 },
               ]}
             >
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
-                </View>
-                {children.length > 1 && (
-                  <View style={styles.studentCardCountBadge}>
-                    <Text style={styles.studentCardCountBadgeText}>
-                      {safeCenter + 1} dari {children.length} Ananda
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {children.length === 1 ? (
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={children[0]}
-                    isSelected={true}
-                    isSingleChild={true}
-                    showActionButtons={true}
-                    cardLabel="Kartu Siswa"
-                    calendarLabel="Jadwal"
-                    portalLabel="Menu"
-                    onPressCard={() => openIdCard(children[0])}
-                    onPressQr={() => openQrCard(children[0])}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                    onPressCalendar={() => openScheduleForStudent(children[0])}
-                    onPressPortal={() => setSelectedMenuStudent(children[0])}
-                  />
-                </View>
-              ) : (
-                <>
+              {children.length > 1 && (
+                <View style={styles.childChipsTrack}>
                   <ScrollView
-                    ref={studentScrollRef}
                     horizontal
-                    nestedScrollEnabled={true}
                     showsHorizontalScrollIndicator={false}
-                    contentOffset={{ x: centerLoopOffset, y: 0 }}
-                    contentContainerStyle={[
-                      styles.studentCardsTrack,
-                      { paddingHorizontal: studentTrackPad },
-                    ]}
-                    decelerationRate="fast"
-                    snapToInterval={studentSnapInterval}
-                    snapToAlignment="start"
-                    disableIntervalMomentum
-                    onMomentumScrollEnd={(e) => {
-                      if (studentLoopCount === 0) return;
-                      const offsetX = e.nativeEvent.contentOffset.x;
-                      const slot = Math.round(offsetX / studentSnapInterval);
-                      const n = studentLoopCount;
-                      const cur = ((activeChildIndex % n) + n) % n;
-                      let realIdx = cur;
-                      if (slot === 2) realIdx = (cur + 1) % n;
-                      else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                      if (realIdx !== cur) {
-                        setActiveChildIndex(realIdx);
-                        syncLoopChildId(realIdx);
-                        requestAnimationFrame(() => {
-                          recenterLoop();
-                        });
-                      } else {
-                        recenterLoop();
-                      }
-                    }}
-                    onScrollEndDrag={(e) => {
-                      if (studentLoopCount === 0) return;
-                      const offsetX = e.nativeEvent.contentOffset.x;
-                      const slot = Math.round(offsetX / studentSnapInterval);
-                      const n = studentLoopCount;
-                      const cur = ((activeChildIndex % n) + n) % n;
-                      let realIdx = cur;
-                      if (slot === 2) realIdx = (cur + 1) % n;
-                      else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                      if (realIdx !== cur) {
-                        setActiveChildIndex(realIdx);
-                        syncLoopChildId(realIdx);
-                      }
-                    }}
-                    scrollEventThrottle={16}
-                    style={styles.heroCardScrollContainer}
+                    contentContainerStyle={styles.childChipsContent}
                   >
-                    {loopWindow.list.map((child: any, sIdx: number) => {
-                      const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                      const isCardActive = realIdx === safeCenter;
+                    {children.map((child, cIdx) => {
+                      const cid = String(child.id || (child as any).student_id);
+                      const isCurrent = cid === String(selectedChildId);
+                      const cName =
+                        (child.name || (child as any).full_name || (child as any).nama_lengkap || '').split(' ')[0] ||
+                        `Ananda ${cIdx + 1}`;
                       return (
-                        <StudentHeroCard
-                          key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                          child={child}
-                          isSelected={isCardActive}
-                          isSingleChild={false}
-                          showActionButtons={true}
-                          cardWidth={studentCardWidth}
-                          cardLabel="Kartu Siswa"
-                          calendarLabel="Jadwal"
-                          portalLabel="Menu"
-                          onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                          onPressCard={() => openIdCard(child)}
-                          onPressQr={() => openQrCard(child)}
-                          onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                          onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                          onPressCalendar={() => openScheduleForStudent(child)}
-                          onPressPortal={() => setSelectedMenuStudent(child)}
-                        />
+                        <TouchableOpacity
+                          key={cid || cIdx}
+                          onPress={() => {
+                            setSelectedChildId(cid);
+                            useActiveChildStore.getState().setActiveChildId(cid);
+                            setActiveChildIndex(cIdx);
+                          }}
+                          style={[
+                            styles.childChip,
+                            isCurrent && styles.childChipActive,
+                          ]}
+                          activeOpacity={0.75}
+                        >
+                          <MaterialCommunityIcons
+                            name="account-child-circle"
+                            size={16}
+                            color={isCurrent ? '#FFFFFF' : '#059669'}
+                          />
+                          <Text
+                            style={[
+                              styles.childChipText,
+                              isCurrent && styles.childChipTextActive,
+                            ]}
+                          >
+                            {cName}
+                          </Text>
+                        </TouchableOpacity>
                       );
                     })}
                   </ScrollView>
-
-                  {/* DOT INDIKATOR SCROLL SISWA */}
-                  <View style={styles.paginationDotsRow}>
-                    {children.map((_, dotIdx) => {
-                      const isDotActive = dotIdx === safeCenter;
-                      return (
-                        <TouchableOpacity
-                          key={dotIdx}
-                          activeOpacity={0.7}
-                          onPress={() => goToLoopChild(dotIdx)}
-                          style={[
-                            styles.paginationDot,
-                            isDotActive && styles.paginationDotActive,
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
-                </>
+                </View>
               )}
+
+              {/* Tepat 1 Kartu Siswa (Non-Carousel) */}
+              <View style={styles.singleHeroCardContainer}>
+                <StudentHeroCard
+                  child={activeChild || children[0]}
+                  isSelected={true}
+                  isSingleChild={true}
+                  showActionButtons={true}
+                  cardLabel="Kartu Siswa"
+                  calendarLabel="Jadwal"
+                  portalLabel="Menu"
+                  onPressCard={() => openIdCard(activeChild || children[0])}
+                  onPressQr={() => openQrCard(activeChild || children[0])}
+                  onPressWeeklyReport={() => setSelectedWeeklyStudent(activeChild || children[0])}
+                  onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                  onPressCalendar={() => openScheduleForStudent(activeChild || children[0])}
+                  onPressPortal={() => setSelectedMenuStudent(activeChild || children[0])}
+                />
+              </View>
             </Animated.View>
           ) : studentInfo ? (
             <Animated.View
@@ -1137,12 +1204,7 @@ export default function AssignmentScreen({ route, navigation }: any) {
                 },
               ]}
             >
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
-                </View>
-              </View>
+              {/* Single Hero Card Siswa */}
 
               <View style={styles.singleHeroCardContainer}>
                 <StudentHeroCard
@@ -1251,207 +1313,421 @@ export default function AssignmentScreen({ route, navigation }: any) {
             </Animated.View>
           ) : null}
 
-          {/* 1.5. VIEW MODE TABS: [Batas Waktu] | [Jeda] | [Jadwal] (Layar 1 & 12) */}
-          <View style={styles.viewModeTabBar}>
-            {[
-              { key: 'batas_waktu', label: 'Batas Waktu', icon: 'calendar-clock-outline' },
-              { key: 'jeda', label: 'Jeda', icon: 'coffee-outline' },
-              { key: 'jadwal', label: 'Jadwal', icon: 'calendar-month-outline' },
-            ].map((vTab) => {
-              const isActive = activeViewMode === vTab.key;
-              return (
-                <TouchableOpacity
-                  key={vTab.key}
-                  activeOpacity={0.8}
-                  onPress={() => setActiveViewMode(vTab.key as any)}
-                  style={[styles.viewModeTabBtn, isActive && styles.viewModeTabBtnActive]}
+          {/* 1.5. RINGKASAN PENUGASAN (4 KARTU KPI SELARAS TU: EMERALD, AMBER, ROSE, PURPLE) */}
+          <View style={styles.emeraldSummaryContainer}>
+            {/* Header Ringkasan Penugasan & Rincian */}
+            <View style={styles.summaryHeaderContainer}>
+              <View style={styles.summaryTitleRow}>
+                <LinearGradient
+                  colors={['#059669', '#047857']}
+                  style={styles.sectionIconBadgeModern}
                 >
-                  <MaterialCommunityIcons
-                    name={vTab.icon as any}
-                    size={16}
-                    color={isActive ? '#FFFFFF' : '#475569'}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={[styles.viewModeTabText, isActive && styles.viewModeTabTextActive]}>
-                    {vTab.label}
+                  <MaterialCommunityIcons name="poll" size={18} color="#FFFFFF" />
+                </LinearGradient>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitleBold}>Ringkasan Penugasan</Text>
+                  <Text style={styles.summarySubtitleText}>
+                    {assignments.length > 0
+                      ? `${assignments.length} penugasan terdata pada tahun ajaran ini`
+                      : 'Pantauan capaian & evaluasi progres belajar santri'}
                   </Text>
+                </View>
+              </View>
+
+              {/* Baris Semester (Dipindahkan ke Bawah, Luas & Rapi) */}
+              <View style={styles.semesterRowWrapper}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    setSelectedSemester((prev) =>
+                      prev.startsWith('Semester 1')
+                        ? `Semester 2 (${defaultAcademicYear})`
+                        : `Semester 1 (${defaultAcademicYear})`
+                    );
+                  }}
+                  style={styles.semesterBarContainerModern}
+                >
+                  <View style={styles.semesterBarLeft}>
+                    <View style={styles.semesterIconBadge}>
+                      <MaterialCommunityIcons name="calendar-range" size={15} color="#059669" />
+                    </View>
+                    <View>
+                      <Text style={styles.semesterBarLabel}>Periode Akademik Aktif</Text>
+                      <Text style={styles.semesterBarValue}>{selectedSemester}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.semesterBarRight}>
+                    <Text style={styles.semesterBarChangeText}>Ganti</Text>
+                    <MaterialCommunityIcons name="chevron-down" size={15} color="#047857" />
+                  </View>
                 </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* 2. RINGKASAN TUGAS (4 KPI HORIZONTAL ROW - Layar 1) */}
-          <View style={styles.containerBlock}>
-            <View style={styles.sectionHeaderBetween}>
-              <View style={styles.sectionHeaderLeft}>
-                <View style={styles.sectionIconBadge}>
-                  <MaterialCommunityIcons name="poll" size={18} color="#059669" />
-                </View>
-                <Text style={styles.sectionTitleBold}>Ringkasan Tugas</Text>
-              </View>
-
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => {
-                  setSelectedSemester((prev) =>
-                    prev.startsWith('Semester 1')
-                      ? `Semester 2 (${defaultAcademicYear})`
-                      : `Semester 1 (${defaultAcademicYear})`
-                  );
-                }}
-                style={styles.semesterDropdownPill}
-              >
-                <Text style={styles.semesterDropdownText}>{selectedSemester}</Text>
-                <MaterialCommunityIcons name="chevron-down" size={16} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.kpiRowContainer}>
-              {/* CARD 1: TUGAS AKTIF */}
-              <View style={[styles.kpiPillCard, { backgroundColor: '#E6FBF2', borderColor: '#D1FAE5' }]}>
-                <View style={styles.kpiCardTopRow}>
-                  <View style={[styles.kpiBadgeIcon, { backgroundColor: '#10B981' }]}>
-                    <MaterialCommunityIcons name="calendar-check" size={13} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiCardNumber, { color: '#065F46' }]}>{kpi.tugas_aktif}</Text>
-                </View>
-                <Text numberOfLines={1} style={[styles.kpiCardLabel, { color: '#065F46' }]}>
-                  Tugas Aktif
-                </Text>
-              </View>
-
-              {/* CARD 2: BELUM DIKERJAKAN */}
-              <View style={[styles.kpiPillCard, { backgroundColor: '#FFF9E6', borderColor: '#FEF3C7' }]}>
-                <View style={styles.kpiCardTopRow}>
-                  <View style={[styles.kpiBadgeIcon, { backgroundColor: '#F59E0B' }]}>
-                    <MaterialCommunityIcons name="clock-outline" size={13} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiCardNumber, { color: '#92400E' }]}>{kpi.belum_dikumpulkan}</Text>
-                </View>
-                <Text numberOfLines={2} style={[styles.kpiCardLabel, { color: '#92400E' }]}>
-                  Belum Dikerjakan
-                </Text>
-              </View>
-
-              {/* CARD 3: TERLAMBAT */}
-              <View style={[styles.kpiPillCard, { backgroundColor: '#FEECEB', borderColor: '#FEE2E2' }]}>
-                <View style={styles.kpiCardTopRow}>
-                  <View style={[styles.kpiBadgeIcon, { backgroundColor: '#EF4444' }]}>
-                    <MaterialCommunityIcons name="alert-circle" size={13} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiCardNumber, { color: '#B91C1C' }]}>{kpi.terlambat}</Text>
-                </View>
-                <Text numberOfLines={1} style={[styles.kpiCardLabel, { color: '#B91C1C' }]}>
-                  Terlambat
-                </Text>
-              </View>
-
-              {/* CARD 4: SUDAH DINILAI */}
-              <View style={[styles.kpiPillCard, { backgroundColor: '#F3E8FF', borderColor: '#E9D5FF' }]}>
-                <View style={styles.kpiCardTopRow}>
-                  <View style={[styles.kpiBadgeIcon, { backgroundColor: '#8B5CF6' }]}>
-                    <MaterialCommunityIcons name="check-circle" size={13} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiCardNumber, { color: '#6D28D9' }]}>{kpi.sudah_dinilai}</Text>
-                </View>
-                <Text numberOfLines={2} style={[styles.kpiCardLabel, { color: '#6D28D9' }]}>
-                  Sudah Dinilai
-                </Text>
               </View>
             </View>
-          </View>
 
-          {/* 3. FILTER TABS & SEARCH / FILTER BUTTON */}
-          <View style={styles.filterSectionBlock}>
-            {/* Filter Pills Scroll */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterPillsScroll}
-            >
-              {[
-                { key: 'all', label: 'Semua' },
-                { key: 'pending', label: 'Belum Dikerjakan' },
-                { key: 'submitted', label: 'Sudah Dikumpulkan' },
-                { key: 'late', label: 'Terlambat' },
-                { key: 'graded', label: 'Sudah Dinilai' },
-              ].map((tabItem) => {
-                const isActive = activeTab === tabItem.key;
-                return (
-                  <TouchableOpacity
-                    key={tabItem.key}
-                    activeOpacity={0.8}
-                    onPress={() => setActiveTab(tabItem.key as any)}
-                    style={[styles.filterCapsuleBtn, isActive && styles.filterCapsuleBtnActive]}
-                  >
-                    <Text style={[styles.filterCapsuleText, isActive && styles.filterCapsuleTextActive]}>
-                      {tabItem.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            {/* Search Box & Filter Button Row */}
-            <View style={styles.searchAndFilterRow}>
-              <View style={styles.searchBarContainer}>
-                <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder="Cari tugas, mapel, atau guru..."
-                  placeholderTextColor="#94A3B8"
-                  style={styles.searchInputField}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => setFilterModalVisible(true)}
-                style={[
-                  styles.filterActionButton,
-                  (modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all') && {
-                    backgroundColor: '#ECFDF5',
-                    borderColor: '#10B981',
-                  },
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name="filter-variant"
-                  size={18}
-                  color={
-                    modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all'
-                      ? '#059669'
-                      : '#334155'
-                  }
-                  style={{ marginRight: 6 }}
-                />
-                <Text
+            {/* 4 KPI Cards Modern Selaras Layout TU (2 Baris x 2 Kolom) */}
+            <View style={styles.kpiContainer}>
+              <View style={styles.kpiRow}>
+                {/* CARD 1: TOTAL TUGAS (EMERALD) */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setActiveTab('all')}
                   style={[
-                    styles.filterActionButtonText,
-                    (modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all') && {
-                      color: '#059669',
-                      fontWeight: '800',
-                    },
+                    styles.kpiCard,
+                    styles.kpiCardEmerald,
+                    activeTab === 'all' && styles.kpiCardActiveRingEmerald,
                   ]}
                 >
-                  Filter
-                </Text>
-                {(modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all') && (
-                  <View style={styles.filterDotBadge} />
-                )}
-              </TouchableOpacity>
+                  <LinearGradient
+                    colors={['#ECFDF5', '#F0FDF4']}
+                    style={styles.kpiCardGradient}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#047857' }]}>Total Tugas</Text>
+                      <View style={[styles.kpiIconBadge, { backgroundColor: '#D1FAE5' }]}>
+                        <MaterialCommunityIcons name="clipboard-check-outline" size={15} color="#059669" />
+                      </View>
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#065F46' }]}>{kpi.tugas_aktif}</Text>
+                    <Text style={[styles.kpiSub, { color: '#047857' }]}>Tugas Semester Ini</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                {/* CARD 2: BELUM DIKERJAKAN (AMBER) */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setActiveTab('pending')}
+                  style={[
+                    styles.kpiCard,
+                    styles.kpiCardAmber,
+                    activeTab === 'pending' && styles.kpiCardActiveRingAmber,
+                  ]}
+                >
+                  <LinearGradient
+                    colors={['#FFFBEB', '#FEF9C3']}
+                    style={styles.kpiCardGradient}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#D97706' }]}>Belum Selesai</Text>
+                      <View style={[styles.kpiIconBadge, { backgroundColor: '#FEF3C7' }]}>
+                        <MaterialCommunityIcons name="clock-alert-outline" size={15} color="#D97706" />
+                      </View>
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#92400E' }]}>{kpi.belum_dikumpulkan}</Text>
+                    <Text style={[styles.kpiSub, { color: '#B45309' }]}>Perlu Dikerjakan</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.kpiRow}>
+                {/* CARD 3: TERLAMBAT (ROSE) */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setActiveTab('late')}
+                  style={[
+                    styles.kpiCard,
+                    styles.kpiCardRose,
+                    activeTab === 'late' && styles.kpiCardActiveRingRose,
+                  ]}
+                >
+                  <LinearGradient
+                    colors={['#FFF1F2', '#FFE4E6']}
+                    style={styles.kpiCardGradient}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#E11D48' }]}>Terlambat</Text>
+                      <View style={[styles.kpiIconBadge, { backgroundColor: '#FFE4E6' }]}>
+                        <MaterialCommunityIcons name="alert-circle-outline" size={15} color="#E11D48" />
+                      </View>
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#9F1239' }]}>{kpi.terlambat}</Text>
+                    <Text style={[styles.kpiSub, { color: '#BE123C' }]}>Lewat Batas Waktu</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                {/* CARD 4: SUDAH DINILAI (PURPLE) */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setActiveTab('graded')}
+                  style={[
+                    styles.kpiCard,
+                    styles.kpiCardPurple,
+                    activeTab === 'graded' && styles.kpiCardActiveRingPurple,
+                  ]}
+                >
+                  <LinearGradient
+                    colors={['#FAF5FF', '#F3E8FF']}
+                    style={styles.kpiCardGradient}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#7C3AED' }]}>Sudah Dinilai</Text>
+                      <View style={[styles.kpiIconBadge, { backgroundColor: '#EDE9FE' }]}>
+                        <MaterialCommunityIcons name="star-circle-outline" size={15} color="#7C3AED" />
+                      </View>
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#5B21B6' }]}>{kpi.sudah_dinilai}</Text>
+                    <Text style={[styles.kpiSub, { color: '#6D28D9' }]}>Hasil Evaluasi Guru</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
 
-          {/* 4. CONTENT BERDASARKAN VIEW MODE: JADWAL (Layar 12) ATAU DAFTAR TUGAS (Layar 1 & 7) */}
-          {activeViewMode === 'jadwal' ? (
-            <View style={styles.containerBlock}>
+          {/* 2. TAILGRIDS EMERALD DATATABLE CONTAINER (MASTER PENUGASAN & KALENDER) */}
+          <View style={styles.emeraldDatatableContainer}>
+            {/* Header Toolbar Kontainer Zamrud */}
+            <View style={styles.emeraldDatatableHeader}>
+              <View style={[styles.sectionHeaderBetween, { marginBottom: 0 }]}>
+                <View style={styles.emeraldDatatableHeaderLeft}>
+                  <LinearGradient
+                    colors={['#059669', '#047857']}
+                    style={styles.emeraldDatatableIconSquircle}
+                  >
+                    <MaterialCommunityIcons name="clipboard-text-outline" size={20} color="#FFFFFF" />
+                  </LinearGradient>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.emeraldDatatableTitle}>
+                      {activeViewMode === 'jadwal' ? 'Kalender Jadwal Tugas' : 'Daftar Tugas Siswa'}
+                    </Text>
+                    <Text style={styles.emeraldDatatableSubtitle} numberOfLines={1}>
+                      {activeStudentName ? `Data tugas aktif untuk ${activeStudentName}` : 'Daftar materi & evaluasi terpadu'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.emeraldDatatableCountBadge}>
+                  <Text style={styles.emeraldDatatableCountText}>
+                    {activeViewMode === 'jadwal'
+                      ? `${calendarDayAssignments.length} Tugas`
+                      : `${filteredAssignments.length} dari ${assignments.length}`}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Tab Selector di Bodi (Daftar Tugas vs Kalender Mingguan) */}
+            <View style={styles.datatableTabWrapper}>
+              <View style={styles.bodyTabBarContainer}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setActiveViewMode('batas_waktu')}
+                  style={[
+                    styles.bodyTabButton,
+                    activeViewMode !== 'jadwal' && styles.bodyTabButtonActive,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="clipboard-text-outline"
+                    size={16}
+                    color={activeViewMode !== 'jadwal' ? '#FFFFFF' : '#64748B'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.bodyTabButtonText,
+                      activeViewMode !== 'jadwal' && styles.bodyTabButtonTextActive,
+                    ]}
+                  >
+                    Daftar Tugas ({assignments.length})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setActiveViewMode('jadwal')}
+                  style={[
+                    styles.bodyTabButton,
+                    activeViewMode === 'jadwal' && styles.bodyTabButtonActive,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="calendar-month-outline"
+                    size={16}
+                    color={activeViewMode === 'jadwal' ? '#FFFFFF' : '#64748B'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.bodyTabButtonText,
+                      activeViewMode === 'jadwal' && styles.bodyTabButtonTextActive,
+                    ]}
+                  >
+                    Kalender Mingguan
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Toolbar Pencarian, Sortir, dan Filter Modal */}
+            <View style={styles.datatableSearchWrapper}>
+              <View style={styles.searchRow}>
+                <View style={styles.searchBar}>
+                  <MaterialCommunityIcons
+                    name="magnify"
+                    size={20}
+                    color={searchQuery.length > 0 ? '#059669' : '#94A3B8'}
+                    style={{ marginRight: 8 }}
+                  />
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Cari tugas, guru, atau mapel..."
+                    placeholderTextColor="#94A3B8"
+                    style={styles.searchInput}
+                  />
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => setSearchQuery('')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Tombol Sortir Cepat */}
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setSortOrder((prev) => (prev === 'latest' ? 'deadline' : 'latest'))}
+                  style={styles.sortPillButton}
+                >
+                  <MaterialCommunityIcons name="swap-vertical" size={16} color="#475569" style={{ marginRight: 3 }} />
+                  <Text style={styles.sortPillText}>{sortOrder === 'latest' ? 'Terbaru' : 'Tenggat'}</Text>
+                </TouchableOpacity>
+
+                {/* Tombol Filter Modal */}
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setFilterModalVisible(true)}
+                  style={[
+                    styles.filterActionButtonModern,
+                    (modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all') &&
+                      styles.filterActionButtonActiveModern,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="filter-variant"
+                    size={18}
+                    color={
+                      modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all'
+                        ? '#059669'
+                        : '#334155'
+                    }
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.filterActionButtonTextModern,
+                      (modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all') &&
+                        styles.filterActionButtonTextActiveModern,
+                    ]}
+                  >
+                    Filter
+                  </Text>
+                  {(modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all') && (
+                    <View style={styles.filterDotBadgeActiveModern} />
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Status Chips Scrollable */}
+            <View style={styles.datatableChipsWrapper}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterChipsScrollContent}
+                style={styles.filterChipsScrollView}
+              >
+                {[
+                  { key: 'all', label: 'Semua', count: tabCounts.all },
+                  { key: 'pending', label: 'Belum Dikerjakan', count: tabCounts.pending },
+                  { key: 'submitted', label: 'Sudah Dikumpulkan', count: tabCounts.submitted },
+                  { key: 'late', label: 'Terlambat', count: tabCounts.late },
+                  { key: 'graded', label: 'Sudah Dinilai', count: tabCounts.graded },
+                ].map((tabItem) => {
+                  const isActive = activeTab === tabItem.key;
+                  const theme = STATUS_FILTER_THEMES[tabItem.key] || STATUS_FILTER_THEMES.all;
+                  return (
+                    <TouchableOpacity
+                      key={tabItem.key}
+                      activeOpacity={0.8}
+                      onPress={() => setActiveTab(tabItem.key as any)}
+                      style={[
+                        styles.filterCapsuleBtnModern,
+                        isActive
+                          ? {
+                              backgroundColor: theme.activeBg,
+                              borderColor: theme.activeBorder,
+                              shadowColor: theme.activeBorder,
+                            }
+                          : styles.filterCapsuleBtnInactive,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={theme.icon as any}
+                        size={14}
+                        color={isActive ? theme.activeIcon : '#64748B'}
+                        style={{ marginRight: 5 }}
+                      />
+                      <Text
+                        style={[
+                          styles.filterCapsuleTextModern,
+                          isActive
+                            ? { color: theme.activeText, fontWeight: '800' }
+                            : { color: '#475569', fontWeight: '600' },
+                        ]}
+                      >
+                        {tabItem.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.filterCountBadge,
+                          isActive
+                            ? { backgroundColor: theme.badgeBg }
+                            : { backgroundColor: '#E2E8F0' },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.filterCountBadgeText,
+                            isActive ? { color: theme.badgeText } : { color: '#475569' },
+                          ]}
+                        >
+                          {tabItem.count}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {/* Reset Filter Button */}
+                {(activeTab !== 'all' || modalFilterStatus !== 'all' || modalFilterSubject !== 'all' || modalFilterType !== 'all' || searchQuery.trim().length > 0) && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setActiveTab('all');
+                      setModalFilterStatus('all');
+                      setModalFilterSubject('all');
+                      setModalFilterType('all');
+                      setSearchQuery('');
+                    }}
+                    style={styles.filterChipReset}
+                  >
+                    <MaterialCommunityIcons name="refresh" size={13} color="#E11D48" style={{ marginRight: 3 }} />
+                    <Text style={styles.filterChipResetText}>Reset</Text>
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+            </View>
+
+            {/* Datatable Content Wrapper */}
+            <View style={styles.datatableContentWrapper}>
+              {/* 4. CONTENT BERDASARKAN VIEW MODE: JADWAL (Layar 12) ATAU DAFTAR TUGAS (Layar 1 & 7) */}
+              {activeViewMode === 'jadwal' ? (
+                <View>
               <View style={styles.calendarMonthHeaderRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <MaterialCommunityIcons name="calendar-month" size={18} color="#059669" />
@@ -1520,70 +1796,77 @@ export default function AssignmentScreen({ route, navigation }: any) {
                   const isGraded = statusObj.key === 'graded' || (sub && sub.nilai_guru !== null && sub.nilai_guru !== undefined);
 
                   return (
-                    <View key={String(item.id || idx)} style={styles.calendarTaskCard}>
-                      <View style={styles.calendarTaskTimeBar}>
-                        <MaterialCommunityIcons name="clock-outline" size={13} color="#059669" />
-                        <Text style={styles.calendarTaskTimeText}>07.30 - 09.00 WIB</Text>
-                        <View style={{ flex: 1 }} />
-                        <View style={[styles.statusPillBadge, { backgroundColor: statusObj.bg }]}>
-                          <Text style={[styles.statusPillText, { color: statusObj.color, fontSize: 9.5 }]}>{statusObj.label}</Text>
+                    <View
+                      key={String(item.id || idx)}
+                      style={[
+                        styles.calendarTaskCard,
+                        {
+                          borderColor: `${subjectTheme.iconColor}35`,
+                          borderLeftWidth: 5,
+                          borderLeftColor: subjectTheme.iconColor,
+                        },
+                      ]}
+                    >
+                      <LinearGradient
+                        colors={[subjectTheme.badgeBg, '#FFFFFF']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0.8 }}
+                      >
+                        <View style={styles.calendarTaskTimeBar}>
+                          <MaterialCommunityIcons name="clock-outline" size={13} color="#059669" />
+                          <Text style={styles.calendarTaskTimeText}>07.30 - 09.00 WIB</Text>
+                          <View style={{ flex: 1 }} />
+                          <View style={[styles.statusPillBadge, { backgroundColor: statusObj.bg, borderColor: `${statusObj.color}30`, borderWidth: 1 }]}>
+                            <Text style={[styles.statusPillText, { color: statusObj.color, fontSize: 9.5, fontWeight: '700' }]}>{statusObj.label}</Text>
+                          </View>
                         </View>
-                      </View>
 
-                      <View style={styles.calendarTaskBody}>
-                        <View style={[styles.calendarSubjectPill, { backgroundColor: subjectTheme.badgeBg, borderColor: subjectTheme.badgeBorder }]}>
-                          <MaterialCommunityIcons name={subjectTheme.icon} size={12} color={subjectTheme.iconColor} style={{ marginRight: 4 }} />
-                          <Text style={[styles.calendarSubjectPillText, { color: subjectTheme.badgeText }]}>{subjectName || 'Umum'}</Text>
+                        <View style={styles.calendarTaskBody}>
+                          <View style={[styles.calendarSubjectPill, { backgroundColor: '#FFFFFF', borderColor: subjectTheme.badgeBorder }]}>
+                            <MaterialCommunityIcons name={subjectTheme.icon} size={12} color={subjectTheme.iconColor} style={{ marginRight: 4 }} />
+                            <Text style={[styles.calendarSubjectPillText, { color: subjectTheme.badgeText }]}>{subjectName || 'Umum'}</Text>
+                          </View>
+                          <Text numberOfLines={2} style={styles.calendarTaskTitleText}>{taskTitle}</Text>
+
+                          <View style={styles.calendarTaskFooterRow}>
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={() => setSelectedDetailAssignment(item)}
+                              style={styles.calendarTaskDetailBtn}
+                            >
+                              <Text style={styles.calendarTaskDetailBtnText}>Detail Tugas</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={() => {
+                                setSelectedAssignment(item);
+                                setSubmissionText(sub?.jawaban_teks || '');
+                                setPickedAttachment(null);
+                              }}
+                              style={styles.calendarTaskSubmitBtn}
+                            >
+                              <Text style={styles.calendarTaskSubmitBtnText}>
+                                {isGraded ? 'Lihat Nilai' : statusObj.key === 'submitted' ? 'Kirim Ulang' : 'Kumpulkan'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
-                        <Text numberOfLines={2} style={styles.calendarTaskTitleText}>{taskTitle}</Text>
-
-                        <View style={styles.calendarTaskFooterRow}>
-                          <TouchableOpacity
-                            activeOpacity={0.8}
-                            onPress={() => setSelectedDetailAssignment(item)}
-                            style={styles.calendarTaskDetailBtn}
-                          >
-                            <Text style={styles.calendarTaskDetailBtnText}>Detail Tugas</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            activeOpacity={0.8}
-                            onPress={() => {
-                              setSelectedAssignment(item);
-                              setSubmissionText(sub?.jawaban_teks || '');
-                              setPickedAttachment(null);
-                            }}
-                            style={styles.calendarTaskSubmitBtn}
-                          >
-                            <Text style={styles.calendarTaskSubmitBtnText}>
-                              {isGraded ? 'Lihat Nilai' : statusObj.key === 'submitted' ? 'Kirim Ulang' : 'Kumpulkan'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
+                      </LinearGradient>
                     </View>
                   );
                 })
               )}
             </View>
           ) : (
-            <View style={styles.containerBlock}>
-              <View style={styles.sectionHeaderBetween}>
+            <View>
+              <View style={[styles.sectionHeaderBetween, { marginBottom: 10 }]}>
                 <View style={styles.sectionHeaderLeft}>
-                  <MaterialCommunityIcons name="clipboard-text" size={20} color="#059669" style={{ marginRight: 8 }} />
+                  <MaterialCommunityIcons name="clipboard-text-outline" size={18} color="#059669" style={{ marginRight: 6 }} />
                   <Text numberOfLines={1} style={styles.sectionTitleBold}>
-                    Daftar Tugas {activeStudentName ? `"${activeStudentName}"` : 'Siswa'} ({filteredAssignments.length})
+                    {activeStudentName ? `Tugas ${activeStudentName}` : 'Daftar Tugas'} ({filteredAssignments.length})
                   </Text>
                 </View>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setSortOrder((prev) => (prev === 'latest' ? 'deadline' : 'latest'))}
-                  style={styles.sortPillButton}
-                >
-                  <MaterialCommunityIcons name="swap-vertical" size={16} color="#475569" style={{ marginRight: 4 }} />
-                  <Text style={styles.sortPillText}>{sortOrder === 'latest' ? 'Terbaru' : 'Tenggat'}</Text>
-                </TouchableOpacity>
               </View>
 
               {loading ? (
@@ -1621,29 +1904,41 @@ export default function AssignmentScreen({ route, navigation }: any) {
                   const isGroup = item.jenis_tugas === 'kelompok';
 
                   return (
-                    <View key={String(item.id || idx)} style={styles.assignmentCardModern}>
-                      {/* Top Row: Left Subject Icon Box & Right Info */}
-                      <View style={styles.cardHeaderFlex}>
-                        <View style={[styles.subjectIconBoxLarge, { backgroundColor: subjectTheme.bgIcon }]}>
-                          <MaterialCommunityIcons name={subjectTheme.icon} size={28} color={subjectTheme.iconColor} />
-                        </View>
-
-                        <View style={styles.cardInfoCol}>
-                          <View style={styles.cardBadgesRow}>
+                    <View
+                      key={String(item.id || idx)}
+                      style={[
+                        styles.assignmentCardModern,
+                        {
+                          borderColor: `${subjectTheme.iconColor}35`,
+                          borderLeftWidth: 4,
+                          borderLeftColor: subjectTheme.iconColor,
+                          shadowColor: subjectTheme.iconColor,
+                        },
+                      ]}
+                    >
+                      <LinearGradient
+                        colors={[subjectTheme.badgeBg, '#FFFFFF', '#FFFFFF']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0.65 }}
+                        style={styles.assignmentCardGradient}
+                      >
+                        {/* Header Baris: Badges Mapel, Jenis Tugas, Status Pill, Judul, dan Deskripsi */}
+                        <View style={styles.cardHeaderFlexModern}>
+                          <View style={styles.cardBadgesRowModern}>
                             {subjectName ? (
                               <View
                                 style={[
-                                  styles.subjectPillBadge,
-                                  { backgroundColor: subjectTheme.badgeBg, borderColor: subjectTheme.badgeBorder },
+                                  styles.subjectPillBadgeModern,
+                                  { backgroundColor: '#FFFFFF', borderColor: subjectTheme.badgeBorder },
                                 ]}
                               >
                                 <MaterialCommunityIcons
-                                  name="book-outline"
-                                  size={11}
+                                  name={subjectTheme.icon as any}
+                                  size={13}
                                   color={subjectTheme.badgeText}
                                   style={{ marginRight: 4 }}
                                 />
-                                <Text numberOfLines={1} style={[styles.subjectPillText, { color: subjectTheme.badgeText }]}>
+                                <Text numberOfLines={1} style={[styles.subjectPillTextModern, { color: subjectTheme.badgeText }]}>
                                   {subjectName}
                                 </Text>
                               </View>
@@ -1663,222 +1958,239 @@ export default function AssignmentScreen({ route, navigation }: any) {
                               </View>
                             )}
 
-                            <View style={[styles.statusPillBadge, { backgroundColor: statusObj.bg }]}>
+                            <View style={{ flex: 1 }} />
+
+                            <View style={[styles.statusPillBadge, { backgroundColor: statusObj.bg, borderColor: `${statusObj.color}30`, borderWidth: 1 }]}>
                               <MaterialCommunityIcons
                                 name={statusObj.icon}
                                 size={12}
                                 color={statusObj.color}
                                 style={{ marginRight: 3 }}
                               />
-                              <Text style={[styles.statusPillText, { color: statusObj.color }]}>
+                              <Text style={[styles.statusPillText, { color: statusObj.color, fontWeight: '700' }]}>
                                 {statusObj.label}
                               </Text>
                             </View>
                           </View>
 
-                          <Text style={styles.cardTaskTitle} numberOfLines={2}>
+                          <Text style={styles.cardTaskTitleModern} numberOfLines={2}>
                             {taskTitle}
                           </Text>
 
                           {taskDesc ? (
-                            <Text style={styles.cardTaskDesc} numberOfLines={2}>
+                            <Text style={styles.cardTaskDescModern} numberOfLines={2}>
                               {taskDesc}
                             </Text>
                           ) : null}
                         </View>
-                      </View>
 
-                      {/* Metadata 3-Column Box */}
-                      <View style={styles.metadataContainerBox}>
-                        {/* Col 1: Deadline */}
-                        <View style={styles.metaColumnItem}>
-                          <MaterialCommunityIcons name="calendar-blank-outline" size={16} color="#64748B" style={{ marginRight: 6 }} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.metaLabelText}>Deadline</Text>
-                            <Text numberOfLines={1} style={styles.metaValueText}>{deadlineFormatted}</Text>
-                          </View>
-                        </View>
-
-                        {teacherName ? (
-                          <>
-                            <View style={styles.metaVerticalDivider} />
-                            {/* Col 2: Guru */}
-                            <View style={styles.metaColumnItem}>
-                              <MaterialCommunityIcons name="account-outline" size={16} color="#64748B" style={{ marginRight: 6 }} />
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.metaLabelText}>Guru</Text>
-                                <Text numberOfLines={1} style={styles.metaValueText}>{teacherName}</Text>
-                              </View>
+                        {/* Metadata 3-Column Box */}
+                        <View style={styles.metadataContainerBox}>
+                          {/* Col 1: Deadline */}
+                          <View style={styles.metaColumnItem}>
+                            <View style={[styles.metaIconBadge, { backgroundColor: '#FEF3C7' }]}>
+                              <MaterialCommunityIcons name="calendar-clock" size={14} color="#D97706" />
                             </View>
-                          </>
-                        ) : null}
-
-                        {attachmentCount > 0 ? (
-                          <>
-                            <View style={styles.metaVerticalDivider} />
-                            {/* Col 3: Lampiran */}
-                            <View style={[styles.metaColumnItem, { flex: 0.85 }]}>
-                              <MaterialCommunityIcons name="file-document-outline" size={16} color="#64748B" style={{ marginRight: 6 }} />
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.metaLabelText}>Lampiran</Text>
-                                <Text numberOfLines={1} style={styles.metaValueText}>{attachmentCount} file</Text>
-                              </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.metaLabelText}>Batas Waktu</Text>
+                              <Text numberOfLines={1} style={[styles.metaValueText, { color: '#92400E' }]}>{deadlineFormatted}</Text>
                             </View>
-                          </>
-                        ) : null}
-                      </View>
-
-                      {(() => {
-                        const mats = Array.isArray(item.materials) && item.materials.length > 0
-                          ? item.materials
-                          : (item.materi ? [item.materi] : []);
-                        if (mats.length === 0) return null;
-                        return mats.map((mat: any, mIdx: number) => (
-                          <TouchableOpacity
-                            key={mat.id || mIdx}
-                            activeOpacity={mat?.link || mat?.file ? 0.75 : 1}
-                            onPress={() => {
-                              const targetUrl = mat?.link || mat?.file;
-                              if (targetUrl) {
-                                Linking.openURL(targetUrl);
-                              }
-                            }}
-                            style={[styles.cardAttachmentLinkRow, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', marginBottom: 4 }]}
-                          >
-                            <MaterialCommunityIcons name="book-open-page-variant-outline" size={16} color="#059669" />
-                            <Text numberOfLines={1} style={[styles.cardAttachmentLinkText, { color: '#065F46', flex: 1 }]}>
-                              Materi: {mat.judul}
-                            </Text>
-                            {mat?.link || mat?.file ? (
-                              <MaterialCommunityIcons name="open-in-new" size={14} color="#059669" />
-                            ) : null}
-                          </TouchableOpacity>
-                        ));
-                      })()}
-
-                      {item.file_lampiran_url ? (
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => Linking.openURL(item.file_lampiran_url)}
-                          style={styles.cardAttachmentLinkRow}
-                        >
-                          <MaterialCommunityIcons name="file-pdf-box" size={16} color="#059669" />
-                          <Text numberOfLines={1} style={styles.cardAttachmentLinkText}>Buka Lembar Berkas Soal Guru</Text>
-                          <MaterialCommunityIcons name="chevron-right" size={16} color="#059669" />
-                        </TouchableOpacity>
-                      ) : null}
-
-                      {/* Footer: Graded frame vs Pending reminder & buttons */}
-                      {isGraded ? (
-                        <View style={styles.gradedCardFrameModern}>
-                          <View style={styles.gradedTopRow}>
-                            <View style={styles.scorePillBadge}>
-                              <MaterialCommunityIcons name="star" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                              <Text style={styles.scorePillLabel}>Nilai</Text>
-                              <Text style={styles.scorePillValue}>{sub?.nilai_guru ?? sub?.nilai ?? '-'}</Text>
-                            </View>
-                            <TouchableOpacity
-                              activeOpacity={0.8}
-                              onPress={() => setSelectedDetailAssignment(item)}
-                              style={styles.gradedDetailBtn}
-                            >
-                              <Text style={styles.gradedDetailBtnText}>Lihat Detail</Text>
-                              <MaterialCommunityIcons name="chevron-right" size={14} color="#059669" />
-                            </TouchableOpacity>
                           </View>
 
-                          {sub?.catatan_guru || sub?.catatan ? (
-                            <View style={styles.teacherNoteBoxModern}>
-                              <MaterialCommunityIcons name="message-text" size={14} color="#059669" style={{ marginTop: 2, marginRight: 6 }} />
-                              <Text style={styles.teacherNoteTextModern}>
-                                <Text style={{ fontWeight: '800', color: '#065F46' }}>Catatan: </Text>
-                                {sub?.catatan_guru || sub?.catatan}
-                              </Text>
-                            </View>
+                          {teacherName ? (
+                            <>
+                              <View style={styles.metaVerticalDivider} />
+                              {/* Col 2: Guru */}
+                              <View style={styles.metaColumnItem}>
+                                <View style={[styles.metaIconBadge, { backgroundColor: subjectTheme.badgeBg }]}>
+                                  <MaterialCommunityIcons name="account-tie-outline" size={14} color={subjectTheme.iconColor} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.metaLabelText}>Guru Pengajar</Text>
+                                  <Text numberOfLines={1} style={styles.metaValueText}>{teacherName}</Text>
+                                </View>
+                              </View>
+                            </>
+                          ) : null}
+
+                          {attachmentCount > 0 ? (
+                            <>
+                              <View style={styles.metaVerticalDivider} />
+                              {/* Col 3: Lampiran */}
+                              <View style={[styles.metaColumnItem, { flex: 0.85 }]}>
+                                <View style={[styles.metaIconBadge, { backgroundColor: '#E0F2FE' }]}>
+                                  <MaterialCommunityIcons name="paperclip" size={14} color="#0284C7" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.metaLabelText}>Lampiran</Text>
+                                  <Text numberOfLines={1} style={[styles.metaValueText, { color: '#0369A1' }]}>{attachmentCount} Berkas</Text>
+                                </View>
+                              </View>
+                            </>
                           ) : null}
                         </View>
-                      ) : (
-                        <View style={styles.pendingActionRow}>
-                          <View style={styles.pendingAlertBoxModern}>
-                            <MaterialCommunityIcons
-                              name={canSubmit ? 'information-outline' : 'shield-account'}
-                              size={16}
-                              color="#D97706"
-                              style={{ marginRight: 6 }}
-                            />
-                            <Text numberOfLines={1} style={styles.pendingAlertTextModern}>
-                              {item.jenis_tugas === 'quiz'
-                                ? 'Kuis CBT berbatas waktu.'
-                                : isGroup
-                                ? 'Tugas kerja kelompok.'
-                                : 'Selesaikan sebelum batas waktu.'}
-                            </Text>
-                          </View>
 
-                          <View style={styles.actionButtonsCluster}>
+                        {/* Link Materi Terkait */}
+                        {(() => {
+                          const mats = Array.isArray(item.materials) && item.materials.length > 0
+                            ? item.materials
+                            : (item.materi ? [item.materi] : []);
+                          if (mats.length === 0) return null;
+                          return mats.map((mat: any, mIdx: number) => (
                             <TouchableOpacity
-                              activeOpacity={0.8}
-                              onPress={() => setSelectedDetailAssignment(item)}
-                              style={styles.detailOutlineBtn}
+                              key={mat.id || mIdx}
+                              activeOpacity={mat?.link || mat?.file ? 0.75 : 1}
+                              onPress={() => {
+                                const targetUrl = mat?.link || mat?.file;
+                                if (targetUrl) {
+                                  handleOpenEmbedUrl(targetUrl, `Materi: ${mat.judul}`);
+                                }
+                              }}
+                              style={[styles.cardAttachmentLinkRow, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', marginBottom: 5 }]}
                             >
-                              <Text style={styles.detailOutlineBtnText}>Detail</Text>
+                              <MaterialCommunityIcons name="book-open-page-variant-outline" size={15} color="#059669" />
+                              <Text numberOfLines={1} style={[styles.cardAttachmentLinkText, { color: '#065F46', flex: 1 }]}>
+                                Materi: {mat.judul}
+                              </Text>
+                              {mat?.link || mat?.file ? (
+                                <MaterialCommunityIcons name="eye-outline" size={14} color="#059669" />
+                              ) : null}
                             </TouchableOpacity>
+                          ));
+                        })()}
 
-                            {isGroup && (
+                        {/* Link Berkas Soal Guru */}
+                        {item.file_lampiran_url ? (
+                          <TouchableOpacity
+                            activeOpacity={0.75}
+                            onPress={() => handleOpenEmbedUrl(item.file_lampiran_url, 'Lembar Berkas Soal Guru')}
+                            style={[styles.cardAttachmentLinkRow, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', marginBottom: 5 }]}
+                          >
+                            <MaterialCommunityIcons name="file-pdf-box" size={16} color="#2563EB" />
+                            <Text numberOfLines={1} style={[styles.cardAttachmentLinkText, { color: '#1D4ED8' }]}>Buka Lembar Berkas Soal Guru</Text>
+                            <MaterialCommunityIcons name="eye-outline" size={16} color="#2563EB" />
+                          </TouchableOpacity>
+                        ) : null}
+
+                        {/* Footer: Graded frame vs Pending reminder & buttons */}
+                        {isGraded ? (
+                          <View style={styles.gradedCardFrameModern}>
+                            <View style={styles.gradedTopRow}>
+                              <View style={styles.scorePillBadge}>
+                                <MaterialCommunityIcons name="star" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                                <Text style={styles.scorePillLabel}>Nilai</Text>
+                                <Text style={styles.scorePillValue}>{sub?.nilai_guru ?? sub?.nilai ?? '-'}</Text>
+                              </View>
                               <TouchableOpacity
                                 activeOpacity={0.8}
-                                onPress={() => setGroupModalVisible(true)}
-                                style={styles.groupOutlineBtn}
+                                onPress={() => setSelectedDetailAssignment(item)}
+                                style={styles.gradedDetailBtn}
                               >
-                                <MaterialCommunityIcons name="account-group" size={13} color="#0284C7" />
-                                <Text style={styles.groupOutlineBtnText}>Kelompok</Text>
+                                <Text style={styles.gradedDetailBtnText}>Lihat Detail</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={14} color="#059669" />
                               </TouchableOpacity>
-                            )}
+                            </View>
 
-                            {canSubmit && (
+                            {sub?.catatan_guru || sub?.catatan ? (
+                              <View style={styles.teacherNoteBoxModern}>
+                                <MaterialCommunityIcons name="message-text" size={14} color="#059669" style={{ marginTop: 2, marginRight: 6 }} />
+                                <Text style={styles.teacherNoteTextModern}>
+                                  <Text style={{ fontWeight: '800', color: '#065F46' }}>Catatan Guru: </Text>
+                                  {sub?.catatan_guru || sub?.catatan}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
+                        ) : (
+                          <View style={styles.pendingActionContainer}>
+                            {/* Alert Reminder Banner - Lebar Penuh Tanpa Terpotong */}
+                            <View style={styles.pendingAlertBanner}>
+                              <MaterialCommunityIcons
+                                name={canSubmit ? 'clock-alert-outline' : 'shield-account'}
+                                size={15}
+                                color="#D97706"
+                                style={{ marginRight: 6 }}
+                              />
+                              <Text numberOfLines={1} style={styles.pendingAlertTextFull}>
+                                {item.jenis_tugas === 'quiz'
+                                  ? 'Kuis CBT berbatas waktu.'
+                                  : isGroup
+                                  ? 'Tugas kerja kelompok.'
+                                  : 'Selesaikan sebelum batas waktu berakhir.'}
+                              </Text>
+                            </View>
+
+                            {/* Action Buttons Row */}
+                            <View style={styles.pendingButtonsRow}>
                               <TouchableOpacity
                                 activeOpacity={0.8}
-                                onPress={() => {
-                                  setSelectedAssignment(item);
-                                  setSubmissionText(sub?.jawaban_teks || '');
-                                  setPickedAttachment(null);
-                                  try {
-                                    if (item.jenis_tugas === 'quiz' && sub?.jawaban_teks && sub.jawaban_teks.trim().startsWith('{')) {
-                                      setQuizAnswers(JSON.parse(sub.jawaban_teks));
-                                    } else {
+                                onPress={() => setSelectedDetailAssignment(item)}
+                                style={styles.detailOutlineBtn}
+                              >
+                                <MaterialCommunityIcons name="text-box-search-outline" size={14} color="#059669" style={{ marginRight: 3 }} />
+                                <Text style={styles.detailOutlineBtnText}>Detail</Text>
+                              </TouchableOpacity>
+
+                              {isGroup && (
+                                <TouchableOpacity
+                                  activeOpacity={0.8}
+                                  onPress={() => setGroupModalVisible(true)}
+                                  style={styles.groupOutlineBtn}
+                                >
+                                  <MaterialCommunityIcons name="account-group" size={13} color="#0284C7" style={{ marginRight: 3 }} />
+                                  <Text style={styles.groupOutlineBtnText}>Kelompok</Text>
+                                </TouchableOpacity>
+                              )}
+
+                              <View style={{ flex: 1 }} />
+
+                              {canSubmit && (
+                                <TouchableOpacity
+                                  activeOpacity={0.8}
+                                  onPress={() => {
+                                    setSelectedAssignment(item);
+                                    setSubmissionText(sub?.jawaban_teks || '');
+                                    setPickedAttachment(null);
+                                    try {
+                                      if (item.jenis_tugas === 'quiz' && sub?.jawaban_teks && sub.jawaban_teks.trim().startsWith('{')) {
+                                        setQuizAnswers(JSON.parse(sub.jawaban_teks));
+                                      } else {
+                                        setQuizAnswers({});
+                                      }
+                                    } catch {
                                       setQuizAnswers({});
                                     }
-                                  } catch {
-                                    setQuizAnswers({});
-                                  }
-                                }}
-                                style={[
-                                  styles.kumpulkanBtnModern,
-                                  item.jenis_tugas === 'quiz' && { backgroundColor: '#7C3AED' },
-                                ]}
-                              >
-                                <MaterialCommunityIcons
-                                  name={item.jenis_tugas === 'quiz' ? 'lightning-bolt' : 'tray-arrow-up'}
-                                  size={14}
-                                  color="#FFFFFF"
-                                  style={{ marginRight: 4 }}
-                                />
-                                <Text style={styles.kumpulkanBtnTextModern}>
-                                  {item.jenis_tugas === 'quiz'
-                                    ? (statusObj.key === 'submitted' ? 'Kirim Ulang' : '⚡ Kuis')
-                                    : (statusObj.key === 'submitted' ? 'Kirim Ulang' : 'Kumpulkan')}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
+                                  }}
+                                  style={[
+                                    styles.kumpulkanBtnModern,
+                                    item.jenis_tugas === 'quiz' && { backgroundColor: '#7C3AED', shadowColor: '#7C3AED' },
+                                  ]}
+                                >
+                                  <MaterialCommunityIcons
+                                    name={item.jenis_tugas === 'quiz' ? 'lightning-bolt' : 'tray-arrow-up'}
+                                    size={15}
+                                    color="#FFFFFF"
+                                    style={{ marginRight: 4 }}
+                                  />
+                                  <Text style={styles.kumpulkanBtnTextModern}>
+                                    {item.jenis_tugas === 'quiz'
+                                      ? (statusObj.key === 'submitted' ? 'Kirim Ulang' : '⚡ Kuis CBT')
+                                      : (statusObj.key === 'submitted' ? 'Kirim Ulang' : 'Kumpulkan Tugas')}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
                           </View>
-                        </View>
-                      )}
+                        )}
+                      </LinearGradient>
                     </View>
                   );
                 })
               )}
             </View>
           )}
+            </View>
+          </View>
           </View>
         </Animated.ScrollView>
 
@@ -1893,10 +2205,18 @@ export default function AssignmentScreen({ route, navigation }: any) {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
-              <View style={styles.modalHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.modalTitle}>Filter Tugas Siswa</Text>
-                  <Text style={styles.modalSubtitle}>Sesuaikan kriteria tampilan penugasan</Text>
+              <View style={styles.modalHeaderModern}>
+                <View style={styles.modalHeaderTitleRow}>
+                  <LinearGradient
+                    colors={['#059669', '#047857']}
+                    style={styles.modalHeaderIconBadge}
+                  >
+                    <MaterialCommunityIcons name="filter-variant" size={18} color="#FFFFFF" />
+                  </LinearGradient>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalTitle}>Filter Tugas Siswa</Text>
+                    <Text style={styles.modalSubtitle}>Sesuaikan kriteria tampilan penugasan</Text>
+                  </View>
                 </View>
                 <TouchableOpacity onPress={() => setFilterModalVisible(false)} style={styles.modalCloseBtn}>
                   <MaterialCommunityIcons name="close" size={20} color="#64748B" />
@@ -1915,14 +2235,32 @@ export default function AssignmentScreen({ route, navigation }: any) {
                     { key: 'graded', label: 'Sudah Dinilai' },
                   ].map((st) => {
                     const isSel = modalFilterStatus === st.key;
+                    const stTheme = STATUS_FILTER_THEMES[st.key] || STATUS_FILTER_THEMES.all;
                     return (
                       <TouchableOpacity
                         key={st.key}
                         activeOpacity={0.8}
                         onPress={() => setModalFilterStatus(st.key)}
-                        style={[styles.modalFilterPill, isSel && styles.modalFilterPillActive]}
+                        style={[
+                          styles.modalFilterPill,
+                          isSel && {
+                            backgroundColor: stTheme.activeBg,
+                            borderColor: stTheme.activeBorder,
+                          },
+                        ]}
                       >
-                        <Text style={[styles.modalFilterPillText, isSel && styles.modalFilterPillTextActive]}>
+                        <MaterialCommunityIcons
+                          name={(isSel ? 'check-circle' : stTheme.icon) as any}
+                          size={14}
+                          color={isSel ? stTheme.activeIcon : '#64748B'}
+                          style={{ marginRight: 5 }}
+                        />
+                        <Text
+                          style={[
+                            styles.modalFilterPillText,
+                            isSel && { color: stTheme.activeText, fontWeight: '800' },
+                          ]}
+                        >
                           {st.label}
                         </Text>
                       </TouchableOpacity>
@@ -1936,22 +2274,57 @@ export default function AssignmentScreen({ route, navigation }: any) {
                   <TouchableOpacity
                     activeOpacity={0.8}
                     onPress={() => setModalFilterSubject('all')}
-                    style={[styles.modalFilterPill, modalFilterSubject === 'all' && styles.modalFilterPillActive]}
+                    style={[
+                      styles.modalFilterPill,
+                      modalFilterSubject === 'all' && {
+                        backgroundColor: '#ECFDF5',
+                        borderColor: '#10B981',
+                      },
+                    ]}
                   >
-                    <Text style={[styles.modalFilterPillText, modalFilterSubject === 'all' && styles.modalFilterPillTextActive]}>
+                    <MaterialCommunityIcons
+                      name={modalFilterSubject === 'all' ? 'check-circle' : 'book-outline'}
+                      size={14}
+                      color={modalFilterSubject === 'all' ? '#059669' : '#64748B'}
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text
+                      style={[
+                        styles.modalFilterPillText,
+                        modalFilterSubject === 'all' && { color: '#065F46', fontWeight: '800' },
+                      ]}
+                    >
                       Semua Mapel
                     </Text>
                   </TouchableOpacity>
                   {availableSubjects.map((subName) => {
                     const isSel = modalFilterSubject.toLowerCase() === subName.toLowerCase();
+                    const subTheme = getSubjectTheme(subName);
                     return (
                       <TouchableOpacity
                         key={subName}
                         activeOpacity={0.8}
                         onPress={() => setModalFilterSubject(subName)}
-                        style={[styles.modalFilterPill, isSel && styles.modalFilterPillActive]}
+                        style={[
+                          styles.modalFilterPill,
+                          isSel && {
+                            backgroundColor: subTheme.badgeBg,
+                            borderColor: subTheme.iconColor,
+                          },
+                        ]}
                       >
-                        <Text style={[styles.modalFilterPillText, isSel && styles.modalFilterPillTextActive]}>
+                        <MaterialCommunityIcons
+                          name={(isSel ? 'check-circle' : subTheme.icon) as any}
+                          size={14}
+                          color={isSel ? subTheme.iconColor : '#64748B'}
+                          style={{ marginRight: 5 }}
+                        />
+                        <Text
+                          style={[
+                            styles.modalFilterPillText,
+                            isSel && { color: subTheme.titleColor, fontWeight: '800' },
+                          ]}
+                        >
                           {subName}
                         </Text>
                       </TouchableOpacity>
@@ -1963,10 +2336,10 @@ export default function AssignmentScreen({ route, navigation }: any) {
                 <Text style={[styles.filterSectionHeading, { marginTop: 16 }]}>Jenis Penugasan:</Text>
                 <View style={styles.filterPillsWrap}>
                   {[
-                    { key: 'all', label: 'Semua Jenis' },
-                    { key: 'individu', label: 'Tugas Individu' },
-                    { key: 'kelompok', label: 'Tugas Kelompok' },
-                    { key: 'quiz', label: 'Kuis CBT' },
+                    { key: 'all', label: 'Semua Jenis', icon: 'format-list-checks' },
+                    { key: 'individu', label: 'Tugas Individu', icon: 'account-outline' },
+                    { key: 'kelompok', label: 'Tugas Kelompok', icon: 'account-group-outline' },
+                    { key: 'quiz', label: 'Kuis CBT', icon: 'laptop' },
                   ].map((tp) => {
                     const isSel = modalFilterType === tp.key;
                     return (
@@ -1974,9 +2347,26 @@ export default function AssignmentScreen({ route, navigation }: any) {
                         key={tp.key}
                         activeOpacity={0.8}
                         onPress={() => setModalFilterType(tp.key)}
-                        style={[styles.modalFilterPill, isSel && styles.modalFilterPillActive]}
+                        style={[
+                          styles.modalFilterPill,
+                          isSel && {
+                            backgroundColor: '#ECFDF5',
+                            borderColor: '#10B981',
+                          },
+                        ]}
                       >
-                        <Text style={[styles.modalFilterPillText, isSel && styles.modalFilterPillTextActive]}>
+                        <MaterialCommunityIcons
+                          name={(isSel ? 'check-circle' : tp.icon) as any}
+                          size={14}
+                          color={isSel ? '#059669' : '#64748B'}
+                          style={{ marginRight: 5 }}
+                        />
+                        <Text
+                          style={[
+                            styles.modalFilterPillText,
+                            isSel && { color: '#065F46', fontWeight: '800' },
+                          ]}
+                        >
                           {tp.label}
                         </Text>
                       </TouchableOpacity>
@@ -1985,23 +2375,33 @@ export default function AssignmentScreen({ route, navigation }: any) {
                 </View>
               </ScrollView>
 
-              <View style={styles.modalFooter}>
+              <View style={styles.modalFooterModern}>
                 <TouchableOpacity
                   onPress={() => {
                     setModalFilterStatus('all');
                     setModalFilterSubject('all');
                     setModalFilterType('all');
                   }}
-                  style={styles.modalResetBtn}
+                  style={styles.modalResetBtnModern}
                 >
+                  <MaterialCommunityIcons name="refresh" size={15} color="#475569" style={{ marginRight: 4 }} />
                   <Text style={styles.modalResetBtnText}>Reset</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
+                  activeOpacity={0.85}
                   onPress={() => setFilterModalVisible(false)}
-                  style={styles.modalApplyBtn}
+                  style={styles.modalApplyBtnContainer}
                 >
-                  <Text style={styles.modalApplyBtnText}>Terapkan Filter</Text>
+                  <LinearGradient
+                    colors={['#059669', '#047857']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.modalApplyBtnGradient}
+                  >
+                    <MaterialCommunityIcons name="check" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.modalApplyBtnText}>Terapkan Filter</Text>
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
             </View>
@@ -2143,11 +2543,11 @@ export default function AssignmentScreen({ route, navigation }: any) {
                       {selectedDetailAssignment.file_lampiran_url && (
                         <TouchableOpacity
                           activeOpacity={0.8}
-                          onPress={() => Linking.openURL(selectedDetailAssignment.file_lampiran_url)}
+                          onPress={() => handleOpenEmbedUrl(selectedDetailAssignment.file_lampiran_url, 'Berkas Lampiran Soal Guru')}
                           style={[styles.teacherFileAttachmentBtn, { marginTop: 12 }]}
                         >
-                          <MaterialCommunityIcons name="file-download-outline" size={18} color="#0E5C44" />
-                          <Text style={styles.teacherFileAttachmentText}>Unduh Berkas Lampiran Soal</Text>
+                          <MaterialCommunityIcons name="file-eye-outline" size={18} color="#0E5C44" />
+                          <Text style={styles.teacherFileAttachmentText}>Buka & Pratinjau Berkas Lampiran Soal</Text>
                         </TouchableOpacity>
                       )}
 
@@ -2280,14 +2680,138 @@ export default function AssignmentScreen({ route, navigation }: any) {
               </View>
 
               <ScrollView style={styles.modalBody}>
-                {/* Dropzone Upload Berkas */}
-                <Text style={styles.inputLabel}>Unggah Berkas / Dokumen Tugas:</Text>
+                {/* 1. Banner Jenis Tugas Dinamis */}
+                {(() => {
+                  const jenis = selectedAssignment?.jenis_tugas || 'tugas';
+                  const jenisConfig: Record<string, { label: string; icon: any; color: string; bg: string; border: string; desc: string }> = {
+                    tahfizh: { label: 'Setoran Tahfizh Al-Qur\'an', icon: 'book-open-variant', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', desc: 'Setoran langsung di kelas, rekaman audio, atau video hafalan.' },
+                    quiz: { label: 'Kuis Online CBT', icon: 'lightning-bolt', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', desc: 'Pilih jawaban butir kuis di bawah ini untuk penilaian otomatis/manual.' },
+                    kuis: { label: 'Kuis Online CBT', icon: 'lightning-bolt', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', desc: 'Pilih jawaban butir kuis di bawah ini untuk penilaian otomatis/manual.' },
+                    esai: { label: 'Tugas Esai', icon: 'text-box-outline', color: '#0284C7', bg: '#F0F9FF', border: '#BAE6FD', desc: 'Tuliskan esai mendalam sesuai topik instruksi guru.' },
+                    tertulis: { label: 'Tugas Tertulis', icon: 'lead-pencil', color: '#D97706', bg: '#FFFBEB', border: '#FDE68A', desc: 'Ketikkan teks jawaban atau unggah foto lembar tugas.' },
+                    dokumen: { label: 'Unggah Dokumen', icon: 'file-pdf-box', color: '#DC2626', bg: '#FEF2F2', border: '#FECDD3', desc: 'Lampirkan berkas PDF/DOCX atau sematkan link Google Drive/Docs.' },
+                    praktik: { label: 'Tugas Praktik', icon: 'video-outline', color: '#E11D48', bg: '#FFF1F2', border: '#FECDD3', desc: 'Unggah foto/video demonstrasi atau sematkan tautan YouTube/Drive.' },
+                    literasi: { label: 'Literasi & Resensi', icon: 'book-outline', color: '#0D9488', bg: '#F0FDFA', border: '#99F6E4', desc: 'Ringkasan bacaan atau ulasan literasi yang ditugaskan.' },
+                    proyek: { label: 'Proyek Kelompok', icon: 'account-group', color: '#4F46E5', bg: '#EEF2FF', border: '#C7D2FE', desc: 'Tugas kolaborasi kelompok, laporan dokumen atau presentasi Canva/Slide.' },
+                  };
+                  const cfg = jenisConfig[jenis] || { label: 'Penugasan Standar', icon: 'clipboard-text-outline', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', desc: 'Kumpulkan jawaban atau berkas tugas sesuai instruksi guru.' };
+
+                  return (
+                    <View style={{ backgroundColor: cfg.bg, borderColor: cfg.border, borderWidth: 1.5, borderRadius: 14, padding: 12, marginBottom: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <MaterialCommunityIcons name={cfg.icon} size={16} color={cfg.color} />
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: cfg.color }}>{cfg.label}</Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: '#475569', lineHeight: 16 }}>{cfg.desc}</Text>
+                    </View>
+                  );
+                })()}
+
+                {/* 2. DYNAMIC SECTION: Tahfizh Mode Selector & Target */}
+                {selectedAssignment?.jenis_tugas === 'tahfizh' && (
+                  <View style={{ backgroundColor: '#F0FDF4', borderWidth: 1.5, borderColor: '#86EFAC', borderRadius: 14, padding: 12, marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <MaterialCommunityIcons name="book-open-page-variant" size={18} color="#059669" />
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>Target Setoran & Metode Pilihan:</Text>
+                    </View>
+
+                    {Boolean(selectedAssignment?.metadata?.surah || selectedAssignment?.metadata?.target_surah) && (
+                      <View style={{ backgroundColor: '#FFFFFF', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#BBF7D0', marginBottom: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#065F46' }}>
+                          Surah: {selectedAssignment?.metadata?.surah || selectedAssignment?.metadata?.target_surah}
+                          {selectedAssignment?.metadata?.ayat_awal ? ` (Ayat ${selectedAssignment?.metadata?.ayat_awal} - ${selectedAssignment?.metadata?.ayat_akhir || 'selesai'})` : ''}
+                        </Text>
+                      </View>
+                    )}
+
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857', marginBottom: 6 }}>
+                      Pilih Cara Menyetorkan:
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      {[
+                        { key: 'langsung', label: 'Setoran Langsung', icon: 'account-voice' },
+                        { key: 'audio', label: 'Rekaman Suara', icon: 'microphone' },
+                        { key: 'video', label: 'Video / Tautan', icon: 'video' },
+                      ].map((m) => {
+                        const isSelected = submissionTahfizhMode === m.key;
+                        return (
+                          <TouchableOpacity
+                            key={m.key}
+                            activeOpacity={0.8}
+                            onPress={() => setSubmissionTahfizhMode(m.key as any)}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 8,
+                              paddingHorizontal: 4,
+                              borderRadius: 10,
+                              borderWidth: 1.5,
+                              borderColor: isSelected ? '#059669' : '#CBD5E1',
+                              backgroundColor: isSelected ? '#DCFCE7' : '#FFFFFF',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <MaterialCommunityIcons
+                              name={m.icon as any}
+                              size={15}
+                              color={isSelected ? '#059669' : '#64748B'}
+                              style={{ marginBottom: 2 }}
+                            />
+                            <Text
+                              numberOfLines={1}
+                              style={{
+                                fontSize: 10,
+                                fontWeight: isSelected ? '800' : '600',
+                                color: isSelected ? '#047857' : '#475569',
+                              }}
+                            >
+                              {m.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {submissionTahfizhMode === 'langsung' && (
+                      <Text style={{ fontSize: 10, color: '#047857', fontStyle: 'italic', marginTop: 8 }}>
+                        * Setoran hafalan dilakukan secara tatap muka di depan Guru/Ustadz di kelas. Guru akan menilai kelancaran, tajwid, dan fasahah secara langsung.
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* 3. DYNAMIC SECTION: Proyek Kelompok (Nama Anggota) */}
+                {selectedAssignment?.jenis_tugas === 'proyek' && (
+                  <View style={{ backgroundColor: '#EEF2FF', borderWidth: 1.5, borderColor: '#C7D2FE', borderRadius: 14, padding: 12, marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                      <MaterialCommunityIcons name="account-group" size={16} color="#4F46E5" />
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#3730A3' }}>Nama Anggota Kelompok:</Text>
+                    </View>
+                    <TextInput
+                      value={submissionGroupMembers}
+                      onChangeText={setSubmissionGroupMembers}
+                      placeholder="Contoh: Ahmad Fauzi (Ketua), Budi Santoso, Fitri..."
+                      placeholderTextColor="#94A3B8"
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#C7D2FE',
+                        borderRadius: 10,
+                        padding: 10,
+                        fontSize: 12,
+                        color: '#1E293B',
+                      }}
+                    />
+                  </View>
+                )}
+
+                {/* 4. Dropzone Upload Berkas / Foto */}
+                <Text style={styles.inputLabel}>Unggah Berkas / Dokumen / Foto:</Text>
                 <View style={styles.dropzoneBox}>
                   <View style={styles.dropzoneIconCircle}>
                     <MaterialCommunityIcons name="cloud-upload-outline" size={28} color="#059669" />
                   </View>
                   <Text style={styles.dropzoneTitle}>Pilih Berkas atau Foto Tugas</Text>
-                  <Text style={styles.dropzoneSub}>Format PDF, PNG, JPG (Maks. 10 MB)</Text>
+                  <Text style={styles.dropzoneSub}>Format PDF, PNG, JPG, DOCX (Maks. 10 MB)</Text>
 
                   <View style={styles.pickerBtnRow}>
                     <TouchableOpacity
@@ -2320,6 +2844,57 @@ export default function AssignmentScreen({ route, navigation }: any) {
                       </TouchableOpacity>
                     </View>
                   )}
+                </View>
+
+                {/* 5. INPUT TAUTAN FILE, VIDEO, ATAU DOKUMEN (DENGAN EMBED VIEWER IN-APP) */}
+                <View style={{ marginTop: 12, marginBottom: 14 }}>
+                  <Text style={styles.inputLabel}>Tautan File / Video / Dokumen (Opsional):</Text>
+                  <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14, padding: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 2, marginBottom: 8 }}>
+                      <MaterialCommunityIcons name="link-variant" size={18} color="#059669" style={{ marginRight: 8 }} />
+                      <TextInput
+                        value={submissionUrlLink}
+                        onChangeText={setSubmissionUrlLink}
+                        placeholder="Tempel tautan (Google Drive, YouTube, Docs, Canva...)"
+                        placeholderTextColor="#94A3B8"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={{ flex: 1, height: 40, fontSize: 12, color: '#1E293B' }}
+                      />
+                      {submissionUrlLink.trim().length > 0 && (
+                        <TouchableOpacity onPress={() => setSubmissionUrlLink('')} style={{ padding: 4 }}>
+                          <MaterialCommunityIcons name="close-circle" size={16} color="#94A3B8" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {submissionUrlLink.trim().length > 0 && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => handleOpenEmbedUrl(submissionUrlLink.trim(), 'Pratinjau Tautan Tugas Anda')}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: '#ECFDF5',
+                          borderWidth: 1.5,
+                          borderColor: '#6EE7B7',
+                          borderRadius: 10,
+                          paddingVertical: 8,
+                          paddingHorizontal: 12,
+                          gap: 6,
+                        }}
+                      >
+                        <MaterialCommunityIcons name="eye-outline" size={16} color="#059669" />
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#047857' }}>
+                          Uji Pratinjau Tautan (In-App Embed)
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    <Text style={{ fontSize: 10, color: '#64748B', marginTop: 6, fontStyle: 'italic' }}>
+                      * Tautan akan ditampilkan di dalam aplikasi tanpa membuka browser luar.
+                    </Text>
+                  </View>
                 </View>
 
                 {/* Lembar Soal CBT jika kuis */}
@@ -2442,15 +3017,26 @@ export default function AssignmentScreen({ route, navigation }: any) {
                   </View>
                 ) : (
                   <>
-                    <Text style={[styles.inputLabel, { marginTop: 14 }]}>Catatan / Jawaban Teks Siswa:</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 4 }}>
+                      <Text style={styles.inputLabel}>
+                        {selectedAssignment?.jenis_tugas === 'esai' ? 'Lembar Esai Siswa:' : 'Catatan / Jawaban Teks Siswa:'}
+                      </Text>
+                      {selectedAssignment?.jenis_tugas === 'esai' && (
+                        <View style={{ backgroundColor: '#F0F9FF', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#BAE6FD' }}>
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#0284C7' }}>
+                            {submissionText.trim().split(/\s+/).filter(Boolean).length} Kata
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <TextInput
                       value={submissionText}
                       onChangeText={setSubmissionText}
                       multiline
-                      numberOfLines={4}
-                      placeholder="Tuliskan jawaban atau keterangan pengerjaan tugas Anda di sini..."
+                      numberOfLines={selectedAssignment?.jenis_tugas === 'esai' ? 8 : 4}
+                      placeholder={selectedAssignment?.jenis_tugas === 'esai' ? 'Tuliskan esai lengkap Anda di sini...' : 'Tuliskan jawaban atau keterangan pengerjaan tugas Anda di sini...'}
                       placeholderTextColor="#94A3B8"
-                      style={styles.modalTextInput}
+                      style={[styles.modalTextInput, selectedAssignment?.jenis_tugas === 'esai' && { minHeight: 140, textAlignVertical: 'top' }]}
                     />
                   </>
                 )}
@@ -2847,6 +3433,14 @@ export default function AssignmentScreen({ route, navigation }: any) {
             onClose={() => setFeedbackModal(null)}
           />
         )}
+
+        {/* IN-APP EMBED VIEWER MODAL (TIDAK KELUAR DARI APLIKASI) */}
+        <InAppEmbedModal
+          visible={embedModalVisible}
+          url={embedTargetUrl}
+          title={embedTargetTitle}
+          onClose={() => setEmbedModalVisible(false)}
+        />
       </View>
     </View>
   );
@@ -2906,6 +3500,45 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#065F46',
+  },
+  childChipsTrack: {
+    marginBottom: 12,
+  },
+  childChipsContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  childChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 9999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  childChipActive: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+    shadowOpacity: 0.15,
+    elevation: 2,
+  },
+  childChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  childChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   singleHeroCardContainer: {
     width: '100%',
@@ -3172,9 +3805,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sectionHeaderLeft: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginRight: 8,
   },
   sectionIconBadge: {
     width: 28,
@@ -3186,52 +3821,564 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#86EFAC',
   },
+  sectionIconBadgeModern: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
   sectionTitleBold: {
-    fontSize: 15,
+    flex: 1,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#0F172A',
     letterSpacing: -0.3,
   },
-  semesterDropdownPill: {
+  sectionSubtitleMuted: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  semesterDropdownPillModern: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1.5,
-    borderColor: '#86EFAC',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 5,
     shadowColor: '#059669',
     shadowOpacity: 0.08,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
   },
-  semesterDropdownText: {
+  semesterDropdownTextModern: {
     fontSize: 11,
     fontWeight: '700',
     color: '#065F46',
   },
 
-  // 4 KPI Horizontal Row — Premium Cards
-  kpiRowContainer: {
-    flexDirection: 'row',
-    gap: 7,
-    marginTop: 4,
+  // ── Child Switcher Modern (Single Card Mode) ──
+  childSwitcherContainer: {
+    marginBottom: 10,
   },
-  kpiPillCard: {
+  childSwitcherScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  childSwitcherPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+  },
+  childSwitcherPillActive: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+    elevation: 2,
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  childSwitcherText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  childSwitcherTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  childSwitcherDotActive: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FFFFFF',
+    marginLeft: 2,
+  },
+
+  // ── Ringkasan Penugasan Header & Semester Bar Dipindah ke Bawah ──
+  summaryHeaderContainer: {
+    marginBottom: 12,
+  },
+  summaryTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  summarySubtitleText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  semesterRowWrapper: {
+    marginTop: 2,
+  },
+  semesterBarContainerModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    shadowColor: '#059669',
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  semesterBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    flex: 1,
+  },
+  semesterIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  semesterBarLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  semesterBarValue: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginTop: 1,
+  },
+  semesterBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  semesterBarChangeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+
+  // ── TailGrids Emerald Containers (Harmonized SIMSIT Design System) ──
+  emeraldSummaryContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 14,
+    shadowColor: '#059669',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    marginBottom: 16,
+  },
+  emeraldDatatableContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  emeraldDatatableHeader: {
+    backgroundColor: '#F0FDF4',
+    borderBottomWidth: 1.2,
+    borderBottomColor: '#D1FAE5',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  emeraldDatatableHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  emeraldDatatableIconSquircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  emeraldDatatableTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  emeraldDatatableSubtitle: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  emeraldDatatableCountBadge: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  emeraldDatatableCountText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  datatableTabWrapper: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  datatableSearchWrapper: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  datatableChipsWrapper: {
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  datatableContentWrapper: {
+    padding: 12,
+    backgroundColor: '#F9FBF9',
+  },
+
+  // ── 4 KPI Cards Modern Selaras TU (Emerald, Amber, Rose, Purple) ──
+  kpiContainer: {
+    marginBottom: 4,
+    gap: 8,
+  },
+  kpiRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  kpiCard: {
     flex: 1,
     borderRadius: 16,
+    borderWidth: 1.2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+    overflow: 'hidden',
+  },
+  kpiCardGradient: {
     padding: 10,
-    borderWidth: 1.5,
+    borderRadius: 15,
+  },
+  kpiCardEmerald: {
+    borderColor: '#A7F3D0',
+  },
+  kpiCardAmber: {
+    borderColor: '#FDE68A',
+  },
+  kpiCardRose: {
+    borderColor: '#FECDD3',
+  },
+  kpiCardPurple: {
+    borderColor: '#E9D5FF',
+  },
+  kpiCardActiveRing: {
+    borderWidth: 2,
+    borderColor: '#059669',
+  },
+  kpiCardActiveRingEmerald: {
+    borderWidth: 2,
+    borderColor: '#059669',
+    shadowColor: '#059669',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  kpiCardActiveRingAmber: {
+    borderWidth: 2,
+    borderColor: '#D97706',
+    shadowColor: '#D97706',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  kpiCardActiveRingRose: {
+    borderWidth: 2,
+    borderColor: '#E11D48',
+    shadowColor: '#E11D48',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  kpiCardActiveRingPurple: {
+    borderWidth: 2,
+    borderColor: '#7C3AED',
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  kpiIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kpiTop: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
-    minHeight: 76,
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
+  },
+  kpiValue: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  kpiSub: {
+    fontSize: 9.5,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+
+  // ── Body Tab Bar Switcher Persis TU ──
+  bodyTabBarContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 6,
+  },
+  bodyTabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  bodyTabButtonActive: {
+    backgroundColor: '#059669',
+    elevation: 2,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+  },
+  bodyTabButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  bodyTabButtonTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  // ── Filter Section Persis TU ──
+  filterSection: {
+    paddingHorizontal: 0,
+    paddingTop: 2,
+    paddingBottom: 4,
+    backgroundColor: 'transparent',
+    marginBottom: 12,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 0,
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#0F172A',
+    paddingVertical: 0,
+  },
+  filterChipsScrollView: {
+    flexDirection: 'row',
+  },
+  filterChipsScrollContent: {
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  filterChipReset: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#FFE4E6',
+    borderWidth: 1,
+    borderColor: '#FDA4AF',
+  },
+  filterChipResetText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#E11D48',
+  },
+
+  // ── Card Header Modern Selaras TU ──
+  cardHeaderFlexModern: {
+    padding: 14,
+    paddingBottom: 6,
+  },
+  cardBadgesRowModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  subjectPillBadgeModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  subjectPillTextModern: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  cardTaskTitleModern: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  cardTaskDescModern: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 17,
+    marginBottom: 4,
+  },
+
+  // 2x2 Master KPI Grid (Lega, Bergradasi & Interaktif)
+  kpiGridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  kpiGridCardTouchable: {
+    width: (SCREEN_WIDTH - 32 - 10) / 2,
+    borderRadius: 18,
+    overflow: 'hidden',
     shadowColor: '#0F172A',
     shadowOpacity: 0.07,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+  },
+  kpiGridCardTouchableActiveEmerald: {
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  kpiGridCardTouchableActiveAmber: {
+    shadowColor: '#D97706',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  kpiGridCardTouchableActiveRose: {
+    shadowColor: '#E11D48',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  kpiGridCardTouchableActiveViolet: {
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  kpiGridCardGradient: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    borderRadius: 18,
+    minHeight: 82,
+    justifyContent: 'space-between',
   },
   kpiCardTopRow: {
     flexDirection: 'row',
@@ -3251,33 +4398,61 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
   },
+  kpiCardValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 3,
+  },
   kpiCardNumber: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
-    letterSpacing: -0.5,
+    letterSpacing: -0.4,
+  },
+  kpiCardUnit: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  kpiCardBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
   },
   kpiCardLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
-    lineHeight: 11,
+    lineHeight: 13,
     letterSpacing: 0.1,
   },
+  kpiActiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
 
-  // Filter Tabs & Search — Modern
+  // Filter Tabs & Search — Modern Vibrant
   filterSectionBlock: {
-    marginBottom: 18,
+    marginBottom: 16,
     gap: 10,
   },
   filterPillsScroll: {
     gap: 8,
     paddingVertical: 3,
   },
-  filterCapsuleBtn: {
-    paddingHorizontal: 14,
+  filterCapsuleBtnModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1.2,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  filterCapsuleBtnInactive: {
+    backgroundColor: '#FFFFFF',
     borderColor: '#E2E8F0',
     shadowColor: '#000000',
     shadowOpacity: 0.04,
@@ -3285,22 +4460,20 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
   },
-  filterCapsuleBtnActive: {
-    backgroundColor: '#059669',
-    borderColor: '#059669',
-    shadowColor: '#059669',
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+  filterCapsuleTextModern: {
+    fontSize: 11.5,
+    marginRight: 6,
   },
-  filterCapsuleText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
+  filterCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    minWidth: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  filterCapsuleTextActive: {
-    color: '#FFFFFF',
+  filterCountBadgeText: {
+    fontSize: 10,
     fontWeight: '800',
   },
   searchAndFilterRow: {
@@ -3308,21 +4481,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  searchBarContainer: {
+  searchBarContainerModern: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
     paddingHorizontal: 12,
-    height: 42,
+    height: 44,
     shadowColor: '#000000',
     shadowOpacity: 0.04,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
+  },
+  searchBarContainerFocused: {
+    borderColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
   },
   searchInputField: {
     flex: 1,
@@ -3330,35 +4509,54 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     paddingVertical: 0,
   },
-  filterActionButton: {
+  filterActionButtonModern: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 14,
-    height: 42,
-    gap: 5,
+    height: 44,
+    gap: 4,
     shadowColor: '#000000',
     shadowOpacity: 0.04,
-    shadowRadius: 3,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
-  filterActionButtonText: {
+  filterActionButtonActiveModern: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+    shadowColor: '#059669',
+    shadowOpacity: 0.15,
+  },
+  filterActionButtonTextModern: {
     fontSize: 12.5,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#334155',
+  },
+  filterActionButtonTextActiveModern: {
+    color: '#059669',
+    fontWeight: '800',
+  },
+  filterDotBadgeActiveModern: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#059669',
+    marginLeft: 2,
   },
   sortPillButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 44,
     gap: 4,
     shadowColor: '#000000',
     shadowOpacity: 0.04,
@@ -3417,36 +4615,40 @@ const styles = StyleSheet.create({
   // Premium Assignment Card
   assignmentCardModern: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 0,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    marginBottom: 14,
+    marginBottom: 16,
     shadowColor: '#0F172A',
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.08,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
     overflow: 'hidden',
   },
+  assignmentCardGradient: {
+    padding: 0,
+    borderRadius: 19,
+  },
   cardHeaderFlex: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     padding: 14,
-    paddingBottom: 10,
+    paddingBottom: 8,
   },
   subjectIconBoxLarge: {
-    width: 50,
-    height: 50,
-    borderRadius: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
     shadowColor: '#000000',
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.08,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
+    elevation: 2,
   },
   cardInfoCol: {
     flex: 1,
@@ -3485,17 +4687,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   cardTaskTitle: {
-    fontSize: 13.5,
+    fontSize: 15,
     fontWeight: '800',
     color: '#0F172A',
-    lineHeight: 19,
+    lineHeight: 21,
     marginBottom: 4,
     letterSpacing: -0.2,
   },
   cardTaskDesc: {
-    fontSize: 11.5,
+    fontSize: 12,
     color: '#64748B',
-    lineHeight: 16,
+    lineHeight: 17,
     marginBottom: 2,
   },
 
@@ -3503,36 +4705,45 @@ const styles = StyleSheet.create({
   metadataContainerBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    borderRadius: 0,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
     paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#D1FAE5',
-    marginBottom: 0,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginHorizontal: 14,
+    marginTop: 4,
+    marginBottom: 10,
   },
   metaColumnItem: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
+  metaIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
   metaLabelText: {
-    fontSize: 9,
-    color: '#059669',
-    fontWeight: '600',
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
   metaValueText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#065F46',
+    color: '#1E293B',
   },
   metaVerticalDivider: {
     width: 1,
-    height: 26,
-    backgroundColor: '#A7F3D0',
+    height: 24,
+    backgroundColor: '#CBD5E1',
     marginHorizontal: 8,
   },
 
@@ -3542,6 +4753,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: '#BBF7D0',
     padding: 12,
+    paddingHorizontal: 14,
     gap: 8,
   },
   gradedTopRow: {
@@ -3596,29 +4808,36 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // Pending Action Row — Modern
-  pendingActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    paddingTop: 10,
+  // Pending Action Container — Full Width Banner & Ergonomic Buttons
+  pendingActionContainer: {
     backgroundColor: '#FFFBEB',
     borderTopWidth: 1,
     borderTopColor: '#FDE68A',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    gap: 8,
   },
-  pendingAlertBoxModern: {
-    flex: 1,
+  pendingAlertBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
   },
-  pendingAlertTextModern: {
-    fontSize: 10.5,
+  pendingAlertTextFull: {
+    fontSize: 11,
     color: '#92400E',
-    fontWeight: '600',
+    fontWeight: '700',
     flex: 1,
-    lineHeight: 15,
+  },
+  pendingButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   kumpulkanBtnModern: {
     flexDirection: 'row',
@@ -3636,7 +4855,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   kumpulkanBtnTextModern: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#FFFFFF',
   },
@@ -4125,36 +5344,80 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   detailOutlineBtn: {
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 38,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+    gap: 4,
+    shadowColor: '#059669',
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   detailOutlineBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#065F46',
   },
   groupOutlineBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    justifyContent: 'center',
+    height: 38,
+    paddingHorizontal: 11,
+    borderRadius: 12,
+    borderWidth: 1.2,
     borderColor: '#BAE6FD',
     backgroundColor: '#F0F9FF',
     gap: 4,
+    shadowColor: '#0284C7',
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   groupOutlineBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: '#0284C7',
   },
 
   /* ── Modal 1: Filter Sheet ── */
+  modalHeaderModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  modalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  modalHeaderIconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    shadowColor: '#059669',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
   filterSectionHeading: {
     fontSize: 13,
     fontWeight: '800',
@@ -4167,12 +5430,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   modalFilterPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   modalFilterPillActive: {
     borderColor: '#059669',
@@ -4187,6 +5457,26 @@ const styles = StyleSheet.create({
     color: '#059669',
     fontWeight: '800',
   },
+  modalFooterModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    gap: 10,
+  },
+  modalResetBtnModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+  },
   modalResetBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -4199,6 +5489,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#475569',
+  },
+  modalApplyBtnContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  modalApplyBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
   modalApplyBtn: {
     paddingHorizontal: 18,

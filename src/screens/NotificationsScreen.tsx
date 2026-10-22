@@ -26,6 +26,7 @@ export default function NotificationsScreen({ navigation }: any) {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
+  const [filterMode, setFilterMode] = useState<'unread' | 'all'>('unread');
   const [feedbackModal, setFeedbackModal] = useState<{
     visible: boolean;
     type?: FeedbackType;
@@ -65,9 +66,7 @@ export default function NotificationsScreen({ navigation }: any) {
         void offlineCache.set(cacheKey, list);
       }
     } catch {
-      // Fetch daftar gagal (mis. timeout tunnel): jangan biarkan dot merah basi.
-      // Validasi ulang badge langsung dari endpoint count server (best-effort;
-      // kalau ikut gagal berarti offline -> badge dibiarkan apa adanya).
+      // Fetch daftar gagal: validasi ulang badge langsung dari endpoint count server
       try {
         const countRes: any = await mobileApiService.getUnreadNotificationCount();
         const count =
@@ -83,8 +82,7 @@ export default function NotificationsScreen({ navigation }: any) {
     }
   }, [userId]);
 
-  // Muat ulang setiap kali tab dibuka (bottom-tab tidak me-remount screen),
-  // sekaligus merekonsiliasi dot badge dengan isi daftar terkini.
+  // Muat ulang setiap kali tab dibuka (bottom-tab tidak me-remount screen)
   useFocusEffect(
     useCallback(() => {
       void load();
@@ -104,13 +102,14 @@ export default function NotificationsScreen({ navigation }: any) {
       } catch {}
 
       // Update all items locally to read
-      setItems((prev) =>
-        prev.map((item) => ({
-          ...item,
-          read_at: item.read_at || new Date().toISOString(),
-          is_read: true,
-        }))
-      );
+      const updated = items.map((item) => ({
+        ...item,
+        read_at: item.read_at || new Date().toISOString(),
+        is_read: true,
+      }));
+      setItems(updated);
+      const cacheKey = offlineCache.buildKey('notifications', userId);
+      void offlineCache.set(cacheKey, updated);
       useNotificationBadgeStore.getState().clearUnread();
     } catch (err) {
       console.log('Error marking all notifications as read:', err);
@@ -125,24 +124,36 @@ export default function NotificationsScreen({ navigation }: any) {
     }
   };
 
-  const handleItemPress = async (item: any) => {
-    // 1. Mark this specific item as read if unread
-    if (!item.read_at && !item.is_read) {
-      try {
-        await mobileApiService.markNotificationRead(item.id);
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === item.id
-              ? { ...i, read_at: new Date().toISOString(), is_read: true }
-              : i
-          )
-        );
-        const cur = useNotificationBadgeStore.getState().unreadNotificationCount;
-        useNotificationBadgeStore.getState().setUnreadNotificationCount(Math.max(0, cur - 1));
-      } catch (err) {
-        console.log('Error marking item as read:', err);
-      }
+  const markItemAsReadLocallyAndRemote = async (item: any) => {
+    if (item.read_at || item.is_read) return;
+    try {
+      await mobileApiService.markNotificationRead(item.id);
+    } catch (err) {
+      console.log('Error marking item as read on backend:', err);
     }
+
+    setItems((prev) => {
+      const updated = prev.map((i) =>
+        i.id === item.id
+          ? { ...i, read_at: new Date().toISOString(), is_read: true }
+          : i
+      );
+      const cacheKey = offlineCache.buildKey('notifications', userId);
+      void offlineCache.set(cacheKey, updated);
+      return updated;
+    });
+
+    const cur = useNotificationBadgeStore.getState().unreadNotificationCount;
+    useNotificationBadgeStore.getState().setUnreadNotificationCount(Math.max(0, cur - 1));
+  };
+
+  const handleDismissItem = async (item: any) => {
+    await markItemAsReadLocallyAndRemote(item);
+  };
+
+  const handleItemPress = async (item: any) => {
+    // 1. Mark this specific item as read (sehingga otomatis hilang jika di tab Belum Dibaca)
+    await markItemAsReadLocallyAndRemote(item);
 
     // 2. If it's a chat notification, navigate directly to Chat Guru screen
     const isChat =
@@ -175,6 +186,10 @@ export default function NotificationsScreen({ navigation }: any) {
     return 'bell-outline';
   };
 
+  const displayedItems = filterMode === 'unread'
+    ? items.filter((item) => !item.read_at && !item.is_read)
+    : items;
+
   return (
     <ScrollView
       style={styles.screen}
@@ -195,7 +210,7 @@ export default function NotificationsScreen({ navigation }: any) {
           <Text style={styles.title}>Notifikasi</Text>
           <Text style={styles.subtitle}>
             {unreadCount > 0
-              ? `${unreadCount} notifikasi belum dibaca.`
+              ? `${unreadCount} notifikasi baru belum dibuka.`
               : 'Semua notifikasi telah dibaca.'}
           </Text>
         </View>
@@ -219,11 +234,56 @@ export default function NotificationsScreen({ navigation }: any) {
         )}
       </View>
 
+      {/* Filter Tabs: Belum Dibaca vs Semua */}
+      <View style={styles.tabFilterBar}>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setFilterMode('unread')}
+          style={[styles.tabFilterBtn, filterMode === 'unread' && styles.tabFilterBtnActive]}
+        >
+          <MaterialCommunityIcons
+            name="bell-ring-outline"
+            size={14}
+            color={filterMode === 'unread' ? '#FFFFFF' : '#059669'}
+          />
+          <Text style={[styles.tabFilterText, filterMode === 'unread' && styles.tabFilterTextActive]}>
+            Belum Dibaca
+          </Text>
+          {unreadCount > 0 && (
+            <View style={[styles.tabBadge, filterMode === 'unread' && styles.tabBadgeActive]}>
+              <Text style={[styles.tabBadgeText, filterMode === 'unread' && styles.tabBadgeTextActive]}>
+                {unreadCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setFilterMode('all')}
+          style={[styles.tabFilterBtn, filterMode === 'all' && styles.tabFilterBtnActive]}
+        >
+          <MaterialCommunityIcons
+            name="format-list-bulleted"
+            size={14}
+            color={filterMode === 'all' ? '#FFFFFF' : '#64748B'}
+          />
+          <Text style={[styles.tabFilterText, filterMode === 'all' && styles.tabFilterTextActive]}>
+            Semua
+          </Text>
+          <View style={[styles.tabBadge, filterMode === 'all' && styles.tabBadgeActive]}>
+            <Text style={[styles.tabBadgeText, filterMode === 'all' && styles.tabBadgeTextActive]}>
+              {items.length}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+
       {/* Notifications List */}
       {loading && !items.length ? (
         <ActivityIndicator color="#059669" style={styles.loader} />
-      ) : items.length ? (
-        items.map((item, index) => {
+      ) : displayedItems.length ? (
+        displayedItems.map((item, index) => {
           const isUnread = !item.read_at && !item.is_read;
           const isChat =
             item.type?.includes('chat') ||
@@ -277,22 +337,55 @@ export default function NotificationsScreen({ navigation }: any) {
                         : 'Hari ini'}
                     </Text>
 
-                    {isChat && (
-                      <View style={styles.chatBadge}>
-                        <MaterialCommunityIcons
-                          name="chat-outline"
-                          size={11}
-                          color="#059669"
-                        />
-                        <Text style={styles.chatBadgeText}>Buka Chat</Text>
-                      </View>
-                    )}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      {isChat && (
+                        <View style={styles.chatBadge}>
+                          <MaterialCommunityIcons
+                            name="chat-outline"
+                            size={11}
+                            color="#059669"
+                          />
+                          <Text style={styles.chatBadgeText}>Buka Chat</Text>
+                        </View>
+                      )}
+
+                      {/* Tombol Cepat Selesai/Tandai Dibaca agar langsung hilang */}
+                      {isUnread && (
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          onPress={() => void handleDismissItem(item)}
+                          style={styles.quickCheckBtn}
+                          accessibilityLabel="Tandai dibaca"
+                        >
+                          <MaterialCommunityIcons name="check" size={13} color="#059669" />
+                          <Text style={styles.quickCheckText}>Selesai</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
                 </View>
               </View>
             </TouchableOpacity>
           );
         })
+      ) : filterMode === 'unread' ? (
+        <View style={styles.allReadCard}>
+          <View style={styles.allReadIconCircle}>
+            <MaterialCommunityIcons name="check-decagram" size={34} color="#059669" />
+          </View>
+          <Text style={styles.allReadTitle}>Semua Notifikasi Telah Dibuka</Text>
+          <Text style={styles.allReadDesc}>
+            Alhamdulillah, seluruh notifikasi telah Anda lihat. Tidak ada pemberitahuan baru yang tertunda.
+          </Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setFilterMode('all')}
+            style={styles.allReadHistoryBtn}
+          >
+            <MaterialCommunityIcons name="history" size={16} color="#059669" />
+            <Text style={styles.allReadHistoryBtnText}>Lihat Riwayat Semua Notifikasi</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <EmptyStateCard
           icon="bell-sleep-outline"
@@ -472,5 +565,131 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#82908C',
     marginTop: 4,
+  },
+  tabFilterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+    backgroundColor: '#F1F5F9',
+    padding: 4,
+    borderRadius: 14,
+  },
+  tabFilterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    backgroundColor: 'transparent',
+  },
+  tabFilterBtnActive: {
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  tabFilterText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  tabFilterTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  tabBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+    backgroundColor: '#E2E8F0',
+  },
+  tabBadgeActive: {
+    backgroundColor: '#047857',
+  },
+  tabBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  tabBadgeTextActive: {
+    color: '#ECFDF5',
+  },
+  quickCheckBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  quickCheckText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  allReadCard: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    marginVertical: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  allReadIconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  allReadTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  allReadDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  allReadHistoryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+  },
+  allReadHistoryBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#059669',
   },
 });

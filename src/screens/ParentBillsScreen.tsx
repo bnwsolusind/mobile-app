@@ -12,6 +12,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Share,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -295,9 +296,42 @@ export default function ParentBillsScreen({ route, navigation }: any) {
             </View>
           </View>
 
+          {/* Virtual Account BSI Khusus Ananda */}
+          {paymentInfo?.student_va ? (
+            <View style={styles.vaContainer}>
+              <View style={styles.vaHeaderRow}>
+                <View style={styles.vaBadge}>
+                  <MaterialCommunityIcons name="bank" size={13} color="#047857" />
+                  <Text style={styles.vaBadgeText}>BSI VIRTUAL ACCOUNT</Text>
+                </View>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    Share.share({
+                      message: `Nomor Virtual Account BSI ${paymentInfo?.student_name || 'Ananda'}: ${paymentInfo.student_va}\nBank Syariah Indonesia (Kode: 451)`,
+                    });
+                  }}
+                  style={styles.vaShareBtn}
+                >
+                  <MaterialCommunityIcons name="share-variant-outline" size={13} color="#047857" />
+                  <Text style={styles.vaShareBtnText}>Bagikan VA</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.vaStudentName}>
+                Ananda: {paymentInfo?.student_name || 'Siswa'}
+              </Text>
+              <Text selectable style={styles.vaNumberText}>
+                {paymentInfo.student_va}
+              </Text>
+              <Text style={styles.vaHelperText}>
+                Pembayaran via BSI Mobile, ATM BSI, atau Transfer Antar Bank (Kode 451). Langsung terverifikasi otomatis.
+              </Text>
+            </View>
+          ) : null}
+
           {/* Info Rekening */}
           <View style={styles.rekeningBox}>
-            <MaterialCommunityIcons name="bank" size={18} color="#0E5C44" />
+            <MaterialCommunityIcons name="bank-outline" size={18} color="#0E5C44" />
             <Text style={styles.rekeningText}>
               {paymentInfo?.bank_name || 'Rekening Pembayaran'}:{' '}
               <Text style={{ fontWeight: '900' }}>{paymentInfo?.account_number || '-'}</Text>
@@ -461,6 +495,68 @@ const styles = StyleSheet.create({
   statBox: { flex: 1, borderRadius: 12, borderWidth: 1, padding: 8 },
   statLabel: { fontSize: 9, fontWeight: '700', color: '#64748B' },
   statVal: { fontSize: 11, fontWeight: '900', marginTop: 2 },
+  vaContainer: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#6EE7B7',
+    borderRadius: 14,
+    padding: 12,
+    gap: 4,
+  },
+  vaHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  vaBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  vaBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#047857',
+    letterSpacing: 0.5,
+  },
+  vaShareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  vaShareBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  vaStudentName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 2,
+  },
+  vaNumberText: {
+    fontSize: 16,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: '900',
+    color: '#065F46',
+    letterSpacing: 1,
+  },
+  vaHelperText: {
+    fontSize: 10,
+    color: '#059669',
+    marginTop: 2,
+  },
   rekeningBox: {
     flexDirection: 'row',
     alignItems: 'center',

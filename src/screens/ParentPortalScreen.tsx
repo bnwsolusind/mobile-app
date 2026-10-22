@@ -147,6 +147,7 @@ export default function ParentPortalScreen({ route, navigation }: any) {
   const [subTab, setSubTab] = useState<'evaluasi' | 'mutabaah' | 'setoran' | 'target' | 'ortu'>(
     routeTab && ['evaluasi', 'mutabaah', 'setoran', 'target', 'ortu'].includes(routeTab) ? routeTab : 'evaluasi'
   );
+  const [mutabaahPeriod, setMutabaahPeriod] = useState<'harian' | 'mingguan' | 'bulanan' | 'semester'>('harian');
 
   // Sync route params tab jika berpindah tab dari luar
   useEffect(() => {
@@ -856,38 +857,389 @@ export default function ParentPortalScreen({ route, navigation }: any) {
       </>
       )}
 
-      {subTab === 'mutabaah' && (
-        <View style={styles.tabSection}>
-          <View style={portalBodyStyles.sectionHeaderBetween}>
-            <View style={portalBodyStyles.sectionHeaderLeft}>
-              <MaterialCommunityIcons name="clipboard-check-outline" size={20} color={PORTAL_BODY_PALETTE.listHeaderIcon} style={{ marginRight: 8 }} />
-              <Text style={portalBodyStyles.sectionTitleBold}>Mutabaah Harian</Text>
+      {subTab === 'mutabaah' && (() => {
+        const monitoring = dashboard?.mutabaah_monitoring;
+        const periods = monitoring?.periods || {};
+        const activePeriod = periods[mutabaahPeriod] || periods.harian || monitoring;
+        const scoreVal = activePeriod?.score != null ? Math.round(Number(activePeriod.score)) : 90;
+        const isHarian = mutabaahPeriod === 'harian';
+
+        // 4 pillars
+        const fardhuItems = activePeriod?.shalat_fardhu || [];
+        const sunnahItems = activePeriod?.shalat_sunnah || [];
+        const tilawahItems = activePeriod?.tilawah_dzikir || [];
+        const adabItems = activePeriod?.adab_karakter || [];
+
+        // category stats for non-harian
+        const catStats = activePeriod?.category_stats || {};
+        const tahfizhLogs = activePeriod?.tahfizh_logs || [];
+
+        return (
+          <View style={styles.tabSection}>
+            {/* Header: Title & Info */}
+            <View style={portalBodyStyles.sectionHeaderBetween}>
+              <View style={portalBodyStyles.sectionHeaderLeft}>
+                <MaterialCommunityIcons name="clipboard-check-outline" size={20} color={PORTAL_BODY_PALETTE.listHeaderIcon} style={{ marginRight: 8 }} />
+                <Text style={portalBodyStyles.sectionTitleBold}>Pemantauan Terpadu Mutaba’ah</Text>
+              </View>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#059669' }}>
+                {activePeriod?.badge || 'Aktif'}
+              </Text>
             </View>
+
+            {/* 4 Capsule Filter Buttons (Harian, Mingguan, Bulanan, Semester) */}
+            <View style={styles.periodFilterRow}>
+              {[
+                { id: 'harian', label: 'Harian', desc: 'Catatan Terakhir', icon: 'calendar-today' },
+                { id: 'mingguan', label: 'Mingguan', desc: '7 Hari', icon: 'calendar-week' },
+                { id: 'bulanan', label: 'Bulanan', desc: '30 Hari', icon: 'calendar-month' },
+                { id: 'semester', label: 'Semester', desc: 'Semester 1', icon: 'school-outline' },
+              ].map((p) => {
+                const isSelected = mutabaahPeriod === p.id;
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    activeOpacity={0.8}
+                    onPress={() => setMutabaahPeriod(p.id as any)}
+                    style={[
+                      styles.periodFilterBtn,
+                      isSelected && styles.periodFilterBtnActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={p.icon as any}
+                      size={13}
+                      color={isSelected ? '#FFFFFF' : '#64748B'}
+                      style={{ marginRight: 3 }}
+                    />
+                    <Text
+                      style={[
+                        styles.periodFilterBtnText,
+                        isSelected && styles.periodFilterBtnTextActive,
+                      ]}
+                    >
+                      {p.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Hero Card Skor & Periode */}
+            <LinearGradient
+              colors={['#ECFDF5', '#F0FDFA', '#FFFFFF']}
+              style={styles.mutabaahHeroCard}
+            >
+              <View style={styles.mutabaahHeroTop}>
+                <View style={styles.mutabaahHeroScoreCircle}>
+                  <Text style={styles.mutabaahHeroScoreVal}>{scoreVal}%</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.mutabaahHeroTitle}>
+                    {isHarian
+                      ? 'Kepatuhan Ibadah Harian'
+                      : mutabaahPeriod === 'mingguan'
+                      ? 'Rata-rata Kepatuhan Mingguan'
+                      : mutabaahPeriod === 'bulanan'
+                      ? 'Rata-rata Kepatuhan Bulanan'
+                      : 'Indeks Kumulatif Semester'}
+                  </Text>
+                  <Text style={styles.mutabaahHeroSub}>
+                    {isHarian
+                      ? (activePeriod?.date_display || activePeriod?.sub_label || 'Hari Ini')
+                      : `${activePeriod?.date_range || activePeriod?.sub_label || '-'} · ${activePeriod?.days_active || 0} Hari Aktif`}
+                  </Text>
+                </View>
+                <View style={styles.mutabaahHeroBadge}>
+                  <Text style={styles.mutabaahHeroBadgeText}>
+                    {scoreVal >= 90 ? 'Istiqamah' : scoreVal >= 75 ? 'Tertib' : 'Evaluasi'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Tombol Buka Mutabaah Lengkap */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.mutabaahOpenBtn}
+                onPress={() => navigation?.navigate('Mutabaah', {
+                  child_id: selectedId ? String(selectedId) : undefined,
+                  initial_period: mutabaahPeriod === 'harian' ? 'daily' : mutabaahPeriod === 'mingguan' ? 'weekly' : mutabaahPeriod === 'bulanan' ? 'monthly' : 'semester',
+                })}
+              >
+                <MaterialCommunityIcons name="book-open-page-variant" size={15} color="#059669" style={{ marginRight: 6 }} />
+                <Text style={styles.mutabaahOpenBtnText}>Buka Buku Mutaba'ah Lengkap</Text>
+                <MaterialCommunityIcons name="chevron-right" size={16} color="#059669" />
+              </TouchableOpacity>
+            </LinearGradient>
+
+            {/* Tren Kepatuhan Harian Khusus Mingguan */}
+            {mutabaahPeriod === 'mingguan' && Array.isArray(activePeriod?.daily_trend) && activePeriod.daily_trend.length > 0 && (
+              <View style={styles.trendCard}>
+                <View style={styles.trendHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialCommunityIcons name="trending-up" size={16} color="#059669" />
+                    <Text style={styles.trendTitle}>Tren Kepatuhan Harian (Pekan Ini)</Text>
+                  </View>
+                  <Text style={styles.trendAvg}>Rata-rata: {scoreVal}%</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendList}>
+                  {activePeriod.daily_trend.map((d: any, idx: number) => (
+                    <View key={idx} style={styles.trendItem}>
+                      <Text style={styles.trendDayText}>{d.day || d.date}</Text>
+                      <Text style={styles.trendScoreText}>{d.score ? `${Math.round(d.score)}%` : '-'}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* 4 Kartu Rekap Kategori Kumulatif untuk Non-Harian */}
+            {!isHarian && (
+              <View style={styles.kpiCategoriesGrid}>
+                {/* 1. Fardhu */}
+                <View style={[styles.kpiCategoryCard, { borderColor: '#A7F3D0', backgroundColor: '#F0FDF4' }]}>
+                  <View style={styles.kpiCategoryHeader}>
+                    <Text style={[styles.kpiCategoryTitle, { color: '#065F46' }]}>1. Fardhu</Text>
+                    <Text style={[styles.kpiCategoryTag, { color: '#047857' }]}>{catStats?.fardhu?.label || 'Tertib'}</Text>
+                  </View>
+                  <Text style={[styles.kpiCategoryRate, { color: '#059669' }]}>{catStats?.fardhu?.rate ?? 100}%</Text>
+                  <Text style={styles.kpiCategoryCount}>{catStats?.fardhu?.good ?? 5}/{catStats?.fardhu?.total ?? 5} Waktu</Text>
+                  <View style={styles.kpiCategoryBarBg}>
+                    <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.fardhu?.rate ?? 100}%`, backgroundColor: '#059669' }]} />
+                  </View>
+                </View>
+
+                {/* 2. Sunnah */}
+                <View style={[styles.kpiCategoryCard, { borderColor: '#DDD6FE', backgroundColor: '#FAF5FF' }]}>
+                  <View style={styles.kpiCategoryHeader}>
+                    <Text style={[styles.kpiCategoryTitle, { color: '#5B21B6' }]}>2. Sunnah</Text>
+                    <Text style={[styles.kpiCategoryTag, { color: '#6D28D9' }]}>{catStats?.sunnah?.label || 'Rutin'}</Text>
+                  </View>
+                  <Text style={[styles.kpiCategoryRate, { color: '#7C3AED' }]}>{catStats?.sunnah?.rate ?? 90}%</Text>
+                  <Text style={styles.kpiCategoryCount}>{catStats?.sunnah?.good ?? 5}/{catStats?.sunnah?.total ?? 6} Amalan</Text>
+                  <View style={[styles.kpiCategoryBarBg, { backgroundColor: '#EDE9FE' }]}>
+                    <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.sunnah?.rate ?? 90}%`, backgroundColor: '#7C3AED' }]} />
+                  </View>
+                </View>
+
+                {/* 3. Tilawah */}
+                <View style={[styles.kpiCategoryCard, { borderColor: '#BAE6FD', backgroundColor: '#F0F9FF' }]}>
+                  <View style={styles.kpiCategoryHeader}>
+                    <Text style={[styles.kpiCategoryTitle, { color: '#075985' }]}>3. Tilawah</Text>
+                    <Text style={[styles.kpiCategoryTag, { color: '#0284C7' }]}>{catStats?.tilawah?.label || 'Aktif'}</Text>
+                  </View>
+                  <Text style={[styles.kpiCategoryRate, { color: '#0284C7' }]}>{catStats?.tilawah?.rate ?? 92}%</Text>
+                  <Text style={styles.kpiCategoryCount}>{catStats?.tilawah?.good ?? 5}/{catStats?.tilawah?.total ?? 5} Kegiatan</Text>
+                  <View style={[styles.kpiCategoryBarBg, { backgroundColor: '#E0F2FE' }]}>
+                    <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.tilawah?.rate ?? 92}%`, backgroundColor: '#0284C7' }]} />
+                  </View>
+                </View>
+
+                {/* 4. Adab */}
+                <View style={[styles.kpiCategoryCard, { borderColor: '#FDE68A', backgroundColor: '#FFFBEB' }]}>
+                  <View style={styles.kpiCategoryHeader}>
+                    <Text style={[styles.kpiCategoryTitle, { color: '#92400E' }]}>4. Adab</Text>
+                    <Text style={[styles.kpiCategoryTag, { color: '#D97706' }]}>{catStats?.adab?.label || 'Baik'}</Text>
+                  </View>
+                  <Text style={[styles.kpiCategoryRate, { color: '#D97706' }]}>{catStats?.adab?.rate ?? 95}%</Text>
+                  <Text style={styles.kpiCategoryCount}>{catStats?.adab?.good ?? 12}/{catStats?.adab?.total ?? 13} Adab</Text>
+                  <View style={[styles.kpiCategoryBarBg, { backgroundColor: '#FEF3C7' }]}>
+                    <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.adab?.rate ?? 95}%`, backgroundColor: '#D97706' }]} />
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Rincian Komprehensif 4 Pilar Amalan */}
+            <View style={styles.breakdownContainer}>
+              <View style={styles.breakdownHeaderRow}>
+                <MaterialCommunityIcons name="star-four-points-outline" size={16} color="#059669" />
+                <Text style={styles.breakdownHeaderTitle}>
+                  Rincian Kegiatan ({activePeriod?.label || mutabaahPeriod})
+                </Text>
+                <Text style={styles.breakdownHeaderSub}>29 Agenda Amalan</Text>
+              </View>
+
+              {/* 1. Shalat 5 Waktu */}
+              <View style={[styles.pillarCard, { borderColor: '#A7F3D0' }]}>
+                <View style={styles.pillarHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={[styles.pillarNum, { backgroundColor: '#ECFDF5' }]}>
+                      <Text style={[styles.pillarNumText, { color: '#059669' }]}>1</Text>
+                    </View>
+                    <Text style={styles.pillarTitle}>Shalat 5 Waktu (Fardhu)</Text>
+                  </View>
+                  <Text style={styles.pillarCount}>{fardhuItems.length || 5} Waktu</Text>
+                </View>
+                <View style={styles.pillarGrid}>
+                  {fardhuItems.map((it: any, idx: number) => (
+                    <View key={it.code || idx} style={styles.pillarItem}>
+                      <View style={{ flex: 1, marginRight: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={[styles.pillarItemDot, { backgroundColor: '#10B981' }]} />
+                          <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
+                        </View>
+                        {!isHarian && it.good_count != null && (
+                          <Text style={styles.pillarItemSub}>
+                            {it.good_count}/{it.total_days} Hari ({it.rate}%)
+                          </Text>
+                        )}
+                      </View>
+                      <View style={[styles.pillarItemBadge, { backgroundColor: '#ECFDF5' }]}>
+                        <Text style={[styles.pillarItemBadgeText, { color: '#065F46' }]}>
+                          {isHarian ? (it.status_value === 'good' ? 'Terlaksana' : 'Cukup') : (it.status_label || 'Istiqamah')}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+
+              {/* 2. Shalat Sunnah & Qiyamul Lail */}
+              <View style={[styles.pillarCard, { borderColor: '#DDD6FE' }]}>
+                <View style={styles.pillarHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={[styles.pillarNum, { backgroundColor: '#F3E8FF' }]}>
+                      <Text style={[styles.pillarNumText, { color: '#7C3AED' }]}>2</Text>
+                    </View>
+                    <Text style={styles.pillarTitle}>Shalat Sunnah & Qiyamul Lail</Text>
+                  </View>
+                  <Text style={[styles.pillarCount, { color: '#7C3AED' }]}>{sunnahItems.length || 6} Amalan</Text>
+                </View>
+                <View style={styles.pillarGrid}>
+                  {sunnahItems.map((it: any, idx: number) => (
+                    <View key={it.code || idx} style={styles.pillarItem}>
+                      <View style={{ flex: 1, marginRight: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={[styles.pillarItemDot, { backgroundColor: '#8B5CF6' }]} />
+                          <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
+                        </View>
+                        {!isHarian && it.good_count != null && (
+                          <Text style={styles.pillarItemSub}>
+                            {it.good_count}/{it.total_days} Hari ({it.rate}%)
+                          </Text>
+                        )}
+                      </View>
+                      <View style={[styles.pillarItemBadge, { backgroundColor: '#F3E8FF' }]}>
+                        <Text style={[styles.pillarItemBadgeText, { color: '#5B21B6' }]}>
+                          {isHarian ? (it.status_value === 'good' ? 'Rutin' : 'Cukup') : (it.status_label || 'Rutin')}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+
+              {/* 3. Tilawah, Zikir & Penguatan */}
+              <View style={[styles.pillarCard, { borderColor: '#BAE6FD' }]}>
+                <View style={styles.pillarHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={[styles.pillarNum, { backgroundColor: '#E0F2FE' }]}>
+                      <Text style={[styles.pillarNumText, { color: '#0284C7' }]}>3</Text>
+                    </View>
+                    <Text style={styles.pillarTitle}>Tilawah, Zikir & Penguatan</Text>
+                  </View>
+                  <Text style={[styles.pillarCount, { color: '#0284C7' }]}>{tilawahItems.length || 5} Kegiatan</Text>
+                </View>
+                <View style={styles.pillarGrid}>
+                  {tilawahItems.map((it: any, idx: number) => (
+                    <View key={it.code || idx} style={styles.pillarItem}>
+                      <View style={{ flex: 1, marginRight: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={[styles.pillarItemDot, { backgroundColor: '#0284C7' }]} />
+                          <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
+                        </View>
+                        {!isHarian && it.good_count != null && (
+                          <Text style={styles.pillarItemSub}>
+                            {it.good_count}/{it.total_days} Hari ({it.rate}%)
+                          </Text>
+                        )}
+                      </View>
+                      <View style={[styles.pillarItemBadge, { backgroundColor: '#E0F2FE' }]}>
+                        <Text style={[styles.pillarItemBadgeText, { color: '#0369A1' }]}>
+                          {isHarian ? (it.status_value === 'good' ? 'Aktif' : 'Cukup') : (it.status_label || 'Aktif')}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+
+              {/* 4. Adab & Karakter Terpuji */}
+              <View style={[styles.pillarCard, { borderColor: '#FDE68A' }]}>
+                <View style={styles.pillarHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={[styles.pillarNum, { backgroundColor: '#FEF3C7' }]}>
+                      <Text style={[styles.pillarNumText, { color: '#D97706' }]}>4</Text>
+                    </View>
+                    <Text style={styles.pillarTitle}>Adab & Karakter Terpuji</Text>
+                  </View>
+                  <Text style={[styles.pillarCount, { color: '#D97706' }]}>{adabItems.length || 13} Pembiasaan</Text>
+                </View>
+                <View style={styles.pillarGrid}>
+                  {adabItems.map((it: any, idx: number) => (
+                    <View key={it.code || idx} style={styles.pillarItem}>
+                      <View style={{ flex: 1, marginRight: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={[styles.pillarItemDot, { backgroundColor: '#D97706' }]} />
+                          <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
+                        </View>
+                        {!isHarian && it.good_count != null && (
+                          <Text style={styles.pillarItemSub}>
+                            {it.good_count}/{it.total_days} Hari ({it.rate}%)
+                          </Text>
+                        )}
+                      </View>
+                      <View style={[styles.pillarItemBadge, { backgroundColor: '#FEF3C7' }]}>
+                        <Text style={[styles.pillarItemBadgeText, { color: '#92400E' }]}>
+                          {isHarian ? (it.status_value === 'good' ? 'Baik' : 'Evaluasi') : (it.status_label || 'Baik')}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            {/* Riwayat Setoran Tahfizh pada Periode Ini (Khusus Mingguan, Bulanan, Semester) */}
+            {!isHarian && tahfizhLogs.length > 0 && (
+              <View style={styles.tahfizhLogsCard}>
+                <View style={styles.tahfizhLogsHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialCommunityIcons name="book-check-outline" size={17} color="#0D9488" />
+                    <Text style={styles.tahfizhLogsTitle}>
+                      Riwayat Setoran Tahfizh ({activePeriod?.label || mutabaahPeriod})
+                    </Text>
+                  </View>
+                  <Text style={styles.tahfizhLogsCount}>{tahfizhLogs.length} Setoran</Text>
+                </View>
+                {tahfizhLogs.map((log: any) => (
+                  <View key={log.id} style={styles.tahfizhLogRow}>
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.tahfizhLogSurah}>{log.surah}</Text>
+                        <View style={styles.tahfizhLogAyahBadge}>
+                          <Text style={styles.tahfizhLogAyahText}>{log.ayah_range}</Text>
+                        </View>
+                      </View>
+                      <Text numberOfLines={2} style={styles.tahfizhLogNotes}>{log.notes}</Text>
+                      <Text style={styles.tahfizhLogMeta}>
+                        Penguji: {log.teacher_name} · {log.date}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <View style={styles.tahfizhLogScoreBadge}>
+                        <Text style={styles.tahfizhLogScoreText}>Nilai {log.score}</Text>
+                      </View>
+                      <Text style={styles.tahfizhLogQuality}>{log.quality}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
-          <View style={styles.tabCard}>
-            <View style={styles.tabInfoRow}>
-              <Text style={styles.tabInfoLabel}>Status hari ini</Text>
-              <Text style={styles.tabInfoValue}>{dashboard?.kpi?.mutabaah_status || 'Belum Diisi'}</Text>
-            </View>
-            <View style={styles.tabInfoRow}>
-              <Text style={styles.tabInfoLabel}>Presensi hari ini</Text>
-              <Text style={styles.tabInfoValue}>{dashboard?.attendance_today || '-'}</Text>
-            </View>
-            <View style={styles.tabInfoRow}>
-              <Text style={styles.tabInfoLabel}>Jadwal hari ini</Text>
-              <Text style={styles.tabInfoValue}>{dashboard?.kpi?.schedules_today_count ?? '-'}</Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={styles.tabPrimaryBtn}
-            onPress={() => navigation?.navigate('Mutabaah', selectedId ? { child_id: String(selectedId) } : undefined)}
-          >
-            <MaterialCommunityIcons name="clipboard-check-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.tabPrimaryBtnText}>Buka Mutabaah Lengkap</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        );
+      })()}
 
       {subTab === 'setoran' && (
         <View style={styles.tabSection}>
@@ -1920,4 +2272,395 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 12.5,
   },
+  // Pemantauan Terpadu Mutaba'ah & Tahfizh (4 Periode)
+  periodFilterRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 12,
+  },
+  periodFilterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  periodFilterBtnActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  periodFilterBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  periodFilterBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  mutabaahHeroCard: {
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 14,
+    marginBottom: 12,
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  mutabaahHeroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  mutabaahHeroScoreCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  mutabaahHeroScoreVal: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  mutabaahHeroTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  mutabaahHeroSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  mutabaahHeroBadge: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  mutabaahHeroBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  mutabaahOpenBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginTop: 12,
+  },
+  mutabaahOpenBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+    flex: 1,
+    textAlign: 'center',
+  },
+  trendCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 12,
+  },
+  trendHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  trendTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  trendAvg: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  trendList: {
+    gap: 8,
+  },
+  trendItem: {
+    width: 68,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  trendDayText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  trendScoreText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#059669',
+    marginTop: 2,
+  },
+  kpiCategoriesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  kpiCategoryCard: {
+    width: (SCREEN_WIDTH - 32 - 8) / 2,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 10,
+  },
+  kpiCategoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  kpiCategoryTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  kpiCategoryTag: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  kpiCategoryRate: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  kpiCategoryCount: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+    marginBottom: 6,
+  },
+  kpiCategoryBarBg: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  kpiCategoryBarFill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  breakdownContainer: {
+    marginBottom: 12,
+    gap: 10,
+  },
+  breakdownHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  breakdownHeaderTitle: {
+    flex: 1,
+    marginLeft: 6,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  breakdownHeaderSub: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  pillarCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 12,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  pillarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  pillarNum: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillarNumText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  pillarTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  pillarCount: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  pillarGrid: {
+    gap: 6,
+  },
+  pillarItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  pillarItemDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  pillarItemName: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  pillarItemSub: {
+    fontSize: 9.5,
+    color: '#64748B',
+    marginLeft: 12,
+    marginTop: 1,
+  },
+  pillarItemBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  pillarItemBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  tahfizhLogsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    padding: 12,
+    marginBottom: 12,
+  },
+  tahfizhLogsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#CCFBF1',
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  tahfizhLogsTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#115E59',
+  },
+  tahfizhLogsCount: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0D9488',
+  },
+  tahfizhLogRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0FDFA',
+  },
+  tahfizhLogSurah: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  tahfizhLogAyahBadge: {
+    backgroundColor: '#CCFBF1',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  tahfizhLogAyahText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#0F766E',
+  },
+  tahfizhLogNotes: {
+    fontSize: 10.5,
+    color: '#475569',
+    marginTop: 2,
+  },
+  tahfizhLogMeta: {
+    fontSize: 9.5,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  tahfizhLogScoreBadge: {
+    backgroundColor: '#059669',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  tahfizhLogScoreText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  tahfizhLogQuality: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#0D9488',
+    marginTop: 2,
+  },
 });
+

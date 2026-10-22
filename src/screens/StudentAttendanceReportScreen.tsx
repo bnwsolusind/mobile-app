@@ -2003,11 +2003,13 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
                         </Text>
                       </View>
 
-                      {item.notes ? (
-                        <View style={s.detailItemRow}>
-                          <Text style={s.detailItemLabel}>Catatan:</Text>
-                          <Text style={[s.detailItemVal, { fontStyle: 'italic', color: '#475569' }]} numberOfLines={2}>
-                            "{item.notes}"
+                      {(item.notes || item.keterangan) ? (
+                        <View style={[s.detailItemRow, isLate ? { backgroundColor: '#FEF3C7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 } : null]}>
+                          <Text style={[s.detailItemLabel, isLate ? { color: '#B45309', fontWeight: 'bold' } : null]}>
+                            {isLate ? 'Alasan Terlambat:' : 'Catatan:'}
+                          </Text>
+                          <Text style={[s.detailItemVal, { fontStyle: 'italic', color: isLate ? '#92400E' : '#475569', fontWeight: isLate ? '600' : 'normal' }]} numberOfLines={2}>
+                            "{item.notes || item.keterangan}"
                           </Text>
                         </View>
                       ) : null}

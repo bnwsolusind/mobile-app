@@ -18,7 +18,17 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { mobileApiService } from '../services/mobileApiService';
 import { AuthUser, useAuthStore } from '../stores/authStore';
-import { roleLabel } from '../utils/roles';
+import {
+  isParentRole,
+  isStudentRole,
+  isAlumniRole,
+  isPrincipalRole,
+  isFoundationRole,
+  isSuperAdminRole,
+  isTuRole,
+  isTeacherRole,
+  roleLabel,
+} from '../utils/roles';
 import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../utils/profile';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 
@@ -49,41 +59,6 @@ interface MenuButtonItem {
   iconColor: string;
   iconBg: string;
 }
-
-const MENU_BUTTONS: MenuButtonItem[] = [
-  {
-    id: 'biodata',
-    title: 'Biodata Guru',
-    subtitle: 'Data profil & tugas',
-    icon: 'card-account-details-outline',
-    iconColor: '#059669',
-    iconBg: '#DCFCE7',
-  },
-  {
-    id: 'edit_profil',
-    title: 'Ubah Data',
-    subtitle: 'Edit biodata & kontak',
-    icon: 'account-edit-outline',
-    iconColor: '#D97706',
-    iconBg: '#FEF3C7',
-  },
-  {
-    id: 'keamanan',
-    title: 'Password & Email',
-    subtitle: 'Keamanan kata sandi',
-    icon: 'shield-key-outline',
-    iconColor: '#2563EB',
-    iconBg: '#EFF6FF',
-  },
-  {
-    id: 'sesi',
-    title: 'Sesi & Bantuan',
-    subtitle: 'Info akun & keluar',
-    icon: 'cellphone-lock',
-    iconColor: '#7C3AED',
-    iconBg: '#F5F3FF',
-  },
-];
 
 type InfoRowProps = {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
@@ -165,21 +140,280 @@ export default function ProfilScreen() {
   const [showNewPass, setShowNewPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
 
-  const isParent = roles.some(
-    (r) =>
-      r.toLowerCase().includes('parent') ||
-      r.toLowerCase().includes('orang tua') ||
-      r.toLowerCase().includes('wali')
-  );
+  const isParent = isParentRole(roles);
+  const isStudent = isStudentRole(roles);
+  const isAlumni = isAlumniRole(roles);
+  const isPrincipal = isPrincipalRole(roles);
+  const isFoundation = isFoundationRole(roles) || isSuperAdminRole(roles);
+  const isTu = isTuRole(roles);
+  const isTeacher = isTeacherRole(roles);
+  const isTeacherOrEmployee = !isStudent && !isParent && !isAlumni;
 
-  const isTeacherOrEmployee = !isParent || roles.some(
-    (r) =>
-      r.toLowerCase().includes('guru') ||
-      r.toLowerCase().includes('teacher') ||
-      r.toLowerCase().includes('ustadz') ||
-      r.toLowerCase().includes('pegawai') ||
-      r.toLowerCase().includes('admin')
-  );
+  const menuButtons: MenuButtonItem[] = useMemo(() => {
+    // 1. Role Orang Tua / Wali
+    if (isParent) {
+      return [
+        {
+          id: 'biodata',
+          title: 'Biodata & Santri',
+          subtitle: 'Data wali & ananda',
+          icon: 'account-child-outline',
+          iconColor: '#059669',
+          iconBg: '#DCFCE7',
+        },
+        {
+          id: 'edit_profil',
+          title: 'Ubah Data',
+          subtitle: 'Edit kontak & domisili',
+          icon: 'account-edit-outline',
+          iconColor: '#D97706',
+          iconBg: '#FEF3C7',
+        },
+        {
+          id: 'keamanan',
+          title: 'Password & Email',
+          subtitle: 'Keamanan kata sandi',
+          icon: 'shield-key-outline',
+          iconColor: '#2563EB',
+          iconBg: '#EFF6FF',
+        },
+        {
+          id: 'sesi',
+          title: 'Sesi & Bantuan',
+          subtitle: 'Info akun & keluar',
+          icon: 'cellphone-lock',
+          iconColor: '#7C3AED',
+          iconBg: '#F5F3FF',
+        },
+      ];
+    }
+
+    // 2. Role Siswa / Santri
+    if (isStudent) {
+      return [
+        {
+          id: 'biodata',
+          title: 'Biodata Siswa',
+          subtitle: 'Data santri & kelas',
+          icon: 'school-outline',
+          iconColor: '#059669',
+          iconBg: '#DCFCE7',
+        },
+        {
+          id: 'edit_profil',
+          title: 'Ubah Data',
+          subtitle: 'Edit kontak & domisili',
+          icon: 'account-edit-outline',
+          iconColor: '#D97706',
+          iconBg: '#FEF3C7',
+        },
+        {
+          id: 'keamanan',
+          title: 'Password & Email',
+          subtitle: 'Keamanan kata sandi',
+          icon: 'shield-key-outline',
+          iconColor: '#2563EB',
+          iconBg: '#EFF6FF',
+        },
+        {
+          id: 'sesi',
+          title: 'Sesi & Bantuan',
+          subtitle: 'Info akun & keluar',
+          icon: 'cellphone-lock',
+          iconColor: '#7C3AED',
+          iconBg: '#F5F3FF',
+        },
+      ];
+    }
+
+    // 3. Role Alumni
+    if (isAlumni) {
+      return [
+        {
+          id: 'biodata',
+          title: 'Biodata Alumni',
+          subtitle: 'Data kelulusan & kontak',
+          icon: 'account-school-outline',
+          iconColor: '#0D9488',
+          iconBg: '#E6FFFA',
+        },
+        {
+          id: 'edit_profil',
+          title: 'Ubah Data',
+          subtitle: 'Edit kontak & profesi',
+          icon: 'account-edit-outline',
+          iconColor: '#D97706',
+          iconBg: '#FEF3C7',
+        },
+        {
+          id: 'keamanan',
+          title: 'Password & Email',
+          subtitle: 'Keamanan kata sandi',
+          icon: 'shield-key-outline',
+          iconColor: '#2563EB',
+          iconBg: '#EFF6FF',
+        },
+        {
+          id: 'sesi',
+          title: 'Sesi & Bantuan',
+          subtitle: 'Info akun & keluar',
+          icon: 'cellphone-lock',
+          iconColor: '#7C3AED',
+          iconBg: '#F5F3FF',
+        },
+      ];
+    }
+
+    // 4. Role Yayasan / Super Admin / Divisi
+    if (isFoundation) {
+      return [
+        {
+          id: 'biodata',
+          title: 'Biodata Pimpinan',
+          subtitle: 'Informasi otoritas yayasan',
+          icon: 'shield-account-outline',
+          iconColor: '#059669',
+          iconBg: '#DCFCE7',
+        },
+        {
+          id: 'edit_profil',
+          title: 'Ubah Data',
+          subtitle: 'Edit biodata & kontak',
+          icon: 'account-edit-outline',
+          iconColor: '#D97706',
+          iconBg: '#FEF3C7',
+        },
+        {
+          id: 'keamanan',
+          title: 'Password & Email',
+          subtitle: 'Keamanan kata sandi',
+          icon: 'shield-key-outline',
+          iconColor: '#2563EB',
+          iconBg: '#EFF6FF',
+        },
+        {
+          id: 'sesi',
+          title: 'Sesi & Bantuan',
+          subtitle: 'Info akun & keluar',
+          icon: 'cellphone-lock',
+          iconColor: '#7C3AED',
+          iconBg: '#F5F3FF',
+        },
+      ];
+    }
+
+    // 5. Role Kepala Sekolah
+    if (isPrincipal) {
+      return [
+        {
+          id: 'biodata',
+          title: 'Biodata Kepala Sekolah',
+          subtitle: 'Pimpinan eksekutif unit',
+          icon: 'shield-check-outline',
+          iconColor: '#059669',
+          iconBg: '#DCFCE7',
+        },
+        {
+          id: 'edit_profil',
+          title: 'Ubah Data',
+          subtitle: 'Edit biodata & kontak',
+          icon: 'account-edit-outline',
+          iconColor: '#D97706',
+          iconBg: '#FEF3C7',
+        },
+        {
+          id: 'keamanan',
+          title: 'Password & Email',
+          subtitle: 'Keamanan kata sandi',
+          icon: 'shield-key-outline',
+          iconColor: '#2563EB',
+          iconBg: '#EFF6FF',
+        },
+        {
+          id: 'sesi',
+          title: 'Sesi & Bantuan',
+          subtitle: 'Info akun & keluar',
+          icon: 'cellphone-lock',
+          iconColor: '#7C3AED',
+          iconBg: '#F5F3FF',
+        },
+      ];
+    }
+
+    // 6. Role Tata Usaha
+    if (isTu) {
+      return [
+        {
+          id: 'biodata',
+          title: 'Biodata Pegawai',
+          subtitle: 'Data staf administrasi',
+          icon: 'card-account-details-outline',
+          iconColor: '#059669',
+          iconBg: '#DCFCE7',
+        },
+        {
+          id: 'edit_profil',
+          title: 'Ubah Data',
+          subtitle: 'Edit biodata & kontak',
+          icon: 'account-edit-outline',
+          iconColor: '#D97706',
+          iconBg: '#FEF3C7',
+        },
+        {
+          id: 'keamanan',
+          title: 'Password & Email',
+          subtitle: 'Keamanan kata sandi',
+          icon: 'shield-key-outline',
+          iconColor: '#2563EB',
+          iconBg: '#EFF6FF',
+        },
+        {
+          id: 'sesi',
+          title: 'Sesi & Bantuan',
+          subtitle: 'Info akun & keluar',
+          icon: 'cellphone-lock',
+          iconColor: '#7C3AED',
+          iconBg: '#F5F3FF',
+        },
+      ];
+    }
+
+    // 7. Role Guru / Tenaga Pendidik
+    return [
+      {
+        id: 'biodata',
+        title: 'Biodata Guru',
+        subtitle: 'Data profil & tugas',
+        icon: 'card-account-details-outline',
+        iconColor: '#059669',
+        iconBg: '#DCFCE7',
+      },
+      {
+        id: 'edit_profil',
+        title: 'Ubah Data',
+        subtitle: 'Edit biodata & kontak',
+        icon: 'account-edit-outline',
+        iconColor: '#D97706',
+        iconBg: '#FEF3C7',
+      },
+      {
+        id: 'keamanan',
+        title: 'Password & Email',
+        subtitle: 'Keamanan kata sandi',
+        icon: 'shield-key-outline',
+        iconColor: '#2563EB',
+        iconBg: '#EFF6FF',
+      },
+      {
+        id: 'sesi',
+        title: 'Sesi & Bantuan',
+        subtitle: 'Info akun & keluar',
+        icon: 'cellphone-lock',
+        iconColor: '#7C3AED',
+        iconBg: '#F5F3FF',
+      },
+    ];
+  }, [isParent, isStudent, isAlumni, isFoundation, isPrincipal, isTu]);
 
   // Sync form inputs from user / employee object
   const syncFormData = (userData: any) => {
@@ -251,7 +485,7 @@ export default function ProfilScreen() {
     return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : 'Unit Pendidikan Terpadu';
   }, [user, employee]);
   const niyOrNip = employee?.niy || employee?.nik || scope?.employee_id || '-';
-  const jabatanName = employee?.position?.name || roleLabel(roles);
+  const jabatanName = (isParent ? 'Orang Tua / Wali Santri' : employee?.position?.name) || roleLabel(roles);
   const profileImageUrl = getProfileImageUrl(user);
   const currentChild = children.find((c) => String(c.id) === String(selectedChildId)) || children[0];
 
@@ -593,7 +827,7 @@ export default function ProfilScreen() {
             {/* User Title & Identity */}
             <Text style={styles.heroName} numberOfLines={2}>
               {employee?.gelar_depan ? `${employee.gelar_depan} ` : ''}
-              {namaLengkap || user?.name || 'Ustadz / Tenaga Pendidik'}
+              {namaLengkap || user?.name || (isParent ? 'Orang Tua / Wali Santri' : isStudent ? 'Peserta Didik' : 'Ustadz / Tenaga Pendidik')}
               {employee?.gelar_belakang ? `, ${employee.gelar_belakang}` : ''}
             </Text>
 
@@ -602,7 +836,13 @@ export default function ProfilScreen() {
                 <MaterialCommunityIcons name="shield-check" size={13} color="#059669" style={{ marginRight: 4 }} />
                 <Text style={styles.heroRoleBadgeText}>{jabatanName}</Text>
               </View>
-              {niyOrNip !== '-' && (
+              {isStudent && (
+                <View style={styles.heroNiyBadge}>
+                  <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#A7F3D0" style={{ marginRight: 4 }} />
+                  <Text style={styles.heroNiyBadgeText}>NIS: {displayValue((user as any)?.student?.nis || (user as any)?.nis || '-')}</Text>
+                </View>
+              )}
+              {niyOrNip !== '-' && isTeacherOrEmployee && (
                 <View style={styles.heroNiyBadge}>
                   <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#A7F3D0" style={{ marginRight: 4 }} />
                   <Text style={styles.heroNiyBadgeText}>NIY: {niyOrNip}</Text>
@@ -615,15 +855,21 @@ export default function ProfilScreen() {
             {/* KPI STATS ROW */}
             <View style={styles.heroStatsRow}>
               <View style={styles.heroStatItem}>
-                <Text style={styles.heroStatValue} numberOfLines={1}>{String(unitName || '').replace('Unit ', '') || 'Terpadu'}</Text>
-                <Text style={styles.heroStatLabel}>Unit Tugas</Text>
+                <Text style={styles.heroStatValue} numberOfLines={1}>
+                  {isParent && currentChild
+                    ? String(currentChild?.education_unit?.name || currentChild?.educationUnit?.name || currentChild?.unit_name || unitName || 'Terpadu').replace('Unit ', '')
+                    : isStudent
+                    ? String((user as any)?.student?.education_unit?.name || (user as any)?.unit_name || unitName || 'Madrasah').replace('Unit ', '')
+                    : String(unitName || '').replace('Unit ', '') || 'Terpadu'}
+                </Text>
+                <Text style={styles.heroStatLabel}>{isParent ? 'Unit Santri' : isStudent ? 'Unit Belajar' : 'Unit Tugas'}</Text>
               </View>
               <View style={styles.heroStatDivider} />
               <View style={styles.heroStatItem}>
                 <Text style={styles.heroStatValue}>
-                  {employee?.status_pegawai || (isParent ? `${children.length} Santri` : 'Tetap')}
+                  {isParent ? `${children.length} Santri` : isStudent ? displayValue((user as any)?.student?.kelas?.nama_kelas || (user as any)?.student?.kelas?.name || (user as any)?.class_name || '-') : (employee?.status_pegawai || 'Tetap')}
                 </Text>
-                <Text style={styles.heroStatLabel}>{isParent ? 'Binaan' : 'Kepegawaian'}</Text>
+                <Text style={styles.heroStatLabel}>{isParent ? 'Ananda' : isStudent ? 'Kelas' : 'Kepegawaian'}</Text>
               </View>
               <View style={styles.heroStatDivider} />
               <View style={styles.heroStatItem}>
@@ -652,7 +898,7 @@ export default function ProfilScreen() {
               </View>
 
               <View style={styles.menuButtonGrid}>
-                {MENU_BUTTONS.map((btn) => {
+                {menuButtons.map((btn) => {
                   const isActive = activeTab === btn.id;
                   return (
                     <TouchableOpacity
@@ -754,38 +1000,67 @@ export default function ProfilScreen() {
                   </View>
                 )}
 
-                {/* IDENTITAS PENDIDIK / PEGAWAI */}
-                <View style={styles.sectionCard}>
-                  <View style={styles.cardSectionHeader}>
-                    <View style={styles.cardSectionIconBadge}>
-                      <MaterialCommunityIcons name="badge-account-outline" size={15} color="#059669" />
+                {/* BIODATA SISWA (FOR STUDENT ROLE) */}
+                {isStudent && (
+                  <View style={styles.sectionCard}>
+                    <View style={styles.cardSectionHeader}>
+                      <View style={styles.cardSectionIconBadge}>
+                        <MaterialCommunityIcons name="school" size={15} color="#059669" />
+                      </View>
+                      <Text style={styles.cardSectionTitle}>Biodata Peserta Didik</Text>
+                      <View style={styles.cardSectionBadge}>
+                        <Text style={styles.cardSectionBadgeText}>Siswa Aktif</Text>
+                      </View>
                     </View>
-                    <Text style={styles.cardSectionTitle}>{isTeacherOrEmployee ? 'Identitas Tenaga Pendidik' : 'Identitas Akun'}</Text>
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => setActiveTab('edit_profil')}
-                      style={styles.cardHeaderQuickAction}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={12} color="#059669" />
-                      <Text style={styles.cardHeaderQuickActionText}>Ubah</Text>
-                    </TouchableOpacity>
+                    <View style={styles.infoRowsContainer}>
+                      <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap Siswa" value={displayValue(user?.name || (user as any)?.student?.nama_lengkap || namaLengkap)} />
+                      <InfoRow icon="numeric" iconBg="#EFF6FF" iconColor="#2563EB" label="NIS / NISN" value={((user as any)?.student?.nis || (user as any)?.nis || '-') + ' / ' + ((user as any)?.student?.nisn || (user as any)?.nisn || '-')} />
+                      <InfoRow icon="domain" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Pendidikan" value={displayValue((user as any)?.student?.education_unit?.name || (user as any)?.unit_name || unitName || 'Sekolah Terpadu')} />
+                      <InfoRow icon="google-classroom" iconBg="#FEF3C7" iconColor="#D97706" label="Kelas / Rombel" value={displayValue((user as any)?.student?.kelas?.nama_kelas || (user as any)?.student?.kelas?.name || (user as any)?.class_name || '-')} />
+                      <InfoRow icon="calendar-account" iconBg="#FEE2E2" iconColor="#DC2626" label="Tempat, Tanggal Lahir" value={`${displayValue((user as any)?.student?.birth_place || tempatLahir)}, ${formatDateSafe((user as any)?.student?.birth_date || tanggalLahir)}`} />
+                      <InfoRow icon="gender-male-female" iconBg="#ECFDF5" iconColor="#059669" label="Jenis Kelamin" value={(user as any)?.student?.gender === 'P' || jenisKelamin === 'P' ? 'Perempuan' : 'Laki-laki'} />
+                      <InfoRow icon="account-child-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Orang Tua / Wali" value={displayValue((user as any)?.student?.parent?.name || (user as any)?.parent_name || '-')} />
+                      <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
+                      <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
+                      <InfoRow icon="home-map-marker" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Tempat Tinggal" value={displayValue(alamat || (user as any)?.student?.address)} isLast />
+                    </View>
                   </View>
-                  <View style={styles.infoRowsContainer}>
-                    <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap & Gelar" value={namaLengkap ? `${employee?.gelar_depan ? employee.gelar_depan + ' ' : ''}${namaLengkap}${employee?.gelar_belakang ? ', ' + employee.gelar_belakang : ''}` : displayValue(user?.name)} />
-                    {isTeacherOrEmployee && (
-                      <>
-                        <InfoRow icon="card-bulleted-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Nomor Induk Yayasan (NIY)" value={displayValue(employee?.niy || niyOrNip)} />
-                        <InfoRow icon="account-tie-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Jabatan & Peran" value={displayValue(jabatanName)} />
-                        <InfoRow icon="office-building" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Penugasan" value={displayValue(unitName)} />
-                        <InfoRow icon="gender-male-female" iconBg="#FEE2E2" iconColor="#E11D48" label="Jenis Kelamin" value={jenisKelamin === 'L' ? 'Laki-laki' : 'Perempuan'} />
-                        <InfoRow icon="calendar-clock" iconBg="#ECFDF5" iconColor="#059669" label="Tempat, Tanggal Lahir" value={`${displayValue(tempatLahir)}, ${formatDateSafe(tanggalLahir)}`} />
-                      </>
-                    )}
-                    <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
-                    <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
-                    <InfoRow icon="home-outline" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Domisili" value={displayValue(alamat)} isLast />
+                )}
+
+                {/* IDENTITAS PENDIDIK / PEGAWAI / AKUN (FOR NON-STUDENT) */}
+                {!isStudent && (
+                  <View style={styles.sectionCard}>
+                    <View style={styles.cardSectionHeader}>
+                      <View style={styles.cardSectionIconBadge}>
+                        <MaterialCommunityIcons name="badge-account-outline" size={15} color="#059669" />
+                      </View>
+                      <Text style={styles.cardSectionTitle}>{isTeacherOrEmployee ? 'Identitas Tenaga Pendidik' : 'Identitas Akun'}</Text>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => setActiveTab('edit_profil')}
+                        style={styles.cardHeaderQuickAction}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={12} color="#059669" />
+                        <Text style={styles.cardHeaderQuickActionText}>Ubah</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.infoRowsContainer}>
+                      <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap & Gelar" value={namaLengkap ? `${employee?.gelar_depan ? employee.gelar_depan + ' ' : ''}${namaLengkap}${employee?.gelar_belakang ? ', ' + employee.gelar_belakang : ''}` : displayValue(user?.name)} />
+                      {isTeacherOrEmployee && (
+                        <>
+                          <InfoRow icon="card-bulleted-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Nomor Induk Yayasan (NIY)" value={displayValue(employee?.niy || niyOrNip)} />
+                          <InfoRow icon="account-tie-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Jabatan & Peran" value={displayValue(jabatanName)} />
+                          <InfoRow icon="office-building" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Penugasan" value={displayValue(unitName)} />
+                          <InfoRow icon="gender-male-female" iconBg="#FEE2E2" iconColor="#E11D48" label="Jenis Kelamin" value={jenisKelamin === 'L' ? 'Laki-laki' : 'Perempuan'} />
+                          <InfoRow icon="calendar-clock" iconBg="#ECFDF5" iconColor="#059669" label="Tempat, Tanggal Lahir" value={`${displayValue(tempatLahir)}, ${formatDateSafe(tanggalLahir)}`} />
+                        </>
+                      )}
+                      <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
+                      <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
+                      <InfoRow icon="home-outline" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Domisili" value={displayValue(alamat)} isLast />
+                    </View>
                   </View>
-                </View>
+                )}
 
                 {/* QUICK ACTION BANNER */}
                 <View style={styles.quickActionBanner}>

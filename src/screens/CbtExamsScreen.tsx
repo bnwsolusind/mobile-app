@@ -3,12 +3,14 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  BackHandler,
   Dimensions,
   Image,
   Modal,
   Platform,
   RefreshControl,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -192,6 +194,10 @@ export default function CbtExamsScreen({ route }: any) {
       tipe_soal: string;
       poin: number;
       opsi?: Array<{ key: string; text: string }>;
+      pasangan_menjodohkan?: {
+        kiri?: string[];
+        kanan?: string[];
+      };
     }>;
   } | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
@@ -522,11 +528,33 @@ export default function CbtExamsScreen({ route }: any) {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const handleSelectOption = async (questionId: string, optionKey: string) => {
-    if (!activeExamSession) return;
-    const updated = { ...examAnswers, [questionId]: optionKey };
-    setExamAnswers(updated);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Hardware back press protection during active exam session
+  useEffect(() => {
+    if (!activeExamSession) return;
+    const onBackPress = () => {
+      handleConfirmFinish();
+      return true;
+    };
+    const backHandlerSub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => backHandlerSub.remove();
+  }, [activeExamSession, examAnswers, doubtfulQuestions]);
+
+  // Immersive full-screen status bar during active CBT exam
+  useEffect(() => {
+    if (activeExamSession) {
+      StatusBar.setHidden(true, 'fade');
+    } else {
+      StatusBar.setHidden(false, 'fade');
+    }
+    return () => {
+      StatusBar.setHidden(false, 'fade');
+    };
+  }, [Boolean(activeExamSession)]);
+
+  const saveAnswerToServer = async (questionId: string, value: string) => {
+    if (!activeExamSession) return;
     try {
       setSavingAnswer(true);
       const qItem = activeExamSession.soal.find((q) => q.id === questionId);
@@ -534,14 +562,33 @@ export default function CbtExamsScreen({ route }: any) {
       await mobileApiService.savePortalCbtAnswers(activeExamSession.sesi_id, [
         {
           soal_id: questionId,
-          jawaban_dipilih: isEssay ? null : optionKey,
-          jawaban_esai: isEssay ? optionKey : null,
+          jawaban_dipilih: isEssay ? null : value,
+          jawaban_esai: isEssay ? value : null,
         },
       ]);
     } catch (e) {
       console.warn('Gagal menyimpan jawaban otomatis:', e);
     } finally {
       setSavingAnswer(false);
+    }
+  };
+
+  const handleSelectOption = (questionId: string, optionKey: string, debounce: boolean = false) => {
+    if (!activeExamSession) return;
+    const updated = { ...examAnswers, [questionId]: optionKey };
+    setExamAnswers(updated);
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    if (debounce) {
+      autoSaveTimerRef.current = setTimeout(() => {
+        void saveAnswerToServer(questionId, optionKey);
+      }, 850);
+    } else {
+      void saveAnswerToServer(questionId, optionKey);
     }
   };
 
@@ -564,12 +611,15 @@ export default function CbtExamsScreen({ route }: any) {
         throw new Error('Sesi ujian tidak berhasil dibuat atau data soal belum lengkap.');
       }
 
-      // Populate pre-saved answers if any
+      // Populate pre-saved answers if any (support both essay/isian/matching and multiple choice)
       const answersMap: Record<string, string> = {};
       if (Array.isArray(sessionData.jawaban_tersimpan)) {
         sessionData.jawaban_tersimpan.forEach((item: any) => {
-          if (item.soal_id && item.jawaban_dipilih) {
-            answersMap[item.soal_id] = item.jawaban_dipilih;
+          if (item.soal_id) {
+            const restoredVal = item.jawaban_esai ?? item.jawaban_dipilih ?? '';
+            if (restoredVal !== '') {
+              answersMap[item.soal_id] = restoredVal;
+            }
           }
         });
       }
@@ -1454,64 +1504,256 @@ export default function CbtExamsScreen({ route }: any) {
                       <Text style={styles.questionText}>{currentQuestion.pertanyaan}</Text>
                     </View>
 
-                    {/* Multiple Choice Options */}
-                    <View style={styles.optionsContainer}>
-                      {currentQuestion.opsi && currentQuestion.opsi.length > 0 ? (
-                        currentQuestion.opsi.map((opt) => {
-                          const isSelected = selectedKey === opt.key;
-                          return (
+                    {/* Render by question type (5 types supported) */}
+                    {(() => {
+                      const qType = currentQuestion.tipe_soal || 'pg';
+
+                      // 1. Tipe Benar / Salah
+                      if (qType === 'benar_salah') {
+                        const valLower = String(selectedKey || '').toLowerCase();
+                        return (
+                          <View style={styles.trueFalseContainer}>
                             <TouchableOpacity
-                              key={opt.key}
                               activeOpacity={0.8}
-                              onPress={() => void handleSelectOption(currentQuestion.id, opt.key)}
+                              onPress={() => handleSelectOption(currentQuestion.id, 'benar', false)}
                               style={[
-                                styles.optionItem,
-                                isSelected && styles.optionItemSelected,
+                                styles.trueFalseCard,
+                                valLower === 'benar' && styles.trueFalseCardSelectedBenar,
                               ]}
                             >
-                              <View
+                              <View style={[styles.trueFalseIconCircle, valLower === 'benar' && styles.trueFalseIconCircleSelectedBenar]}>
+                                <MaterialCommunityIcons
+                                  name={valLower === 'benar' ? 'check-circle' : 'check-circle-outline'}
+                                  size={24}
+                                  color={valLower === 'benar' ? '#059669' : '#64748B'}
+                                />
+                              </View>
+                              <View style={styles.trueFalseTextBox}>
+                                <Text style={[styles.trueFalseTitle, valLower === 'benar' && styles.trueFalseTitleSelectedBenar]}>
+                                  BENAR
+                                </Text>
+                                <Text style={styles.trueFalseSub}>Pernyataan ini tepat / sesuai</Text>
+                              </View>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={() => handleSelectOption(currentQuestion.id, 'salah', false)}
+                              style={[
+                                styles.trueFalseCard,
+                                valLower === 'salah' && styles.trueFalseCardSelectedSalah,
+                              ]}
+                            >
+                              <View style={[styles.trueFalseIconCircle, valLower === 'salah' && styles.trueFalseIconCircleSelectedSalah]}>
+                                <MaterialCommunityIcons
+                                  name={valLower === 'salah' ? 'close-circle' : 'close-circle-outline'}
+                                  size={24}
+                                  color={valLower === 'salah' ? '#DC2626' : '#64748B'}
+                                />
+                              </View>
+                              <View style={styles.trueFalseTextBox}>
+                                <Text style={[styles.trueFalseTitle, valLower === 'salah' && styles.trueFalseTitleSelectedSalah]}>
+                                  SALAH
+                                </Text>
+                                <Text style={styles.trueFalseSub}>Pernyataan ini tidak tepat</Text>
+                              </View>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      }
+
+                      // 2. Tipe Isian Singkat
+                      if (qType === 'isian') {
+                        return (
+                          <View style={styles.shortAnswerBox}>
+                            <View style={styles.inputHeaderRow}>
+                              <MaterialCommunityIcons name="form-textbox" size={17} color="#059669" />
+                              <Text style={styles.shortAnswerPrompt}>Tuliskan jawaban singkat Anda:</Text>
+                            </View>
+                            <TextInput
+                              style={styles.shortAnswerInput}
+                              value={selectedKey || ''}
+                              placeholder="Ketik jawaban singkat di sini..."
+                              placeholderTextColor="#94A3B8"
+                              autoCapitalize="none"
+                              returnKeyType="done"
+                              onChangeText={(text) => {
+                                handleSelectOption(currentQuestion.id, text, true);
+                              }}
+                            />
+                            <Text style={styles.inputSubHint}>
+                              Jawaban Anda otomatis tersimpan saat mengetik.
+                            </Text>
+                          </View>
+                        );
+                      }
+
+                      // 3. Tipe Menjodohkan
+                      if (qType === 'menjodohkan') {
+                        const leftItems: string[] = currentQuestion.pasangan_menjodohkan?.kiri || [];
+                        const rightItems: string[] = currentQuestion.pasangan_menjodohkan?.kanan || [];
+
+                        let currentPairs: Array<{ kiri: string; kanan: string }> = [];
+                        try {
+                          currentPairs = JSON.parse(selectedKey || '[]');
+                          if (!Array.isArray(currentPairs)) currentPairs = [];
+                        } catch {
+                          currentPairs = [];
+                        }
+
+                        const updatePair = (leftVal: string, rightVal: string) => {
+                          const existingPair = currentPairs.find((p) => p.kiri === leftVal);
+                          const nextVal = existingPair?.kanan === rightVal ? '' : rightVal;
+                          const nextPairs = leftItems.map((item) => ({
+                            kiri: item,
+                            kanan: item === leftVal ? nextVal : (currentPairs.find((p) => p.kiri === item)?.kanan || ''),
+                          }));
+                          handleSelectOption(currentQuestion.id, JSON.stringify(nextPairs), false);
+                        };
+
+                        return (
+                          <View style={styles.matchingContainer}>
+                            <View style={styles.matchingNoticeBox}>
+                              <MaterialCommunityIcons name="swap-horizontal-bold" size={16} color="#0E5C44" />
+                              <Text style={styles.matchingNoticeText}>
+                                Pasangkan setiap item di sebelah kiri dengan pilihan yang tepat di bawahnya:
+                              </Text>
+                            </View>
+
+                            {leftItems.map((leftText, lIdx) => {
+                              const pairedRight = currentPairs.find((p) => p.kiri === leftText)?.kanan || '';
+                              const otherUsedRights = currentPairs
+                                .filter((p) => p.kiri !== leftText && Boolean(p.kanan))
+                                .map((p) => p.kanan);
+
+                              return (
+                                <View key={`match-left-${lIdx}`} style={styles.matchingPairCard}>
+                                  <View style={styles.matchingLeftHeader}>
+                                    <View style={styles.matchingLeftIndexBadge}>
+                                      <Text style={styles.matchingLeftIndexText}>{lIdx + 1}</Text>
+                                    </View>
+                                    <Text style={styles.matchingLeftText}>{leftText}</Text>
+                                  </View>
+
+                                  <View style={styles.matchingDividerRow}>
+                                    <View style={styles.matchingDividerLine} />
+                                    <Text style={styles.matchingDividerLabel}>Pilih Pasangan</Text>
+                                    <View style={styles.matchingDividerLine} />
+                                  </View>
+
+                                  <View style={styles.matchingPillsWrap}>
+                                    {rightItems.map((rText, rIdx) => {
+                                      const isChosen = pairedRight === rText;
+                                      const isUsedElsewhere = otherUsedRights.includes(rText);
+
+                                      return (
+                                        <TouchableOpacity
+                                          key={`match-right-${lIdx}-${rIdx}`}
+                                          activeOpacity={0.7}
+                                          disabled={isUsedElsewhere}
+                                          onPress={() => updatePair(leftText, rText)}
+                                          style={[
+                                            styles.matchingPill,
+                                            isChosen && styles.matchingPillSelected,
+                                            isUsedElsewhere && styles.matchingPillDisabled,
+                                          ]}
+                                        >
+                                          <MaterialCommunityIcons
+                                            name={isChosen ? 'check-circle' : isUsedElsewhere ? 'lock-outline' : 'circle-outline'}
+                                            size={14}
+                                            color={isChosen ? '#059669' : isUsedElsewhere ? '#94A3B8' : '#64748B'}
+                                          />
+                                          <Text
+                                            style={[
+                                              styles.matchingPillText,
+                                              isChosen && styles.matchingPillTextSelected,
+                                              isUsedElsewhere && styles.matchingPillTextDisabled,
+                                            ]}
+                                          >
+                                            {rText}
+                                          </Text>
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </View>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        );
+                      }
+
+                      // 4. Tipe Esai Uraian
+                      if (qType === 'esai' || (!currentQuestion.opsi || currentQuestion.opsi.length === 0)) {
+                        return (
+                          <View style={styles.essayBox}>
+                            <View style={styles.inputHeaderRow}>
+                              <MaterialCommunityIcons name="text-box-outline" size={17} color="#059669" />
+                              <Text style={styles.essayPrompt}>Ketik uraian jawaban Anda pada kolom di bawah:</Text>
+                            </View>
+                            <TextInput
+                              style={styles.essayInput}
+                              multiline
+                              numberOfLines={6}
+                              textAlignVertical="top"
+                              value={selectedKey || ''}
+                              placeholder="Tuliskan uraian jawaban secara rinci dan jelas..."
+                              placeholderTextColor="#94A3B8"
+                              onChangeText={(text) => {
+                                handleSelectOption(currentQuestion.id, text, true);
+                              }}
+                            />
+                            <Text style={styles.inputSubHint}>
+                              Jawaban uraian otomatis tersimpan ke server.
+                            </Text>
+                          </View>
+                        );
+                      }
+
+                      // 5. Default: Pilihan Ganda (pg)
+                      return (
+                        <View style={styles.optionsContainer}>
+                          {currentQuestion.opsi.map((opt) => {
+                            const isSelected = selectedKey === opt.key;
+                            return (
+                              <TouchableOpacity
+                                key={opt.key}
+                                activeOpacity={0.8}
+                                onPress={() => handleSelectOption(currentQuestion.id, opt.key, false)}
                                 style={[
-                                  styles.optionRadioCircle,
-                                  isSelected && styles.optionRadioCircleSelected,
+                                  styles.optionItem,
+                                  isSelected && styles.optionItemSelected,
                                 ]}
                               >
-                                <Text
+                                <View
                                   style={[
-                                    styles.optionRadioText,
-                                    isSelected && styles.optionRadioTextSelected,
+                                    styles.optionRadioCircle,
+                                    isSelected && styles.optionRadioCircleSelected,
                                   ]}
                                 >
-                                  {opt.key}
+                                  <Text
+                                    style={[
+                                      styles.optionRadioText,
+                                      isSelected && styles.optionRadioTextSelected,
+                                    ]}
+                                  >
+                                    {opt.key}
+                                  </Text>
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.optionText,
+                                    isSelected && styles.optionTextSelected,
+                                  ]}
+                                >
+                                  {opt.text}
                                 </Text>
-                              </View>
-                              <Text
-                                style={[
-                                  styles.optionText,
-                                  isSelected && styles.optionTextSelected,
-                                ]}
-                              >
-                                {opt.text}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })
-                      ) : (
-                        <View style={styles.essayBox}>
-                          <Text style={styles.essayPrompt}>Ketik jawaban Anda pada kolom di bawah:</Text>
-                          <TextInput
-                            style={styles.essayInput}
-                            multiline
-                            numberOfLines={5}
-                            value={selectedKey || ''}
-                            placeholder="Tuliskan jawaban lengkap..."
-                            placeholderTextColor="#94A3B8"
-                            onChangeText={(text) => {
-                              void handleSelectOption(currentQuestion.id, text);
-                            }}
-                          />
+                              </TouchableOpacity>
+                            );
+                          })}
                         </View>
-                      )}
-                    </View>
+                      );
+                    })()}
                   </ScrollView>
                 );
               })()
@@ -2893,11 +3135,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  essayPrompt: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
+  inputHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginBottom: 8,
+  },
+  inputSubHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  essayPrompt: {
+    fontSize: 12.5,
+    color: '#334155',
+    fontWeight: '700',
   },
   essayInput: {
     backgroundColor: '#F8FAFC',
@@ -2909,6 +3162,196 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     textAlignVertical: 'top',
     minHeight: 120,
+  },
+  // True / False (Benar / Salah) styles
+  trueFalseContainer: {
+    gap: 12,
+  },
+  trueFalseCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    padding: 16,
+    gap: 14,
+  },
+  trueFalseCardSelectedBenar: {
+    borderColor: '#059669',
+    backgroundColor: '#ECFDF5',
+  },
+  trueFalseCardSelectedSalah: {
+    borderColor: '#DC2626',
+    backgroundColor: '#FEF2F2',
+  },
+  trueFalseIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trueFalseIconCircleSelectedBenar: {
+    backgroundColor: '#D1FAE5',
+  },
+  trueFalseIconCircleSelectedSalah: {
+    backgroundColor: '#FEE2E2',
+  },
+  trueFalseTextBox: {
+    flex: 1,
+  },
+  trueFalseTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#334155',
+    letterSpacing: 0.5,
+  },
+  trueFalseTitleSelectedBenar: {
+    color: '#065F46',
+  },
+  trueFalseTitleSelectedSalah: {
+    color: '#991B1B',
+  },
+  trueFalseSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+
+  // Short Answer (Isian Singkat) styles
+  shortAnswerBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  shortAnswerPrompt: {
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '700',
+  },
+  shortAnswerInput: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+
+  // Matching (Menjodohkan) styles
+  matchingContainer: {
+    gap: 14,
+  },
+  matchingNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 12,
+    padding: 12,
+  },
+  matchingNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#065F46',
+    fontWeight: '600',
+    lineHeight: 17,
+  },
+  matchingPairCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  matchingLeftHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  matchingLeftIndexBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  matchingLeftIndexText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  matchingLeftText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  matchingDividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginVertical: 2,
+  },
+  matchingDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  matchingDividerLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  matchingPillsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  matchingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  matchingPillSelected: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+  },
+  matchingPillDisabled: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
+    opacity: 0.5,
+  },
+  matchingPillText: {
+    fontSize: 12.5,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  matchingPillTextSelected: {
+    color: '#065F46',
+    fontWeight: '700',
+  },
+  matchingPillTextDisabled: {
+    color: '#94A3B8',
   },
   emptyQuestionBox: {
     flex: 1,

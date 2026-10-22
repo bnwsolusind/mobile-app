@@ -5,6 +5,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -19,6 +20,14 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+// Safe dynamic loader for expo-location to prevent crashing if native module ExpoLocation is unlinked
+const getLocationModule = (): any => {
+  try {
+    return require('expo-location');
+  } catch {
+    return null;
+  }
+};
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { getApiErrorMessage } from '../services/api';
@@ -81,6 +90,14 @@ const formatJamIndo = (val: unknown): string => {
   if (Number.isNaN(d.getTime())) return str;
   return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
 };
+
+const DROP_OFF_CATEGORIES = [
+  { key: 'ojek', icon: 'motorbike', label: 'Ojek Online (Gojek / Grab / Maxim)' },
+  { key: 'jemputan', icon: 'van-passenger', label: 'Antar-Jemput / Sopir Pribadi' },
+  { key: 'kerabat', icon: 'account-group', label: 'Keluarga / Kerabat (Kakek/Paman/Kakak)' },
+  { key: 'mandiri', icon: 'bike', label: 'Berangkat Mandiri (Sepeda / Jalan Kaki)' },
+  { key: 'dinas_ortu', icon: 'briefcase-account', label: 'Orang Tua Berhalangan (Dinas / Kerja / Sakit)' },
+];
 
 export default function AbsensiScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -150,6 +167,16 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const [permissionsHistory, setPermissionsHistory] = useState<PermissionItem[]>([]);
   const [dormitoryPermits, setDormitoryPermits] = useState<any[]>([]);
 
+  // Gate Attendance Data (Tap Lokasi GPS)
+  const [gateToday, setGateToday] = useState<{
+    attendance?: any;
+    has_check_in?: boolean;
+    has_check_out?: boolean;
+    student?: any;
+    date?: string;
+  } | null>(null);
+  const [gateLoading, setGateLoading] = useState<boolean>(false);
+
   // Employee Specific Data
   const [employeeHistory, setEmployeeHistory] = useState<any[]>([]);
   const [employeeStats, setEmployeeStats] = useState<any>(null);
@@ -177,6 +204,9 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
   // Period Filter: daily, weekly, monthly, semester, yearly
   const [selectedPeriod, setSelectedPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'semester' | 'yearly'>('daily');
+
+  // Student / Parent Status Filter (Harmonisasi Layout Mutabaah TU)
+  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'hadir' | 'izin' | 'sakit' | 'terlambat' | 'alpa'>('all');
 
   // TU & Manajerial: state rekap kehadiran siswa & pegawai
   const [tuStudentAttendances, setTuStudentAttendances] = useState<any[]>([]);
@@ -498,27 +528,30 @@ export default function AbsensiScreen({ route, navigation }: any) {
     setError('');
     const cacheKey = offlineCache.buildKey('absensi', user?.id, selectedChildId || 'staff');
     // 1. Baca cache dulu
-    const cached = await offlineCache.get<{ logs: AttendanceItem[]; perms: PermissionItem[]; dorms: any[]; empHistory: any[]; empStats: any }>(cacheKey);
+    const cached = await offlineCache.get<{ logs: AttendanceItem[]; perms: PermissionItem[]; dorms: any[]; empHistory: any[]; empStats: any; gateToday?: any }>(cacheKey);
     if (cached) {
       if (cached.logs?.length > 0) setAttendanceLogs(cached.logs);
       if (cached.perms?.length > 0) setPermissionsHistory(cached.perms);
       if (cached.dorms?.length > 0) setDormitoryPermits(cached.dorms);
       if (cached.empHistory?.length > 0) setEmployeeHistory(cached.empHistory);
       if (cached.empStats) setEmployeeStats(cached.empStats);
+      if (cached.gateToday) setGateToday(cached.gateToday);
     }
     // 2. Fetch dari backend
     try {
       if (isParent || isStudent) {
         const targetId = isParent ? selectedChildId : undefined;
-        const [attRes, permRes, dormRes] = await Promise.allSettled([
+        const [attRes, permRes, dormRes, gateRes] = await Promise.allSettled([
           mobileApiService.getPortalAttendance(targetId),
           mobileApiService.getPortalPermissions(targetId),
           mobileApiService.getDormitoryPermits(targetId),
+          mobileApiService.getPortalGateAttendanceToday(targetId),
         ]);
 
         let logs: AttendanceItem[] = [];
         let perms: PermissionItem[] = [];
         let dorms: any[] = [];
+        let gateData: any = null;
 
         if (attRes.status === 'fulfilled') {
           const raw = attRes.value?.data || attRes.value || [];
@@ -535,12 +568,17 @@ export default function AbsensiScreen({ route, navigation }: any) {
           dorms = Array.isArray(rawD?.data) ? rawD.data : (Array.isArray(rawD) ? rawD : []);
           setDormitoryPermits(dorms);
         }
+        if (gateRes.status === 'fulfilled') {
+          const rawG = gateRes.value?.data || gateRes.value;
+          gateData = rawG || null;
+          setGateToday(gateData);
+        }
         if (isStudent) {
           setStudentInfo((prev: any) => prev || user?.student || user);
         }
         // 3. Simpan ke cache
-        if (logs.length > 0 || perms.length > 0 || dorms.length > 0) {
-          void offlineCache.set(cacheKey, { logs, perms, dorms, empHistory: [], empStats: null });
+        if (logs.length > 0 || perms.length > 0 || dorms.length > 0 || gateData) {
+          void offlineCache.set(cacheKey, { logs, perms, dorms, empHistory: [], empStats: null, gateToday: gateData });
         }
       } else if (isStaff) {
         const empIdParam = effectiveEmployeeId ? String(effectiveEmployeeId) : undefined;
@@ -1181,27 +1219,48 @@ export default function AbsensiScreen({ route, navigation }: any) {
         }
         return bList.map((bp, idx) => {
           const rawStatus = bp.status || 'disetujui';
-          const isLate = bp.status === 'late' || (bp.late_minutes && bp.late_minutes > 0);
-          const statusLabel = isLate
-            ? `Terlambat +${bp.late_minutes}m`
-            : rawStatus === 'returned'
-              ? 'Kembali ke Pondok'
-              : rawStatus === 'active' || rawStatus === 'keluar'
-                ? 'Sedang di Luar (Pesiar)'
-                : 'Boarding Pass';
+          const isLate = bp.deadline_status === 'overdue' || bp.return_status === 'terlambat' || bp.status === 'late' || (bp.late_minutes && bp.late_minutes > 0);
+          const isNearDeadline = bp.deadline_status === 'near_deadline';
+          const isMedical = bp.permit_type === 'sakit_berobat' || bp.presence_status === 'berobat' || bp.is_emergency;
+
+          let statusLabel = 'Boarding Pass';
+          let statusKey = 'active';
+
+          if (isLate) {
+            statusLabel = bp.late_minutes > 0 ? `Terlambat +${bp.late_minutes}m` : 'Terlambat Kembali';
+            statusKey = 'late';
+          } else if (rawStatus === 'kembali' || bp.presence_status === 'di_pondok' && bp.actual_return_at) {
+            statusLabel = 'Kembali di Pondok';
+            statusKey = 'hadir';
+          } else if (isMedical) {
+            statusLabel = bp.is_emergency ? 'Darurat Medis' : 'Izin Berobat';
+            statusKey = 'izin';
+          } else if (rawStatus === 'keluar' || bp.presence_status === 'di_luar' || bp.presence_status === 'pulang') {
+            statusLabel = isNearDeadline ? 'Mendekati Batas (≤2 Jam)' : 'Sedang di Luar';
+            statusKey = isNearDeadline ? 'late' : 'active';
+          } else if (rawStatus === 'diajukan') {
+            statusLabel = 'Menunggu Persetujuan';
+            statusKey = 'izin';
+          }
+
+          const typeTitle = isMedical
+            ? (bp.is_emergency ? 'DARURAT BEROBAT' : 'IZIN SAKIT / BEROBAT')
+            : (bp.permit_type ? bp.permit_type.replace(/_/g, ' ').toUpperCase() : 'PESIAR MINGGUAN');
 
           return {
             id: bp.id || `bp-${idx}`,
             category: 'boarding_pass',
-            title: `Boarding: ${bp.student?.full_name || bp.student_name || (bp.permit_type ? bp.permit_type.replace('_', ' ').toUpperCase() : 'PESIAR MINGGUAN')}`,
-            subtitle: `Tujuan: ${bp.destination || 'Rumah Orang Tua'} | No: ${bp.permit_number}`,
+            title: `Boarding: ${bp.student?.full_name || bp.student_name || typeTitle}`,
+            subtitle: `Tujuan: ${bp.destination || bp.medical_destination || 'Rumah Orang Tua'} | No: ${bp.permit_number}`,
             date: bp.scheduled_departure_at || bp.created_at,
             time: bp.actual_return_at
               ? `Kembali: ${formatJamIndo(bp.actual_return_at)}`
               : `Batas: ${formatJamIndo(bp.scheduled_return_at)}`,
             status: statusLabel,
-            statusKey: isLate ? 'late' : bp.status === 'returned' ? 'hadir' : 'active',
-            notes: bp.purpose_notes || bp.notes || `Penjemput: ${bp.pickup_person_name || 'Wali'} (${bp.pickup_person_relation || 'Orang Tua'})`,
+            statusKey,
+            notes: bp.medical_complaint
+              ? `Keluhan: ${bp.medical_complaint} (Pendamping: ${bp.medical_escort_name || '-'})`
+              : (bp.purpose_notes || bp.notes || `Penjemput: ${bp.guardian_name || bp.pickup_person_name || 'Wali'} (${bp.guardian_relation || 'Orang Tua'})`),
             attachmentUrl: bp.attachment_url || null,
             raw: bp,
           };
@@ -1354,10 +1413,31 @@ export default function AbsensiScreen({ route, navigation }: any) {
       });
     }
 
+    // Filter by studentStatusFilter (Harmonisasi Layout Mutabaah TU)
+    let filteredList = list;
+    if (!isStaff && studentStatusFilter !== 'all') {
+      filteredList = filteredList.filter((it) => {
+        const k = String(it.statusKey || '').toLowerCase();
+        const titleLower = String(it.title || '').toLowerCase();
+        const rawType = String((it.raw as any)?.type || '').toLowerCase();
+        if (studentStatusFilter === 'hadir') return k.includes('hadir') || k.includes('present') || k.includes('approved') || k.includes('disetujui');
+        if (studentStatusFilter === 'izin') {
+          return (k.includes('izin') && !k.includes('sakit')) ||
+                 (it.category === 'permission' && (rawType.includes('izin') || (!rawType.includes('sakit') && !titleLower.includes('sakit'))));
+        }
+        if (studentStatusFilter === 'sakit') {
+          return k.includes('sakit') || (it.category === 'permission' && (rawType.includes('sakit') || titleLower.includes('sakit')));
+        }
+        if (studentStatusFilter === 'terlambat') return k.includes('terlambat') || k.includes('late');
+        if (studentStatusFilter === 'alpa') return k.includes('alpa') || k.includes('alpha');
+        return true;
+      });
+    }
+
     // Filter by search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      return list.filter((it) =>
+      return filteredList.filter((it) =>
         it.title.toLowerCase().includes(q) ||
         it.subtitle.toLowerCase().includes(q) ||
         it.status.toLowerCase().includes(q) ||
@@ -1365,8 +1445,8 @@ export default function AbsensiScreen({ route, navigation }: any) {
       );
     }
 
-    return list;
-  }, [isTuStaff, isAboveTu, canViewStudentReport, tuStudentAttendances, rekapPegawaiAttendances, isStaff, employeeHistory, activeTab, attendanceLogs, permissionsHistory, staffPermFilter, dormitoryPermits, searchQuery]);
+    return filteredList;
+  }, [isTuStaff, isAboveTu, canViewStudentReport, tuStudentAttendances, rekapPegawaiAttendances, isStaff, employeeHistory, activeTab, attendanceLogs, permissionsHistory, staffPermFilter, dormitoryPermits, searchQuery, studentStatusFilter]);
 
   // ── 5. Employee Actions (Check In / Out) ──
   const todayDateStr = useMemo(() => {
@@ -1450,6 +1530,333 @@ export default function AbsensiScreen({ route, navigation }: any) {
     } finally {
       setSavingAttendance(false);
     }
+  };
+
+  // ── 5B. Drop-off (Pengantaran Jarak Jauh) Modal State ──
+  const [dropOffModalVisible, setDropOffModalVisible] = useState<boolean>(false);
+  const [dropOffActionType, setDropOffActionType] = useState<'in' | 'out'>('in');
+  const [dropOffCategory, setDropOffCategory] = useState<string>('ojek');
+  const [dropOffDriverName, setDropOffDriverName] = useState<string>('');
+  const [dropOffNotes, setDropOffNotes] = useState<string>('');
+
+  // ── 5C. Gate Location, Map Tile URL, Haversine Distance & Maps Navigation ──
+  const mapboxToken = useMobileConfigStore(
+    (state) => state.config?.mapbox_token || state.config?.system?.mapbox_token
+  );
+
+  // Realtime Clock untuk Presensi Gerbang & Mandiri (ala TU)
+  const [currentTime, setCurrentTime] = useState<string>('');
+  const [currentDateText, setCurrentDateText] = useState<string>('');
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(
+        now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace('.', ':') + ' WIB'
+      );
+      setCurrentDateText(
+        now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      );
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // GPS User Live State
+  const [userGpsLocation, setUserGpsLocation] = useState<{ latitude: number; longitude: number; accuracy?: number } | null>(null);
+  const [locatingGps, setLocatingGps] = useState<boolean>(false);
+
+  const gateTargetUnit = useMemo(() => {
+    const studentUnit = headerStudent?.unit || headerStudent?.unit_name || headerStudent?.education_unit?.name || '';
+    const matched = masterEducationUnits.find(
+      (u: any) =>
+        (headerStudent?.unit_id && String(u.id) === String(headerStudent.unit_id)) ||
+        (studentUnit && (String(u.name || '').toLowerCase().includes(studentUnit.toLowerCase()) || studentUnit.toLowerCase().includes(String(u.name || '').toLowerCase())))
+    ) || masterEducationUnits[0];
+
+    const lat = Number(matched?.latitude || -0.9242000);
+    const lng = Number(matched?.longitude || 100.3621000);
+    const name = matched?.name || studentUnit || 'Gerbang Sekolah';
+    const radius = Math.min(Number(matched?.radius_meter || 30), 50);
+
+    return { lat, lng, name, radius };
+  }, [headerStudent, masterEducationUnits]);
+
+  // Haversine Distance Formula (Meter) ala TU
+  const calculateHaversineDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371000; // Radius bumi dalam meter
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }, []);
+
+  // Request & Update User GPS Location
+  const requestUserGps = useCallback(async (silent = false): Promise<{ latitude: number; longitude: number } | null> => {
+    setLocatingGps(true);
+    try {
+      const Location = getLocationModule();
+      if (Location && typeof Location.requestForegroundPermissionsAsync === 'function') {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy?.High ?? 4,
+          });
+          if (loc?.coords?.latitude !== undefined && loc?.coords?.longitude !== undefined) {
+            const coords = {
+              latitude: Number(loc.coords.latitude),
+              longitude: Number(loc.coords.longitude),
+              accuracy: loc.coords.accuracy ? Number(loc.coords.accuracy) : undefined,
+            };
+            setUserGpsLocation(coords);
+            return coords;
+          }
+        }
+      }
+
+      if (typeof navigator !== 'undefined' && (navigator as any)?.geolocation?.getCurrentPosition) {
+        const navCoords = await new Promise<{ latitude: number; longitude: number; accuracy?: number } | null>((resolve) => {
+          (navigator as any).geolocation.getCurrentPosition(
+            (pos: any) => {
+              if (pos?.coords?.latitude !== undefined && pos?.coords?.longitude !== undefined) {
+                const c = {
+                  latitude: Number(pos.coords.latitude),
+                  longitude: Number(pos.coords.longitude),
+                  accuracy: pos.coords.accuracy ? Number(pos.coords.accuracy) : undefined,
+                };
+                resolve(c);
+              } else {
+                resolve(null);
+              }
+            },
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+          );
+        });
+        if (navCoords) {
+          setUserGpsLocation(navCoords);
+          return navCoords;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      setLocatingGps(false);
+    }
+  }, []);
+
+  // Auto request user GPS when parent/student views gate section
+  useEffect(() => {
+    if (!isStaff && (isParent || isStudent)) {
+      void requestUserGps(true);
+    }
+  }, [isStaff, isParent, isStudent, requestUserGps]);
+
+  // Live Distance User ke Gerbang Sekolah
+  const distanceToGate = useMemo(() => {
+    const userLat = userGpsLocation?.latitude ?? (gateToday?.attendance?.latitude ? Number(gateToday.attendance.latitude) : null);
+    const userLng = userGpsLocation?.longitude ?? (gateToday?.attendance?.longitude ? Number(gateToday.attendance.longitude) : null);
+    if (!userLat || !userLng || !gateTargetUnit.lat || !gateTargetUnit.lng) return null;
+    return calculateHaversineDistance(userLat, userLng, gateTargetUnit.lat, gateTargetUnit.lng);
+  }, [userGpsLocation, gateToday, gateTargetUnit, calculateHaversineDistance]);
+
+  const isWithinGateRadius = useMemo(() => {
+    if (distanceToGate === null) return false;
+    return distanceToGate <= gateTargetUnit.radius;
+  }, [distanceToGate, gateTargetUnit.radius]);
+
+  const formatGateDistance = (meters: number | null): string => {
+    if (meters === null || meters === undefined || isNaN(meters)) return '-- m';
+    if (meters < 1000) return `${Math.round(meters)} m`;
+    return `${(meters / 1000).toFixed(2)} km`;
+  };
+
+  // Compute Static Map URL for Gate Attendance (Mapbox Retina 2x or OpenStreetMap tile fallback)
+  const gateMapTileUrl = useMemo(() => {
+    const { lat, lng } = gateTargetUnit;
+    const userLat = userGpsLocation?.latitude ?? (gateToday?.attendance?.latitude ? Number(gateToday.attendance.latitude) : null);
+    const userLng = userGpsLocation?.longitude ?? (gateToday?.attendance?.longitude ? Number(gateToday.attendance.longitude) : null);
+
+    const token = mapboxToken?.trim();
+    const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 64), 400);
+    const mapHeight = 165;
+
+    if (token) {
+      if (userLat && userLng) {
+        // Mapbox Static dengan 2 pin: Pin Gerbang Hijau (#059669) & Pin Posisi Anda Biru (#2563EB)
+        const pGate = `pin-s-school+059669(${lng.toFixed(6)},${lat.toFixed(6)})`;
+        const pUser = `pin-s-circle+2563eb(${userLng.toFixed(6)},${userLat.toFixed(6)})`;
+        return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pGate},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${token}`;
+      }
+      // Mapbox Static dengan pin gerbang sekolah
+      const pGate = `pin-s-school+059669(${lng.toFixed(6)},${lat.toFixed(6)})`;
+      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pGate}/${lng.toFixed(6)},${lat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${token}`;
+    }
+
+    // Fallback OpenStreetMap standard tile
+    const centerLat = userLat ? (userLat + lat) / 2 : lat;
+    const centerLng = userLng ? (userLng + lng) / 2 : lng;
+    const zoom = 16;
+    const lon2tile = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+    const lat2tile = (l: number, z: number) => {
+      const rad = (l * Math.PI) / 180;
+      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, z));
+    };
+    const tileX = lon2tile(centerLng, zoom);
+    const tileY = lat2tile(centerLat, zoom);
+    return `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`;
+  }, [gateTargetUnit, gateToday, userGpsLocation, mapboxToken]);
+
+  const handleOpenGateMaps = () => {
+    const { lat, lng } = gateTargetUnit;
+    const userLat = userGpsLocation?.latitude ?? gateToday?.attendance?.latitude;
+    const userLng = userGpsLocation?.longitude ?? gateToday?.attendance?.longitude;
+    if (userLat && userLng) {
+      const url = `https://www.google.com/maps/dir/?api=1&origin=${userLat},${userLng}&destination=${lat},${lng}`;
+      void Linking.openURL(url);
+    } else {
+      const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+      void Linking.openURL(url);
+    }
+  };
+
+  // ── 5D. Gate Attendance Execution & Drop-off (Remote Outside Radius) Handler ──
+  const executeGateTap = async (typeParam: 'in' | 'out', customNotes?: string) => {
+    if (gateLoading) return;
+    setGateLoading(true);
+
+    try {
+      // 1. Dapatkan lokasi GPS perangkat
+      let coords: { latitude: number; longitude: number; accuracy?: number } | null = userGpsLocation;
+      if (!coords) {
+        coords = await requestUserGps(false);
+      }
+
+      if (!coords) {
+        setFeedbackModal({
+          visible: true,
+          type: 'warning',
+          title: 'Izin Lokasi / GPS Dibutuhkan',
+          message: 'Aktifkan GPS perangkat dan berikan izin lokasi untuk verifikasi kehadiran gerbang sekolah.',
+        });
+        setGateLoading(false);
+        return;
+      }
+
+      // 2. Geocoding / Location Name
+      let locationName = `Area Gerbang (${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)})`;
+      const Location = getLocationModule();
+      if (Location && typeof Location.reverseGeocodeAsync === 'function') {
+        try {
+          const geo = await Location.reverseGeocodeAsync({
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+          });
+          if (geo && geo.length > 0) {
+            const g = geo[0];
+            const parts = [g.name, g.street, g.district || g.subregion, g.city].filter(Boolean);
+            if (parts.length > 0) {
+              locationName = parts.join(', ');
+            }
+          }
+        } catch {
+          // fallback ke koordinat
+        }
+      }
+
+      const targetId = isParent ? selectedChildId : undefined;
+      const finalNotes = customNotes
+        ? customNotes
+        : `Tap Lokasi GPS SIMS Mobile (${coords.accuracy ? `Akurasi ±${Math.round(coords.accuracy)}m` : 'Presisi Tinggi'})`;
+
+      const res = await mobileApiService.tapPortalGateAttendance({
+        type: typeParam,
+        child_id: targetId,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        location: locationName,
+        notes: finalNotes,
+      });
+
+      const actionName = typeParam === 'in' ? 'Masuk' : 'Pulang';
+
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: `Presensi Gerbang ${actionName} Berhasil`,
+        message: `${res?.message || `Presensi gerbang ${actionName.toLowerCase()} berhasil dicatat.`}\n\nLokasi: ${locationName}${customNotes ? `\n\nCatatan: ${customNotes}` : ''}`,
+      });
+
+      setDropOffModalVisible(false);
+      setDropOffNotes('');
+      setDropOffDriverName('');
+
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Presensi Gerbang Gagal',
+        message: getApiErrorMessage(err, 'Presensi gerbang dengan lokasi belum berhasil dicatat.'),
+      });
+    } finally {
+      setGateLoading(false);
+    }
+  };
+
+  const handleGateTap = async (forcedType?: 'in' | 'out') => {
+    const typeParam = forcedType || (gateToday?.has_check_in && !gateToday?.has_check_out ? 'out' : 'in');
+
+    // Jika posisi user terdeteksi di luar radius gerbang, buka modal keterangan pengantaran/penjemputan
+    if (distanceToGate !== null && distanceToGate > gateTargetUnit.radius) {
+      setDropOffActionType(typeParam);
+      setDropOffModalVisible(true);
+      return;
+    }
+
+    // Jika belum ada data GPS tersimpan, coba refresh GPS sekali
+    if (!userGpsLocation) {
+      const coords = await requestUserGps(false);
+      if (coords) {
+        const d = calculateHaversineDistance(coords.latitude, coords.longitude, gateTargetUnit.lat, gateTargetUnit.lng);
+        if (d > gateTargetUnit.radius) {
+          setDropOffActionType(typeParam);
+          setDropOffModalVisible(true);
+          return;
+        }
+      }
+    }
+
+    // Jika berada dalam radius aman, langsung lakukan tap presensi
+    await executeGateTap(typeParam);
+  };
+
+  const handleConfirmDropOff = async () => {
+    if (dropOffNotes.trim().length < 5) {
+      Alert.alert('Perhatian', 'Mohon isi catatan/alasan pengantaran minimal 5 karakter.');
+      return;
+    }
+
+    const categoryLabels: Record<string, string> = {
+      ojek: 'Ojek Online (Gojek / Grab / Maxim)',
+      jemputan: 'Antar-Jemput / Sopir Pribadi',
+      kerabat: 'Keluarga / Kerabat',
+      mandiri: 'Berangkat Mandiri (Sepeda / Jalan Kaki / Angkot)',
+      dinas_ortu: 'Orang Tua Berhalangan (Dinas / Kerja / Sakit)',
+    };
+    const catName = categoryLabels[dropOffCategory] || dropOffCategory;
+    const driverStr = dropOffDriverName.trim() ? ` [Pengantar: ${dropOffDriverName.trim()}]` : '';
+    const fullNotes = `[${catName}]${driverStr} ${dropOffNotes.trim()}`;
+
+    await executeGateTap(dropOffActionType, fullNotes);
   };
 
   // ── 6. Submit Permission Form ──
@@ -2240,66 +2647,240 @@ export default function AbsensiScreen({ route, navigation }: any) {
           {!isStaff && (
             <View style={styles.containerBlock}>
               <View style={styles.sectionHeaderRow}>
-                <MaterialCommunityIcons name="chart-box-outline" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>
-                  {isParent && activeStudentName ? `Ringkasan & Statistik Presensi "${activeStudentName}"` : 'Ringkasan & Statistik Presensi'}
-                </Text>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="chart-box-outline" size={18} color="#18A165" />
+                  <Text numberOfLines={1} style={styles.sectionTitle}>
+                    {isParent && activeStudentName ? `Ringkasan & Statistik Presensi "${activeStudentName}"` : 'Ringkasan & Statistik Presensi'}
+                  </Text>
+                </View>
+                <View style={styles.attendanceRatePill}>
+                  <MaterialCommunityIcons name="shield-check" size={13} color="#059669" />
+                  <Text style={styles.attendanceRateText}>{studentStats.percentage}% Kehadiran</Text>
+                </View>
               </View>
 
-              {/* 3 KPI Cards Row (Harmonisasi Data Master) */}
-              <View style={styles.masterKpiCardsRow}>
-                {/* Card 1: Hadir */}
-                <View style={[styles.masterKpiBox, { borderColor: 'rgba(5, 150, 105, 0.22)' }]}>
-                  <LinearGradient colors={['#FFFFFF', '#ECFDF5']} style={styles.masterKpiBoxGradient}>
-                    <View style={styles.masterKpiHeaderRow}>
-                      <View style={[styles.masterKpiIconSquare, { backgroundColor: '#059669' }]}>
-                        <MaterialCommunityIcons name="account-check" size={14} color="#FFFFFF" />
-                      </View>
-                      <Text style={[styles.masterKpiVal, { color: '#059669' }]}>
+              {/* Colored 2-Row Master KPI Grid (Setiap label berwana, mandiri & tidak berhimpitan/terpotong) */}
+              <View style={styles.kpiGridContainer}>
+                {/* Row 1: Semua (Total), Hadir, Izin */}
+                <View style={styles.kpiGridRow}>
+                  {/* Card 1: Semua / Total */}
+                  <TouchableOpacity
+                    onPress={() => setStudentStatusFilter('all')}
+                    style={[
+                      styles.kpiCardItem,
+                      studentStatusFilter === 'all' ? styles.kpiCardItemActiveAll : styles.kpiCardItemInactiveAll,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.kpiCardHeaderRow}>
+                      <MaterialCommunityIcons
+                        name="layers-outline"
+                        size={15}
+                        color={studentStatusFilter === 'all' ? '#FFFFFF' : '#334155'}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiCardValue,
+                          { color: studentStatusFilter === 'all' ? '#FFFFFF' : '#0F172A' },
+                        ]}
+                      >
+                        {studentStats.total}
+                      </Text>
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.kpiCardLabel,
+                        { color: studentStatusFilter === 'all' ? '#FFFFFF' : '#475569' },
+                      ]}
+                    >
+                      Semua
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Card 2: Hadir */}
+                  <TouchableOpacity
+                    onPress={() => setStudentStatusFilter('hadir')}
+                    style={[
+                      styles.kpiCardItem,
+                      studentStatusFilter === 'hadir' ? styles.kpiCardItemActiveHadir : styles.kpiCardItemInactiveHadir,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.kpiCardHeaderRow}>
+                      <MaterialCommunityIcons
+                        name="check-circle-outline"
+                        size={15}
+                        color={studentStatusFilter === 'hadir' ? '#FFFFFF' : '#059669'}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiCardValue,
+                          { color: studentStatusFilter === 'hadir' ? '#FFFFFF' : '#059669' },
+                        ]}
+                      >
                         {studentStats.hadir}
                       </Text>
                     </View>
-                    <Text style={[styles.masterKpiLbl, { color: '#059669' }]} numberOfLines={1}>Hadir</Text>
-                    <Text style={styles.masterKpiSub} numberOfLines={1}>
-                      {`${studentStats.percentage}% Kehadiran`}
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.kpiCardLabel,
+                        { color: studentStatusFilter === 'hadir' ? '#FFFFFF' : '#047857' },
+                      ]}
+                    >
+                      Hadir
                     </Text>
-                  </LinearGradient>
-                </View>
+                  </TouchableOpacity>
 
-                {/* Card 2: Izin & Sakit */}
-                <View style={[styles.masterKpiBox, { borderColor: 'rgba(37, 99, 235, 0.18)' }]}>
-                  <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={styles.masterKpiBoxGradient}>
-                    <View style={styles.masterKpiHeaderRow}>
-                      <View style={[styles.masterKpiIconSquare, { backgroundColor: '#2563EB' }]}>
-                        <MaterialCommunityIcons name="file-document-outline" size={14} color="#FFFFFF" />
-                      </View>
-                      <Text style={[styles.masterKpiVal, { color: '#2563EB' }]}>
-                        {studentStats.izin + studentStats.sakit}
+                  {/* Card 3: Izin */}
+                  <TouchableOpacity
+                    onPress={() => setStudentStatusFilter('izin')}
+                    style={[
+                      styles.kpiCardItem,
+                      studentStatusFilter === 'izin' ? styles.kpiCardItemActiveIzin : styles.kpiCardItemInactiveIzin,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.kpiCardHeaderRow}>
+                      <MaterialCommunityIcons
+                        name="file-document-outline"
+                        size={15}
+                        color={studentStatusFilter === 'izin' ? '#FFFFFF' : '#2563EB'}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiCardValue,
+                          { color: studentStatusFilter === 'izin' ? '#FFFFFF' : '#2563EB' },
+                        ]}
+                      >
+                        {studentStats.izin}
                       </Text>
                     </View>
-                    <Text style={[styles.masterKpiLbl, { color: '#2563EB' }]} numberOfLines={1}>Izin & Sakit</Text>
-                    <Text style={styles.masterKpiSub} numberOfLines={1}>
-                      {`${studentStats.izin} Izin · ${studentStats.sakit} Sakit`}
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.kpiCardLabel,
+                        { color: studentStatusFilter === 'izin' ? '#FFFFFF' : '#1D4ED8' },
+                      ]}
+                    >
+                      Izin
                     </Text>
-                  </LinearGradient>
+                  </TouchableOpacity>
                 </View>
 
-                {/* Card 3: Telat & Alpa */}
-                <View style={[styles.masterKpiBox, { borderColor: 'rgba(225, 29, 72, 0.18)' }]}>
-                  <LinearGradient colors={['#FFFFFF', '#FFF1F2']} style={styles.masterKpiBoxGradient}>
-                    <View style={styles.masterKpiHeaderRow}>
-                      <View style={[styles.masterKpiIconSquare, { backgroundColor: '#E11D48' }]}>
-                        <MaterialCommunityIcons name="clock-alert-outline" size={14} color="#FFFFFF" />
-                      </View>
-                      <Text style={[styles.masterKpiVal, { color: '#E11D48' }]}>
-                        {studentStats.terlambat + studentStats.alpa}
+                {/* Row 2: Sakit, Terlambat, Alpa */}
+                <View style={styles.kpiGridRow}>
+                  {/* Card 4: Sakit */}
+                  <TouchableOpacity
+                    onPress={() => setStudentStatusFilter('sakit')}
+                    style={[
+                      styles.kpiCardItem,
+                      studentStatusFilter === 'sakit' ? styles.kpiCardItemActiveSakit : styles.kpiCardItemInactiveSakit,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.kpiCardHeaderRow}>
+                      <MaterialCommunityIcons
+                        name="hospital-box-outline"
+                        size={15}
+                        color={studentStatusFilter === 'sakit' ? '#FFFFFF' : '#7C3AED'}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiCardValue,
+                          { color: studentStatusFilter === 'sakit' ? '#FFFFFF' : '#7C3AED' },
+                        ]}
+                      >
+                        {studentStats.sakit}
                       </Text>
                     </View>
-                    <Text style={[styles.masterKpiLbl, { color: '#E11D48' }]} numberOfLines={1}>Telat & Alpa</Text>
-                    <Text style={styles.masterKpiSub} numberOfLines={1}>
-                      {`${studentStats.terlambat} Telat · ${studentStats.alpa} Alpa`}
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.kpiCardLabel,
+                        { color: studentStatusFilter === 'sakit' ? '#FFFFFF' : '#6D28D9' },
+                      ]}
+                    >
+                      Sakit
                     </Text>
-                  </LinearGradient>
+                  </TouchableOpacity>
+
+                  {/* Card 5: Terlambat */}
+                  <TouchableOpacity
+                    onPress={() => setStudentStatusFilter('terlambat')}
+                    style={[
+                      styles.kpiCardItem,
+                      studentStatusFilter === 'terlambat' ? styles.kpiCardItemActiveTerlambat : styles.kpiCardItemInactiveTerlambat,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.kpiCardHeaderRow}>
+                      <MaterialCommunityIcons
+                        name="clock-alert-outline"
+                        size={15}
+                        color={studentStatusFilter === 'terlambat' ? '#FFFFFF' : '#D97706'}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiCardValue,
+                          { color: studentStatusFilter === 'terlambat' ? '#FFFFFF' : '#D97706' },
+                        ]}
+                      >
+                        {studentStats.terlambat}
+                      </Text>
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.kpiCardLabel,
+                        { color: studentStatusFilter === 'terlambat' ? '#FFFFFF' : '#B45309' },
+                      ]}
+                    >
+                      Terlambat
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Card 6: Alpa */}
+                  <TouchableOpacity
+                    onPress={() => setStudentStatusFilter('alpa')}
+                    style={[
+                      styles.kpiCardItem,
+                      studentStatusFilter === 'alpa' ? styles.kpiCardItemActiveAlpa : styles.kpiCardItemInactiveAlpa,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.kpiCardHeaderRow}>
+                      <MaterialCommunityIcons
+                        name="close-circle-outline"
+                        size={15}
+                        color={studentStatusFilter === 'alpa' ? '#FFFFFF' : '#E11D48'}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiCardValue,
+                          { color: studentStatusFilter === 'alpa' ? '#FFFFFF' : '#E11D48' },
+                        ]}
+                      >
+                        {studentStats.alpa}
+                      </Text>
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.kpiCardLabel,
+                        { color: studentStatusFilter === 'alpa' ? '#FFFFFF' : '#BE123C' },
+                      ]}
+                    >
+                      Alpa
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </View>
@@ -2508,6 +3089,337 @@ export default function AbsensiScreen({ route, navigation }: any) {
           ) : null}
 
           {/* ══════════════════════════════════════════════════════════════
+              SECTION 3B: PRESENSI GERBANG MANDIRI (TAP LOKASI GPS ALA TU)
+              Untuk Santri / Siswa & Orang Tua (Tab Semua & Kehadiran)
+             ══════════════════════════════════════════════════════════════ */}
+          {!isStaff && (isParent || isStudent) && (activeTab === 'all' || activeTab === 'attendance') && (
+            <View style={styles.containerBlock}>
+              <View style={styles.gateLiveClockCard}>
+                <LinearGradient colors={['#F0FDFA', '#CCFBF1']} style={styles.gateLiveClockGradient}>
+                  {/* Top Bar: GPS Radius Badge + Unit Name */}
+                  <View style={styles.gateLiveClockTopRow}>
+                    <View style={styles.gateGpsRadiusBadge}>
+                      <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#0D9488" />
+                      <Text style={styles.gateGpsRadiusBadgeText}>Radius Wajib: Maks. {gateTargetUnit.radius} Meter</Text>
+                    </View>
+                    <Text numberOfLines={1} style={styles.gateUnitNameText}>{gateTargetUnit.name}</Text>
+                  </View>
+
+                  {/* Digital Clock Realtime */}
+                  <Text style={styles.gateClockDigitsText}>{currentTime || '--:--:-- WIB'}</Text>
+                  <Text style={styles.gateDateSubText}>
+                    {currentDateText || formatTanggalIndo(new Date().toISOString())}
+                  </Text>
+                  <Text style={styles.gateTargetStudentText}>
+                    {isParent && activeStudentName ? `Presensi Gerbang Mandiri Ananda: ${activeStudentName}` : 'Presensi Gerbang Mandiri Santri'}
+                  </Text>
+
+                  {/* ── MAP LOKASI UNIT & POSISI USER DENGAN INDIKATOR JARAK REALTIME ── */}
+                  <View style={styles.gateLiveMapContainer}>
+                    {/* Map Image View (Mapbox Retina 2x / OpenStreetMap) */}
+                    <View style={styles.gateMapFrame}>
+                      {gateMapTileUrl ? (
+                        <Image
+                          source={{ uri: gateMapTileUrl }}
+                          style={styles.gateMapImage}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={styles.gateMapLoadingBox}>
+                          <ActivityIndicator size="small" color="#0D9488" />
+                          <Text style={styles.gateMapLoadingText}>Memuat peta lokasi gerbang...</Text>
+                        </View>
+                      )}
+
+                      {/* Gradient overlay to soften bottom & top edges */}
+                      <LinearGradient
+                        colors={['rgba(0,0,0,0.4)', 'transparent', 'rgba(0,0,0,0.55)']}
+                        style={StyleSheet.absoluteFill}
+                        pointerEvents="none"
+                      />
+
+                      {/* Top Row Badges over Map */}
+                      <View style={styles.gateMapTopBadgesRow}>
+                        <View style={styles.gateMapUnitBadge}>
+                          <MaterialCommunityIcons name="office-building-marker" size={12} color="#059669" />
+                          <Text style={styles.gateMapUnitBadgeText} numberOfLines={1}>
+                            {gateTargetUnit.name}
+                          </Text>
+                        </View>
+                        <View style={[
+                          styles.gateMapRadiusPill,
+                          distanceToGate !== null && (isWithinGateRadius ? styles.gateMapRadiusPillSuccess : styles.gateMapRadiusPillDanger)
+                        ]}>
+                          <MaterialCommunityIcons
+                            name={distanceToGate !== null ? (isWithinGateRadius ? 'check-circle' : 'alert-circle') : 'crosshairs-gps'}
+                            size={12}
+                            color="#FFFFFF"
+                          />
+                          <Text style={styles.gateMapRadiusPillText}>
+                            {distanceToGate !== null
+                              ? isWithinGateRadius
+                                ? 'Dalam Radius'
+                                : 'Di Luar Radius'
+                              : `Maks. ${gateTargetUnit.radius}m`}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Bottom Row inside Map: Legend & Google Maps Navigation Button */}
+                      <View style={styles.gateMapBottomRow}>
+                        <View style={styles.gateMapLegendBox}>
+                          <View style={styles.gateLegendItem}>
+                            <View style={[styles.gateLegendDot, { backgroundColor: '#059669' }]} />
+                            <Text style={styles.gateLegendText}>Gerbang</Text>
+                          </View>
+                          <View style={styles.gateLegendItem}>
+                            <View style={[styles.gateLegendDot, { backgroundColor: '#2563EB' }]} />
+                            <Text style={styles.gateLegendText}>Anda</Text>
+                          </View>
+                        </View>
+
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={handleOpenGateMaps}
+                          style={styles.gateMapNavigateBtn}
+                        >
+                          <MaterialCommunityIcons name="google-maps" size={13} color="#0F172A" />
+                          <Text style={styles.gateMapNavigateBtnText}>Rute</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Distance & GPS Status Card ala TU */}
+                    <View style={styles.gateDistanceInfoCard}>
+                      <View style={styles.gateDistancePrimaryRow}>
+                        {/* Left: Distance Value */}
+                        <View style={styles.gateDistanceValueCol}>
+                          <Text style={styles.gateDistanceLabel}>Jarak Anda ke Gerbang</Text>
+                          <View style={styles.gateDistanceNumberRow}>
+                            <MaterialCommunityIcons
+                              name="map-marker-distance"
+                              size={20}
+                              color={distanceToGate !== null ? (isWithinGateRadius ? '#059669' : '#E11D48') : '#64748B'}
+                            />
+                            <Text style={[
+                              styles.gateDistanceNumberText,
+                              distanceToGate !== null && (isWithinGateRadius ? { color: '#047857' } : { color: '#E11D48' })
+                            ]}>
+                              {formatGateDistance(distanceToGate)}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Middle: Status Note */}
+                        <View style={styles.gateDistanceStatusCol}>
+                          <View style={[
+                            styles.gateDistanceStatusTag,
+                            distanceToGate !== null
+                              ? isWithinGateRadius
+                                ? styles.gateDistanceStatusTagSuccess
+                                : styles.gateDistanceStatusTagDanger
+                              : styles.gateDistanceStatusTagPending
+                          ]}>
+                            <Text style={[
+                              styles.gateDistanceStatusTagText,
+                              distanceToGate !== null
+                                ? isWithinGateRadius
+                                  ? { color: '#047857' }
+                                  : { color: '#BE123C' }
+                                : { color: '#D97706' }
+                            ]}>
+                              {distanceToGate !== null
+                                ? isWithinGateRadius
+                                  ? '✓ Radius Aman'
+                                  : `✕ Lebih ${Math.round(distanceToGate - gateTargetUnit.radius)}m`
+                                : 'Menunggu GPS'}
+                            </Text>
+                          </View>
+                          <Text style={styles.gateDistanceSubHint}>
+                            Toleransi: {gateTargetUnit.radius} meter
+                          </Text>
+                        </View>
+
+                        {/* Right: Refresh GPS Button */}
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => void requestUserGps(false)}
+                          disabled={locatingGps}
+                          style={styles.gateRefreshGpsBtn}
+                        >
+                          {locatingGps ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <MaterialCommunityIcons name="crosshairs-gps" size={15} color="#FFFFFF" />
+                              <Text style={styles.gateRefreshGpsBtnText}>GPS</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Bottom: Coords Strip */}
+                      <View style={styles.gateCoordsStripRow}>
+                        <Text style={styles.gateCoordsStripText} numberOfLines={1}>
+                          GPS: {userGpsLocation ? `${userGpsLocation.latitude.toFixed(5)}, ${userGpsLocation.longitude.toFixed(5)}` : (gateToday?.attendance?.location || 'Mencari...')}
+                        </Text>
+                        <Text style={styles.gateCoordsStripDivider}>•</Text>
+                        <Text style={styles.gateCoordsStripText} numberOfLines={1}>
+                          Gerbang: {gateTargetUnit.lat.toFixed(5)}, {gateTargetUnit.lng.toFixed(5)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Status Box: 3 Kartu Terpisah ala TU (Masuk, Pulang, Status) Bebas Tumpang Tindih */}
+                  <View style={styles.gateTodayStatusRow}>
+                    {/* Card 1: Masuk */}
+                    <View style={[styles.gateStatusPillBox, gateToday?.has_check_in ? styles.gateStatusPillBoxActiveIn : styles.gateStatusPillBoxNeutral]}>
+                      <View style={styles.gateStatusPillHeader}>
+                        <MaterialCommunityIcons name="login" size={13} color="#059669" />
+                        <Text style={[styles.gateStatusPillLabel, gateToday?.has_check_in && { color: '#047857' }]}>MASUK</Text>
+                      </View>
+                      <Text style={styles.gateStatusPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                        {gateToday?.attendance?.check_in_time ? `${String(gateToday.attendance.check_in_time).slice(0, 5)} WIB` : '--:--'}
+                      </Text>
+                      <Text style={[styles.gateStatusPillSub, gateToday?.has_check_in && { color: '#059669' }]} numberOfLines={1}>
+                        {gateToday?.has_check_in ? 'WIB • Tercatat' : 'Belum Absen'}
+                      </Text>
+                    </View>
+
+                    {/* Card 2: Pulang */}
+                    <View style={[styles.gateStatusPillBox, gateToday?.has_check_out ? styles.gateStatusPillBoxActiveOut : styles.gateStatusPillBoxNeutral]}>
+                      <View style={styles.gateStatusPillHeader}>
+                        <MaterialCommunityIcons name="logout" size={13} color="#0D9488" />
+                        <Text style={[styles.gateStatusPillLabel, gateToday?.has_check_out && { color: '#0F766E' }]}>PULANG</Text>
+                      </View>
+                      <Text style={styles.gateStatusPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                        {gateToday?.attendance?.check_out_time ? `${String(gateToday.attendance.check_out_time).slice(0, 5)} WIB` : '--:--'}
+                      </Text>
+                      <Text style={[styles.gateStatusPillSub, gateToday?.has_check_out && { color: '#0D9488' }]} numberOfLines={1}>
+                        {gateToday?.has_check_out ? 'WIB • Selesai' : 'Belum Absen'}
+                      </Text>
+                    </View>
+
+                    {/* Card 3: Status */}
+                    <View style={[
+                      styles.gateStatusPillBox,
+                      gateToday?.has_check_in ? styles.gateStatusPillBoxSuccess : styles.gateStatusPillBoxNeutral
+                    ]}>
+                      <View style={styles.gateStatusPillHeader}>
+                        <MaterialCommunityIcons
+                          name={gateToday?.has_check_in ? 'check-circle' : 'clock-outline'}
+                          size={13}
+                          color={gateToday?.has_check_in ? '#047857' : '#64748B'}
+                        />
+                        <Text style={[
+                          styles.gateStatusPillLabel,
+                          gateToday?.has_check_in ? { color: '#047857' } : { color: '#64748B' }
+                        ]}>
+                          STATUS
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.gateStatusPillValue,
+                          gateToday?.has_check_in ? { color: '#047857' } : { color: '#64748B' }
+                        ]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                      >
+                        {gateToday?.has_check_in ? (gateToday?.attendance?.status_label || gateToday?.attendance?.status || 'Hadir') : 'Belum Tap'}
+                      </Text>
+                      <Text style={[
+                        styles.gateStatusPillSub,
+                        gateToday?.has_check_in ? { color: '#059669' } : { color: '#94A3B8' }
+                      ]} numberOfLines={1}>
+                        {gateToday?.has_check_in ? 'Tervalidasi' : 'Gerbang'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Dual Action Buttons Berdampingan ala TU */}
+                  <View style={styles.gateActionButtonsRow}>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => void handleGateTap('in')}
+                      disabled={gateLoading || Boolean(gateToday?.has_check_in)}
+                      style={[
+                        styles.gateCheckActionBtn,
+                        { backgroundColor: '#059669' },
+                        Boolean(gateToday?.has_check_in) && { opacity: 0.55 },
+                      ]}
+                    >
+                      {gateLoading ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <MaterialCommunityIcons name="login" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.gateCheckActionBtnText}>
+                            {gateToday?.has_check_in ? 'Sudah Masuk' : 'Tap Masuk'}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => void handleGateTap('out')}
+                      disabled={
+                        gateLoading ||
+                        !gateToday?.has_check_in ||
+                        Boolean(gateToday?.has_check_out)
+                      }
+                      style={[
+                        styles.gateCheckActionBtn,
+                        { backgroundColor: '#0D9488' },
+                        (!gateToday?.has_check_in || Boolean(gateToday?.has_check_out)) && { opacity: 0.55 },
+                      ]}
+                    >
+                      {gateLoading ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <MaterialCommunityIcons name="logout" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.gateCheckActionBtnText}>
+                            {gateToday?.has_check_out ? 'Sudah Pulang' : 'Tap Pulang'}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Tombol Pembaruan Khusus jika sudah Masuk & Pulang */}
+                  {gateToday?.has_check_in && (
+                    <View style={styles.gateSecondaryTapRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => void handleGateTap('in')}
+                        style={styles.gateMiniRefreshBtn}
+                      >
+                        <MaterialCommunityIcons name="refresh" size={12} color="#059669" />
+                        <Text style={styles.gateMiniRefreshBtnText}>Tap Ulang Masuk</Text>
+                      </TouchableOpacity>
+
+                      {gateToday?.has_check_out && (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => void handleGateTap('out')}
+                          style={styles.gateMiniRefreshBtn}
+                        >
+                          <MaterialCommunityIcons name="refresh" size={12} color="#0D9488" />
+                          <Text style={[styles.gateMiniRefreshBtnText, { color: '#0D9488' }]}>Perbarui Pulang</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+                </LinearGradient>
+              </View>
+            </View>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════
               SECTION 4: RIWAYAT & LOG KEHADIRAN
              ══════════════════════════════════════════════════════════════ */}
           <View style={styles.containerBlock}>
@@ -2538,156 +3450,267 @@ export default function AbsensiScreen({ route, navigation }: any) {
               )}
             </View>
 
-            {/* Filter Rentang Periode: Harian, Mingguan, Bulanan, Semester, Tahun Ajaran */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.periodChipsRow}
-              style={{ marginBottom: 12 }}
-            >
-              {[
-                { key: 'daily', label: 'Harian' },
-                { key: 'weekly', label: 'Mingguan' },
-                { key: 'monthly', label: 'Bulanan' },
-                { key: 'semester', label: 'Semester' },
-                { key: 'yearly', label: 'Tahun Ajaran' },
-              ].map((p) => {
-                const isActive = selectedPeriod === p.key;
-                return (
-                  <TouchableOpacity
-                    key={p.key}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedPeriod(p.key as any)}
-                    style={[styles.periodChip, isActive && styles.periodChipActive]}
-                  >
-                    <Text style={[styles.periodChipText, isActive && styles.periodChipTextActive]}>
-                      {p.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            {/* UNIFIED FILTER CARD (Khusus Santri & Wali Menggunakan Pola Layout Filter Mutabaah TU) */}
+            {!isStaff ? (
+              <View style={styles.mutabaahFilterCard}>
+                <View style={styles.mutabaahFilterCardHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                    <MaterialCommunityIcons name="filter-variant" size={16} color="#059669" />
+                    <Text numberOfLines={1} style={styles.mutabaahFilterCardTitle}>Filter Log Kehadiran</Text>
+                  </View>
+                  {(searchQuery.length > 0 || studentStatusFilter !== 'all' || activeTab !== 'all' || selectedPeriod !== 'daily') ? (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setSearchQuery('');
+                        setStudentStatusFilter('all');
+                        setActiveTab('all');
+                        setSelectedPeriod('daily');
+                      }}
+                      style={{ flexShrink: 0 }}
+                    >
+                      <Text style={styles.mutabaahFilterResetBtn}>Reset Filter</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
 
-            {/* Filter Tabs for Student / Parent */}
-            {!isStaff && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterTabsRow}
-                style={{ marginBottom: 12 }}
-              >
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setActiveTab('all')}
-                  style={[styles.filterTabPill, activeTab === 'all' && styles.filterTabPillActive]}
+                {/* In-Card Search Input Bar (Harmonisasi VIS-B2-005) */}
+                <View style={styles.mutabaahSearchBox}>
+                  <MaterialCommunityIcons name="magnify" size={18} color="#64748B" />
+                  <TextInput
+                    placeholder="Cari mata pelajaran, tanggal, status..."
+                    placeholderTextColor="#94A3B8"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    style={styles.mutabaahSearchInput}
+                  />
+                  {searchQuery ? (
+                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                      <MaterialCommunityIcons name="close-circle" size={16} color="#94A3B8" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                {/* Kategori Log Presensi (Semua, Presensi Kelas, Izin, Asrama) */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.mutabaahScopeTabsScroll}
                 >
-                  <Text style={[styles.filterTabPillText, activeTab === 'all' && styles.filterTabPillTextActive]}>
-                    Semua ({attendanceLogs.length + permissionsHistory.length + dormitoryPermits.length})
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setActiveTab('attendance')}
-                  style={[styles.filterTabPill, activeTab === 'attendance' && styles.filterTabPillActive]}
-                >
-                  <Text style={[styles.filterTabPillText, activeTab === 'attendance' && styles.filterTabPillTextActive]}>
-                    Presensi Kelas ({attendanceLogs.length})
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setActiveTab('permissions')}
-                  style={[styles.filterTabPill, activeTab === 'permissions' && styles.filterTabPillActive]}
-                >
-                  <Text style={[styles.filterTabPillText, activeTab === 'permissions' && styles.filterTabPillTextActive]}>
-                    Izin & Sakit ({permissionsHistory.length})
-                  </Text>
-                </TouchableOpacity>
-
-                {dormitoryPermits.length > 0 && (
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    onPress={() => setActiveTab('boarding')}
-                    style={[styles.filterTabPill, activeTab === 'boarding' && styles.filterTabPillActive]}
+                    onPress={() => setActiveTab('all')}
+                    style={[styles.mutabaahScopePill, activeTab === 'all' && styles.mutabaahScopePillActive]}
                   >
-                    <Text style={[styles.filterTabPillText, activeTab === 'boarding' && styles.filterTabPillTextActive]}>
-                      Boarding Pass ({dormitoryPermits.length})
+                    <MaterialCommunityIcons name="view-grid-outline" size={13} color={activeTab === 'all' ? '#047857' : '#64748B'} />
+                    <Text numberOfLines={1} style={[styles.mutabaahScopePillText, activeTab === 'all' && styles.mutabaahScopePillTextActive]}>
+                      Semua ({attendanceLogs.length + permissionsHistory.length + dormitoryPermits.length})
                     </Text>
                   </TouchableOpacity>
-                )}
-              </ScrollView>
-            )}
 
-
-
-            {/* Sub-Filter Status Izin khusus saat Staff membuka tab Verifikasi Izin */}
-            {isStaff && activeTab === 'permissions' && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.permStatusFilterRow}
-              >
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setStaffPermFilter('all')}
-                  style={[styles.permStatusPill, staffPermFilter === 'all' && styles.permStatusPillActive]}
-                >
-                  <Text style={[styles.permStatusPillText, staffPermFilter === 'all' && styles.permStatusPillTextActive]}>
-                    Semua ({permissionsHistory.length})
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setStaffPermFilter('pending')}
-                  style={[styles.permStatusPill, staffPermFilter === 'pending' && styles.permStatusPillActiveAmber]}
-                >
-                  <Text style={[styles.permStatusPillText, staffPermFilter === 'pending' && styles.permStatusPillTextActiveAmber]}>
-                    Menunggu ({pendingPermCount})
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setStaffPermFilter('approved')}
-                  style={[styles.permStatusPill, staffPermFilter === 'approved' && styles.permStatusPillActiveEmerald]}
-                >
-                  <Text style={[styles.permStatusPillText, staffPermFilter === 'approved' && styles.permStatusPillTextActiveEmerald]}>
-                    Disetujui ({approvedPermCount})
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setStaffPermFilter('rejected')}
-                  style={[styles.permStatusPill, staffPermFilter === 'rejected' && styles.permStatusPillActiveRose]}
-                >
-                  <Text style={[styles.permStatusPillText, staffPermFilter === 'rejected' && styles.permStatusPillTextActiveRose]}>
-                    Ditolak ({rejectedPermCount})
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
-
-            {/* Search Input — Khusus Siswa & Orang Tua (Staff sudah memiliki Search Bar di Header Gradient) */}
-            {!isStaff && (
-              <View style={styles.searchContainer}>
-                <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
-                <TextInput
-                  placeholder="Cari mata pelajaran, tanggal, status..."
-                  placeholderTextColor="#94A3B8"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  style={styles.searchInput}
-                />
-                {searchQuery.length > 0 && (
                   <TouchableOpacity
-                    onPress={() => setSearchQuery('')}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('attendance')}
+                    style={[styles.mutabaahScopePill, activeTab === 'attendance' && styles.mutabaahScopePillActive]}
                   >
-                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                    <MaterialCommunityIcons name="school-outline" size={13} color={activeTab === 'attendance' ? '#047857' : '#64748B'} />
+                    <Text numberOfLines={1} style={[styles.mutabaahScopePillText, activeTab === 'attendance' && styles.mutabaahScopePillTextActive]}>
+                      Presensi Kelas ({attendanceLogs.length})
+                    </Text>
                   </TouchableOpacity>
-                )}
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('permissions')}
+                    style={[styles.mutabaahScopePill, activeTab === 'permissions' && styles.mutabaahScopePillActive]}
+                  >
+                    <MaterialCommunityIcons name="file-document-outline" size={13} color={activeTab === 'permissions' ? '#047857' : '#64748B'} />
+                    <Text numberOfLines={1} style={[styles.mutabaahScopePillText, activeTab === 'permissions' && styles.mutabaahScopePillTextActive]}>
+                      Izin & Sakit ({permissionsHistory.length})
+                    </Text>
+                  </TouchableOpacity>
+
+                  {dormitoryPermits.length > 0 && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setActiveTab('boarding')}
+                      style={[styles.mutabaahScopePill, activeTab === 'boarding' && styles.mutabaahScopePillActive]}
+                    >
+                      <MaterialCommunityIcons name="home-city-outline" size={13} color={activeTab === 'boarding' ? '#047857' : '#64748B'} />
+                      <Text numberOfLines={1} style={[styles.mutabaahScopePillText, activeTab === 'boarding' && styles.mutabaahScopePillTextActive]}>
+                        Izin Asrama ({dormitoryPermits.length})
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </ScrollView>
+
+                {/* Filter Rentang Periode Waktu */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.periodChipsRow}
+                  style={{ marginTop: 2 }}
+                >
+                  {[
+                    { key: 'daily', label: 'Harian' },
+                    { key: 'weekly', label: 'Mingguan' },
+                    { key: 'monthly', label: 'Bulanan' },
+                    { key: 'semester', label: 'Semester' },
+                    { key: 'yearly', label: 'Tahun Ajaran' },
+                  ].map((p) => {
+                    const isActive = selectedPeriod === p.key;
+                    return (
+                      <TouchableOpacity
+                        key={p.key}
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedPeriod(p.key as any)}
+                        style={[styles.periodChip, isActive && styles.periodChipActive]}
+                      >
+                        <Text style={[styles.periodChipText, isActive && styles.periodChipTextActive]}>
+                          {p.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
+            ) : (
+              <>
+                {/* Filter Rentang Periode untuk Staff */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.periodChipsRow}
+                  style={{ marginBottom: 12 }}
+                >
+                  {[
+                    { key: 'daily', label: 'Harian' },
+                    { key: 'weekly', label: 'Mingguan' },
+                    { key: 'monthly', label: 'Bulanan' },
+                    { key: 'semester', label: 'Semester' },
+                    { key: 'yearly', label: 'Tahun Ajaran' },
+                  ].map((p) => {
+                    const isActive = selectedPeriod === p.key;
+                    return (
+                      <TouchableOpacity
+                        key={p.key}
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedPeriod(p.key as any)}
+                        style={[styles.periodChip, isActive && styles.periodChipActive]}
+                      >
+                        <Text style={[styles.periodChipText, isActive && styles.periodChipTextActive]}>
+                          {p.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Sub-Filter Status Izin khusus saat Staff membuka tab Verifikasi Izin */}
+                {activeTab === 'permissions' && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.permStatusFilterRow}
+                  >
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setStaffPermFilter('all')}
+                      style={[styles.permStatusPill, staffPermFilter === 'all' && styles.permStatusPillActive]}
+                    >
+                      <Text style={[styles.permStatusPillText, staffPermFilter === 'all' && styles.permStatusPillTextActive]}>
+                        Semua ({permissionsHistory.length})
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setStaffPermFilter('pending')}
+                      style={[styles.permStatusPill, staffPermFilter === 'pending' && styles.permStatusPillActiveAmber]}
+                    >
+                      <Text style={[styles.permStatusPillText, staffPermFilter === 'pending' && styles.permStatusPillTextActiveAmber]}>
+                        Menunggu ({pendingPermCount})
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setStaffPermFilter('approved')}
+                      style={[styles.permStatusPill, staffPermFilter === 'approved' && styles.permStatusPillActiveEmerald]}
+                    >
+                      <Text style={[styles.permStatusPillText, staffPermFilter === 'approved' && styles.permStatusPillTextActiveEmerald]}>
+                        Disetujui ({approvedPermCount})
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setStaffPermFilter('rejected')}
+                      style={[styles.permStatusPill, staffPermFilter === 'rejected' && styles.permStatusPillActiveRose]}
+                    >
+                      <Text style={[styles.permStatusPillText, staffPermFilter === 'rejected' && styles.permStatusPillTextActiveRose]}>
+                        Ditolak ({rejectedPermCount})
+                      </Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                )}
+                {activeTab === 'boarding' && (
+                  <View style={{ marginBottom: 12, paddingHorizontal: 2 }}>
+                    {/* Active Boarding Pass Card if any is currently out */}
+                    {(() => {
+                      const activePermit = dormitoryPermits.find(
+                        (p) => p.status === 'keluar' || p.presence_status === 'di_luar' || p.presence_status === 'berobat'
+                      );
+                      if (!activePermit) return null;
+                      const isOverdue = activePermit.deadline_status === 'overdue';
+                      const isMedical = activePermit.permit_type === 'sakit_berobat' || activePermit.presence_status === 'berobat';
+
+                      return (
+                        <LinearGradient
+                          colors={isOverdue ? ['#7F1D1D', '#991B1B', '#DC2626'] : isMedical ? ['#78350F', '#B45309', '#D97706'] : ['#064E3B', '#047857', '#059669']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={{
+                            borderRadius: 18,
+                            padding: 14,
+                            marginBottom: 10,
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 2 },
+                            shadowOpacity: 0.15,
+                            shadowRadius: 5,
+                            elevation: 3,
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <MaterialCommunityIcons name={isMedical ? 'hospital-box-outline' : 'home-city-outline'} size={18} color="#FFFFFF" />
+                              <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>
+                                {isMedical ? 'STATUS: SEDANG BEROBAT' : 'STATUS: SEDANG DI LUAR PONDOK'}
+                              </Text>
+                            </View>
+                            <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
+                              <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '700', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}>
+                                #{activePermit.permit_number}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={{ marginTop: 8 }}>
+                            <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '700' }}>
+                              Tujuan: {activePermit.medical_destination || activePermit.destination || 'Rumah'}
+                            </Text>
+                            <Text style={{ color: '#F1F5F9', fontSize: 11, marginTop: 2 }}>
+                              Wajib Kembali Sebelum: <Text style={{ fontWeight: '800' }}>{formatJamIndo(activePermit.scheduled_return_at)} WIB</Text>
+                            </Text>
+                            {isOverdue && (
+                              <Text style={{ color: '#FEF08A', fontSize: 11, fontWeight: '800', marginTop: 3 }}>
+                                ⚠️ Perhatian: Telah melewati batas jam kembali yang ditentukan!
+                              </Text>
+                            )}
+                          </View>
+                        </LinearGradient>
+                      );
+                    })()}
+                  </View>
+                )}
+              </>
             )}
 
             {/* Error Banner jika gagal fetch */}
@@ -2724,12 +3747,91 @@ export default function AbsensiScreen({ route, navigation }: any) {
                 description="Riwayat presensi kelas dan catatan kehadiran akan tampil otomatis di sini setelah dicatat guru."
               />
             ) : (
-              <View style={styles.itemsListWrap}>
+              <View style={!isStaff ? styles.mutabaahItemsList : styles.itemsListWrap}>
                 {unifiedItems.map((item) => {
                   const tone = getStatusColor(item.statusKey);
                   const isStaffReview = item.category === 'staff_permission_review';
                   const permStatusRaw = String(item.raw?.status || '').toLowerCase();
                   const canReviewThis = isStaffReview && (permStatusRaw === 'pending' || permStatusRaw === 'submitted' || permStatusRaw === 'menunggu');
+
+                  if (!isStaff) {
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setSelectedDetail(item);
+                          setIsDetailModalOpen(true);
+                        }}
+                        style={styles.mutabaahStudentCard}
+                      >
+                        {/* Card Header: Avatar/Icon + Judul/Mapel + Badge Status */}
+                        <View style={styles.mutabaahCardHeader}>
+                          <View style={[styles.mutabaahAvatarCircle, { backgroundColor: tone.bg, borderColor: tone.border }]}>
+                            <MaterialCommunityIcons name={tone.icon as any} size={20} color={tone.text} />
+                          </View>
+                          <View style={styles.mutabaahMetaCol}>
+                            <Text numberOfLines={1} style={styles.mutabaahStudentName}>
+                              {item.title}
+                            </Text>
+                            <Text numberOfLines={1} style={styles.mutabaahStudentSub}>
+                              {item.subtitle}
+                            </Text>
+                          </View>
+                          <View style={[styles.mutabaahStatusBadge, { backgroundColor: tone.bg, borderColor: tone.border }]}>
+                            <Text style={[styles.mutabaahStatusBadgeText, { color: tone.text }]}>
+                              {item.status}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Tanggal & Waktu Presensi */}
+                        <View style={styles.mutabaahCardDetailsRow}>
+                          <View style={styles.infoMetaPill}>
+                            <MaterialCommunityIcons name="calendar-month-outline" size={12} color="#059669" />
+                            <Text style={[styles.infoMetaText, { color: '#059669', fontWeight: '700' }]}>
+                              {formatTanggalIndo(item.date)}
+                            </Text>
+                          </View>
+                          <View style={styles.infoMetaPill}>
+                            <MaterialCommunityIcons name="clock-outline" size={12} color="#64748B" />
+                            <Text style={styles.infoMetaText}>{item.time}</Text>
+                          </View>
+                        </View>
+
+                        {/* Notes / Catatan Kehadiran */}
+                        {item.notes ? (
+                          <View style={styles.notesBox}>
+                            <Text numberOfLines={3} style={styles.notesText}>
+                              Catatan: {item.notes}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {/* Lampiran (jika ada) */}
+                        {item.attachmentUrl ? (
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => openAttachmentPreview(item.attachmentUrl, `Lampiran - ${item.title}`)}
+                            style={styles.attachmentBadgeBtn}
+                          >
+                            <MaterialCommunityIcons name="paperclip" size={14} color="#059669" />
+                            <Text style={styles.attachmentBadgeBtnText}>Lihat Lampiran Surat / Bukti</Text>
+                            <MaterialCommunityIcons name="open-in-new" size={12} color="#059669" />
+                          </TouchableOpacity>
+                        ) : null}
+
+                        {/* Card Bottom: Tap to Detail */}
+                        <View style={styles.mutabaahCardActionRow}>
+                          <View style={styles.mutabaahDetailHint}>
+                            <MaterialCommunityIcons name="information-outline" size={13} color="#059669" />
+                            <Text style={styles.mutabaahDetailHintText}>Ketuk untuk rincian lengkap</Text>
+                          </View>
+                          <MaterialCommunityIcons name="chevron-right" size={16} color="#94A3B8" />
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }
 
                   return (
                     <TouchableOpacity
@@ -4563,13 +5665,56 @@ export default function AbsensiScreen({ route, navigation }: any) {
                           </Text>
                         </View>
                         <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Alamat Tujuan:</Text>
-                          <Text style={styles.detailFieldVal}>{selectedDetail.raw?.destination || '-'}</Text>
+                          <Text style={styles.detailFieldLabel}>Status Keberadaan:</Text>
+                          <Text style={[styles.detailFieldVal, { fontWeight: '700', color: selectedDetail.raw?.presence_status === 'berobat' ? '#D97706' : selectedDetail.raw?.presence_status === 'di_luar' ? '#2563EB' : '#059669' }]}>
+                            {selectedDetail.raw?.presence_status === 'berobat'
+                              ? 'Sedang Berobat'
+                              : selectedDetail.raw?.presence_status === 'di_luar'
+                              ? 'Sedang di Luar Pesantren'
+                              : selectedDetail.raw?.presence_status === 'pulang'
+                              ? 'Pulang ke Rumah'
+                              : 'Berada di Asrama / Pondok'}
+                          </Text>
+                        </View>
+                        {selectedDetail.raw?.is_emergency && (
+                          <View style={styles.detailFieldRow}>
+                            <Text style={styles.detailFieldLabel}>Klasifikasi Medis:</Text>
+                            <Text style={[styles.detailFieldVal, { color: '#DC2626', fontWeight: '800' }]}>
+                              🚨 Rujukan Cepat / Darurat
+                            </Text>
+                          </View>
+                        )}
+                        {selectedDetail.raw?.medical_complaint && (
+                          <View style={styles.detailFieldRow}>
+                            <Text style={styles.detailFieldLabel}>Keluhan Sakit:</Text>
+                            <Text style={styles.detailFieldVal}>{selectedDetail.raw?.medical_complaint}</Text>
+                          </View>
+                        )}
+                        {selectedDetail.raw?.medical_escort_name && (
+                          <View style={styles.detailFieldRow}>
+                            <Text style={styles.detailFieldLabel}>Pendamping Medis:</Text>
+                            <Text style={styles.detailFieldVal}>{selectedDetail.raw?.medical_escort_name}</Text>
+                          </View>
+                        )}
+                        <View style={styles.detailFieldRow}>
+                          <Text style={styles.detailFieldLabel}>Alamat / Tujuan:</Text>
+                          <Text style={styles.detailFieldVal}>{selectedDetail.raw?.medical_destination || selectedDetail.raw?.destination || '-'}</Text>
                         </View>
                         <View style={styles.detailFieldRow}>
                           <Text style={styles.detailFieldLabel}>Batas Wajib Kembali:</Text>
-                          <Text style={styles.detailFieldVal}>{formatJamIndo(selectedDetail.raw?.scheduled_return_at)}</Text>
+                          <Text style={[styles.detailFieldVal, { fontWeight: '700', color: selectedDetail.raw?.deadline_status === 'overdue' ? '#DC2626' : '#1E293B' }]}>
+                            {formatJamIndo(selectedDetail.raw?.scheduled_return_at)}
+                            {selectedDetail.raw?.deadline_status === 'overdue' ? ' (Terlambat)' : selectedDetail.raw?.deadline_status === 'near_deadline' ? ' (Mendekati Batas)' : ''}
+                          </Text>
                         </View>
+                        {selectedDetail.raw?.extension_count > 0 && (
+                          <View style={styles.detailFieldRow}>
+                            <Text style={styles.detailFieldLabel}>Riwayat Perpanjangan:</Text>
+                            <Text style={styles.detailFieldVal}>
+                              Diperpanjang {selectedDetail.raw?.extension_count}x (Batas awal: {formatJamIndo(selectedDetail.raw?.original_scheduled_return_at)})
+                            </Text>
+                          </View>
+                        )}
                         {selectedDetail.raw?.actual_return_at && (
                           <View style={styles.detailFieldRow}>
                             <Text style={styles.detailFieldLabel}>Absensi Kembali Riil:</Text>
@@ -4581,7 +5726,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
                         <View style={styles.detailFieldRow}>
                           <Text style={styles.detailFieldLabel}>Penjemput / Wali:</Text>
                           <Text style={styles.detailFieldVal}>
-                            {selectedDetail.raw?.pickup_person_name || 'Orang Tua / Wali'} {selectedDetail.raw?.pickup_person_phone ? `(${selectedDetail.raw?.pickup_person_phone})` : ''}
+                            {selectedDetail.raw?.guardian_name || selectedDetail.raw?.pickup_person_name || 'Orang Tua / Wali'} {selectedDetail.raw?.guardian_phone || selectedDetail.raw?.pickup_person_phone ? `(${selectedDetail.raw?.guardian_phone || selectedDetail.raw?.pickup_person_phone})` : ''}
                           </Text>
                         </View>
                       </>
@@ -5085,6 +6230,158 @@ export default function AbsensiScreen({ route, navigation }: any) {
         </View>
       </Modal>
 
+      {/* ── MODAL KETERANGAN PENGANTARAN / JARAK JAUH (OUTSIDE RADIUS) ── */}
+      <Modal
+        visible={dropOffModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDropOffModalVisible(false)}
+      >
+        <View style={styles.dropOffModalOverlay}>
+          <View style={styles.dropOffModalCard}>
+            {/* Top Accent Strip */}
+            <View style={styles.dropOffModalTopBar} />
+
+            {/* Header */}
+            <View style={styles.dropOffModalHeader}>
+              <View style={styles.dropOffHeaderIconWrap}>
+                <MaterialCommunityIcons
+                  name={dropOffActionType === 'in' ? 'car-child-seat' : 'car-side'}
+                  size={24}
+                  color="#059669"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dropOffModalTitle}>
+                  {dropOffActionType === 'in' ? 'Keterangan Pengantaran Masuk' : 'Keterangan Penjemputan Pulang'}
+                </Text>
+                <Text style={styles.dropOffModalSubtitle} numberOfLines={1}>
+                  Presensi Jarak Jauh • {gateTargetUnit.name}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setDropOffModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.dropOffModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+              {/* Distance Alert Box */}
+              <View style={styles.dropOffDistanceBox}>
+                <MaterialCommunityIcons name="map-marker-distance" size={20} color="#D97706" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.dropOffDistanceTitle}>Posisi Anda di Luar Radius</Text>
+                  <Text style={styles.dropOffDistanceText}>
+                    Terdeteksi berjarak ± {formatGateDistance(distanceToGate)} dari gerbang sekolah (radius izin: {gateTargetUnit.radius}m). Mohon berikan keterangan pengantar ananda.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Kategori Pengantar */}
+              <Text style={styles.dropOffInputLabel}>Pihak / Metode Pengantar</Text>
+              <View style={styles.dropOffCategoryGrid}>
+                {DROP_OFF_CATEGORIES.map((cat) => {
+                  const isSelected = dropOffCategory === cat.key;
+                  return (
+                    <TouchableOpacity
+                      key={cat.key}
+                      activeOpacity={0.8}
+                      onPress={() => setDropOffCategory(cat.key)}
+                      style={[
+                        styles.dropOffCategoryChip,
+                        isSelected && styles.dropOffCategoryChipSelected,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={cat.icon as any}
+                        size={16}
+                        color={isSelected ? '#059669' : '#64748B'}
+                      />
+                      <Text style={[
+                        styles.dropOffCategoryChipText,
+                        isSelected && styles.dropOffCategoryChipTextSelected,
+                      ]}>
+                        {cat.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Input Nama Pengantar (Opsional) */}
+              <Text style={styles.dropOffInputLabel}>Nama / Identitas Pengantar (Opsional)</Text>
+              <TextInput
+                style={styles.dropOffTextInput}
+                placeholder="Contoh: Pak Joko (Grab Motor) / Om Ridwan"
+                placeholderTextColor="#94A3B8"
+                value={dropOffDriverName}
+                onChangeText={setDropOffDriverName}
+              />
+
+              {/* Input Catatan Wajib */}
+              <View style={styles.dropOffLabelRow}>
+                <Text style={styles.dropOffInputLabel}>Catatan & Alasan Orang Tua *</Text>
+                <Text style={[
+                  styles.dropOffCharCount,
+                  dropOffNotes.trim().length >= 5 ? { color: '#059669' } : { color: '#E11D48' },
+                ]}>
+                  {dropOffNotes.trim().length}/5 min
+                </Text>
+              </View>
+              <TextInput
+                style={[styles.dropOffTextInput, styles.dropOffTextArea]}
+                placeholder="Tuliskan keterangan detail pengantaran, nopol kendaraan, atau alasan orang tua tidak bisa mengantar langsung..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                value={dropOffNotes}
+                onChangeText={setDropOffNotes}
+              />
+              <Text style={styles.dropOffInputHint}>
+                * Wajib diisi minimal 5 karakter untuk presensi di luar radius sekolah.
+              </Text>
+            </ScrollView>
+
+            {/* Footer Buttons */}
+            <View style={styles.dropOffModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setDropOffModalVisible(false)}
+                disabled={gateLoading}
+                style={styles.dropOffCancelBtn}
+              >
+                <Text style={styles.dropOffCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleConfirmDropOff}
+                disabled={gateLoading || dropOffNotes.trim().length < 5}
+                style={[
+                  styles.dropOffSubmitBtn,
+                  (gateLoading || dropOffNotes.trim().length < 5) && styles.dropOffSubmitBtnDisabled,
+                ]}
+              >
+                {gateLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="check-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.dropOffSubmitBtnText}>
+                      Kirim Presensi {dropOffActionType === 'in' ? 'Masuk' : 'Pulang'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Universal Feedback Modal */}
       {feedbackModal && (
         <AppFeedbackModal
@@ -5223,14 +6520,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionHeaderTitleWrap: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginRight: 8,
   },
   sectionTitle: {
     fontSize: 13.5,
     fontWeight: '900',
     color: '#0F172A',
+    flexShrink: 1,
   },
   studentCardCountBadge: {
     backgroundColor: '#EBF8F2',
@@ -5861,9 +7161,9 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   notesText: {
-    fontSize: 10.5,
+    fontSize: 11,
     color: '#475569',
-    lineHeight: 14,
+    lineHeight: 16,
   },
 
   // Modal Bottom-Sheet Styles (Strictly from Section 6)
@@ -6688,6 +7988,966 @@ const styles = StyleSheet.create({
   formNoticeBtnText: {
     fontSize: 11.5,
     fontWeight: '800',
+  },
+
+  // ── GATE ATTENDANCE CARD STYLES (HARMONIZED DENGAN PRESENSI MANDIRI TU) ──
+  gateLiveClockCard: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    marginBottom: 14,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#0D9488',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  gateLiveClockGradient: {
+    padding: 16,
+  },
+  gateLiveClockTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  gateGpsRadiusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  gateGpsRadiusBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#0D9488',
+  },
+  gateUnitNameText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F766E',
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  gateClockDigitsText: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#064E3B',
+    textAlign: 'center',
+    marginTop: 10,
+    letterSpacing: 1.2,
+  },
+  gateDateSubText: {
+    fontSize: 12,
+    color: '#047857',
+    textAlign: 'center',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  gateTargetStudentText: {
+    fontSize: 11,
+    color: '#0D9488',
+    textAlign: 'center',
+    fontWeight: '800',
+    marginTop: 3,
+  },
+
+  // Live Map Container & Frame
+  gateLiveMapContainer: {
+    marginTop: 14,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  gateMapFrame: {
+    width: '100%',
+    height: 165,
+    backgroundColor: '#CCFBF1',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  gateMapImage: {
+    width: '100%',
+    height: '100%',
+  },
+  gateMapLoadingBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0FDFA',
+  },
+  gateMapLoadingText: {
+    fontSize: 11,
+    color: '#0F766E',
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  gateMapTopBadgesRow: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 6,
+  },
+  gateMapUnitBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    maxWidth: '65%',
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  gateMapUnitBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  gateMapRadiusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0D9488',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  gateMapRadiusPillSuccess: {
+    backgroundColor: '#059669',
+  },
+  gateMapRadiusPillDanger: {
+    backgroundColor: '#E11D48',
+  },
+  gateMapRadiusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  gateMapBottomRow: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  gateMapLegendBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    gap: 8,
+  },
+  gateLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  gateLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  gateLegendText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  gateMapNavigateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 8,
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  gateMapNavigateBtnText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+
+  // Distance Info Card
+  gateDistanceInfoCard: {
+    padding: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  gateDistancePrimaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  gateDistanceValueCol: {
+    flex: 1.1,
+  },
+  gateDistanceLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  gateDistanceNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    gap: 4,
+  },
+  gateDistanceNumberText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  gateDistanceStatusCol: {
+    flex: 1.3,
+    alignItems: 'center',
+  },
+  gateDistanceStatusTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  gateDistanceStatusTagSuccess: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  gateDistanceStatusTagDanger: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  gateDistanceStatusTagPending: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  gateDistanceStatusTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  gateDistanceSubHint: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  gateRefreshGpsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
+    gap: 4,
+  },
+  gateRefreshGpsBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  gateCoordsStripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 8,
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    gap: 6,
+  },
+  gateCoordsStripText: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  gateCoordsStripDivider: {
+    fontSize: 10,
+    color: '#CBD5E1',
+  },
+
+  // Today Status 3-Pills Row
+  gateTodayStatusRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+  gateStatusPillBox: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  gateStatusPillBoxActiveIn: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  gateStatusPillBoxActiveOut: {
+    borderColor: '#99F6E4',
+    backgroundColor: '#F0FDFA',
+  },
+  gateStatusPillBoxSuccess: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  gateStatusPillBoxNeutral: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  gateStatusPillHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3.5,
+    marginBottom: 3,
+  },
+  gateStatusPillLabel: {
+    fontSize: 9.5,
+    color: '#64748B',
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  gateStatusPillValue: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  gateStatusPillSub: {
+    fontSize: 8.5,
+    fontWeight: '700',
+    color: '#94A3B8',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+
+  // Action Buttons Row
+  gateActionButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  gateCheckActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  gateCheckActionBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  gateSecondaryTapRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 10,
+  },
+  gateMiniRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  gateMiniRefreshBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+
+  // ── MODAL KETERANGAN PENGANTARAN / JARAK JAUH STYLES ──
+  dropOffModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  dropOffModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '88%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    overflow: 'hidden',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  dropOffModalTopBar: {
+    height: 4,
+    backgroundColor: '#059669',
+  },
+  dropOffModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 12,
+  },
+  dropOffHeaderIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropOffModalTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  dropOffModalSubtitle: {
+    fontSize: 11,
+    color: '#0D9488',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  dropOffModalCloseBtn: {
+    padding: 4,
+  },
+  dropOffModalBody: {
+    padding: 16,
+    gap: 10,
+  },
+  dropOffDistanceBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 12,
+    padding: 10,
+    gap: 10,
+  },
+  dropOffDistanceTitle: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  dropOffDistanceText: {
+    fontSize: 10.5,
+    color: '#B45309',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  dropOffInputLabel: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#334155',
+    marginTop: 4,
+  },
+  dropOffLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  dropOffCharCount: {
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  dropOffCategoryGrid: {
+    gap: 6,
+  },
+  dropOffCategoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 8,
+  },
+  dropOffCategoryChipSelected: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+  },
+  dropOffCategoryChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  dropOffCategoryChipTextSelected: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  dropOffTextInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  dropOffTextArea: {
+    minHeight: 65,
+    paddingTop: 8,
+  },
+  dropOffInputHint: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
+  dropOffModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    gap: 10,
+  },
+  dropOffCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropOffCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  dropOffSubmitBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  dropOffSubmitBtnDisabled: {
+    backgroundColor: '#94A3B8',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  dropOffSubmitBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  // ── HARMONISASI MUTABAAH TU STYLE UNTUK PRESENSI ANANDA ──
+  attendanceRatePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    flexShrink: 0,
+  },
+  attendanceRateText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  kpiGridContainer: {
+    gap: 8,
+    marginTop: 6,
+  },
+  kpiGridRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  kpiCardItem: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 56,
+  },
+  kpiCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  kpiCardValue: {
+    fontSize: 16,
+    fontWeight: '900',
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  kpiCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 15,
+    textAlign: 'center',
+  },
+
+  // 1. SEMUA / TOTAL (Slate/Indigo)
+  kpiCardItemInactiveAll: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#CBD5E1',
+  },
+  kpiCardItemActiveAll: {
+    backgroundColor: '#1E293B',
+    borderColor: '#0F172A',
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+
+  // 2. HADIR (Emerald)
+  kpiCardItemInactiveHadir: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  kpiCardItemActiveHadir: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+
+  // 3. IZIN (Blue)
+  kpiCardItemInactiveIzin: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  kpiCardItemActiveIzin: {
+    backgroundColor: '#2563EB',
+    borderColor: '#1D4ED8',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+
+  // 4. SAKIT (Purple)
+  kpiCardItemInactiveSakit: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
+  },
+  kpiCardItemActiveSakit: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#6D28D9',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+
+  // 5. TERLAMBAT (Amber)
+  kpiCardItemInactiveTerlambat: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  kpiCardItemActiveTerlambat: {
+    backgroundColor: '#D97706',
+    borderColor: '#B45309',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+
+  // 6. ALPA (Rose)
+  kpiCardItemInactiveAlpa: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  kpiCardItemActiveAlpa: {
+    backgroundColor: '#E11D48',
+    borderColor: '#BE123C',
+    shadowColor: '#E11D48',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  mutabaahFilterCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 2,
+    gap: 8,
+  },
+  mutabaahFilterCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  mutabaahFilterCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  mutabaahFilterResetBtn: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  mutabaahSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  mutabaahSearchInput: {
+    flex: 1,
+    fontSize: 11.5,
+    color: '#0F172A',
+    paddingVertical: 0,
+  },
+  mutabaahScopeTabsScroll: {
+    flexDirection: 'row',
+    padding: 3,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    gap: 5,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  mutabaahScopeTabsContainer: {
+    flexDirection: 'row',
+    padding: 3,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 11,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mutabaahScopePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+    borderRadius: 9,
+    backgroundColor: 'transparent',
+    flexShrink: 0,
+  },
+  mutabaahScopePillActive: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1.5,
+  },
+  mutabaahScopePillText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  mutabaahScopePillTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  mutabaahItemsList: {
+    gap: 10,
+  },
+  mutabaahStudentCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  mutabaahCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  mutabaahAvatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    flexShrink: 0,
+  },
+  mutabaahMetaCol: {
+    flex: 1,
+    marginRight: 8,
+    justifyContent: 'center',
+    minWidth: 0,
+  },
+  mutabaahStudentName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 18,
+  },
+  mutabaahStudentSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  mutabaahStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexShrink: 0,
+    alignSelf: 'flex-start',
+  },
+  mutabaahStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  mutabaahCardDetailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  mutabaahCardActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 8,
+    marginTop: 6,
+  },
+  mutabaahDetailHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    marginRight: 8,
+  },
+  mutabaahDetailHintText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#059669',
+    flexShrink: 1,
   },
 });
 
@@ -7887,6 +10147,7 @@ const rekapStyles = StyleSheet.create({
     fontWeight: '800',
     color: '#fff',
   },
+
 });
 
 
