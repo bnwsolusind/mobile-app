@@ -43,6 +43,7 @@ export const ROLES = {
   TATA_USAHA: ['Tata Usaha', 'TU', 'tu', 'tata_usaha'],
   OPERATOR: ['Operator', 'operator'],
   GURU_TAHFIZH: ['Guru Tahfizh', 'guru_tahfizh'],
+  PEMBIMBING: ['Pembimbing', 'pembimbing', 'Pembimbing Mutabaah', 'pembimbing_mutabaah'],
   MUSYRIF: [
     'Musyrif',
     'musyrif',
@@ -135,6 +136,9 @@ export const isHomeroomRole = (roles: unknown[]): boolean =>
 
 export const isTahfizhTeacherRole = (roles: unknown[]): boolean =>
   hasAnyRole(roles, ROLES.GURU_TAHFIZH);
+
+export const isMutabaahSupervisorRole = (roles: unknown[]): boolean =>
+  hasAnyRole(roles, [...ROLES.PEMBIMBING, ...ROLES.GURU_TAHFIZH, ...ROLES.MUSYRIF]);
 
 export const isMusyrifRole = (roles: unknown[]): boolean =>
   hasAnyRole(roles, ROLES.MUSYRIF);
