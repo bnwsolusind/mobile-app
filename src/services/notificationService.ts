@@ -78,6 +78,16 @@ export const notificationService = {
           enableVibrate: true,
           showBadge: true,
         });
+
+        // Channel 3: Student Live Activities (Presensi, Tahfizh, Ibadah, LMS)
+        await Notifications.setNotificationChannelAsync('student_activities', {
+          name: 'Kegiatan & Aktivitas Santri',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#059669',
+          enableVibrate: true,
+          showBadge: true,
+        });
       }
 
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -301,6 +311,58 @@ export const notificationService = {
       });
     } catch (err) {
       console.log('Error triggering notification:', err);
+    }
+  },
+
+  /**
+   * Trigger both local Android/iOS push notification and in-app floating banner for student live activity update
+   */
+  notifyStudentActivity: async (payload: {
+    studentId: string;
+    studentName?: string;
+    title: string;
+    subtitle?: string;
+    badge_label?: string;
+    type?: string;
+  }) => {
+    try {
+      // 1. Notify floating in-app banner listeners
+      inAppListeners.forEach((listener) => {
+        try {
+          listener({
+            title: payload.title,
+            body: payload.subtitle || '',
+            studentId: payload.studentId,
+            studentName: payload.studentName,
+            type: 'general',
+          });
+        } catch {}
+      });
+
+      // Update badge store so app bell dot lights up
+      try {
+        useNotificationBadgeStore.getState().incrementUnread();
+      } catch {}
+
+      // 2. Trigger native Android/iOS system notification
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: payload.title,
+          body: payload.subtitle || 'Pembaruan kegiatan santri telah dicatat.',
+          data: {
+            studentId: payload.studentId,
+            studentName: payload.studentName,
+            screen: 'Home',
+            type: payload.type || 'student_activity',
+          },
+          sound: true,
+          priority: Notifications.AndroidNotificationPriority.MAX,
+          color: '#059669',
+        },
+        trigger: null, // Display immediately!
+      }).catch(() => {});
+    } catch (err) {
+      console.log('Error triggering student activity notification:', err);
     }
   },
 

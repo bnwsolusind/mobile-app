@@ -72,8 +72,8 @@ export const mobileApiService = {
   markNotificationRead: async (id: string) => (
     await api.post(`/notifications/${id}/read`)
   ).data,
-  markAllNotificationsRead: async () => (
-    await api.post('/notifications/mark-all-read')
+  markAllNotificationsRead: async (payload?: { child_id?: string }) => (
+    await api.post('/notifications/mark-all-read', payload)
   ).data,
 
   getProfile: async () => (await api.get('/auth/profile')).data,
@@ -288,7 +288,16 @@ export const mobileApiService = {
   ).data,
 
   // Gate attendance (Absensi Gerbang Masuk & Pulang)
-  scanGateIn: async (payload: { qr_token?: string; nis?: string; student_id?: string; attendance_method?: string }) => (
+  scanGateIn: async (payload: {
+    qr_token?: string;
+    nis?: string;
+    student_id?: string;
+    attendance_method?: string;
+    latitude?: number;
+    longitude?: number;
+    location?: string;
+    notes?: string;
+  }) => (
     await api.post('/gate-attendance/scan-in', {
       attendance_method: 'QRCODE',
       ...payload,
@@ -304,6 +313,9 @@ export const mobileApiService = {
     pickup_relation?: string;
     pickup_verification?: string;
     notes?: string;
+    latitude?: number;
+    longitude?: number;
+    location?: string;
   }) => (
     await api.post('/gate-attendance/scan-out', {
       attendance_method: 'QRCODE',
@@ -495,6 +507,19 @@ export const mobileApiService = {
   getPortalAttendance: async (childId?: string) => (
     await api.get('/portal/attendance', childRequest(childId))
   ).data,
+  getPortalGateAttendanceToday: async (childId?: string) => (
+    await api.get('/portal/gate-attendance/today', childRequest(childId))
+  ).data,
+  tapPortalGateAttendance: async (payload: {
+    child_id?: string;
+    type?: 'in' | 'out' | 'auto';
+    latitude?: number;
+    longitude?: number;
+    location?: string;
+    notes?: string;
+  }) => (
+    await api.post('/portal/gate-attendance/tap', payload)
+  ).data,
   getPortalAttendanceQr: async (childId?: string) => (
     await api.get('/portal/attendance-qr', childRequest(childId))
   ).data,
@@ -504,8 +529,30 @@ export const mobileApiService = {
   getDormitoryPermits: async (childId?: string) => (
     await api.get('/portal/dormitory-permits', childRequest(childId))
   ).data,
+  applyDormitoryPermit: async (payload: {
+    child_id: string;
+    permit_type: string;
+    scheduled_departure_at: string;
+    scheduled_return_at: string;
+    guardian_name: string;
+    guardian_phone: string;
+    guardian_relation: string;
+    destination?: string;
+    notes?: string;
+    medical_complaint?: string;
+    medical_destination?: string;
+    medical_escort_name?: string;
+  }) => (
+    await api.post('/portal/dormitory-permits/apply', payload)
+  ).data,
+  requestDormitoryExtension: async (permitId: string, payload: { requested_return_at: string; reason: string }) => (
+    await api.post(`/portal/dormitory-permits/${permitId}/request-extension`, payload)
+  ).data,
   getAcademicCalendar: async (params?: { range?: string; date?: string; child_id?: string }) => (
-    await api.get('/portal/academic-calendar', { params })
+    await api.get('/portal/academic-calendar', {
+      params,
+      headers: params?.child_id ? { 'X-Child-Id': params.child_id } : undefined,
+    })
   ).data,
   getPortalSchedules: async (params: { child_id?: string; date?: string; month?: string; academic_year?: string } = {}) => (
     await api.get('/portal/schedules', { params })
@@ -672,6 +719,24 @@ export const mobileApiService = {
   getTeacherAttendanceLogs: async (month?: string) => (
     await api.get('/teacher/attendance-logs', { params: month ? { month } : {} })
   ).data,
+  saveTeacherAttendance: async (payload: {
+    class_schedule_id?: string | number;
+    schedule_id?: string | number;
+    date: string;
+    meeting_number: number;
+    topic: string;
+    method?: string;
+    students: Array<{
+      student_id: string | number;
+      status: string;
+      notes?: string;
+    }>;
+  }) => (
+    await api.post('/teacher/attendance', payload)
+  ).data,
+  getTeacherAttendance: async (params: ListParams = {}) => (
+    await api.get('/teacher/attendance', { params })
+  ).data,
   submitPortalMurajaah: async (payload: {
     student_id: string;
     surah_number: number;
@@ -735,14 +800,23 @@ export const mobileApiService = {
   ).data,
   submitPortalAssignment: async (
     assignmentId: string,
-    jawaban_teks: string,
+    jawaban_teks?: string,
     childId?: string,
-    fileLampiran?: { uri: string; name: string; type: string } | null
+    fileLampiran?: { uri: string; name: string; type: string } | null,
+    urlLink?: string,
+    metadata?: any
   ) => {
     if (fileLampiran) {
       const formData = new FormData();
       if (jawaban_teks) formData.append('jawaban_teks', jawaban_teks);
       if (childId) formData.append('child_id', childId);
+      if (urlLink) {
+        formData.append('url_link', urlLink);
+        formData.append('link', urlLink);
+      }
+      if (metadata) {
+        formData.append('metadata', typeof metadata === 'string' ? metadata : JSON.stringify(metadata));
+      }
       formData.append('file_lampiran', {
         uri: fileLampiran.uri,
         name: fileLampiran.name,
@@ -755,7 +829,13 @@ export const mobileApiService = {
       ).data;
     }
     return (
-      await api.post(`/portal/assignments/${assignmentId}/submit`, { jawaban_teks, child_id: childId })
+      await api.post(`/portal/assignments/${assignmentId}/submit`, {
+        jawaban_teks,
+        child_id: childId,
+        url_link: urlLink,
+        link: urlLink,
+        metadata: metadata,
+      })
     ).data;
   },
 
@@ -913,6 +993,15 @@ export const mobileApiService = {
   restoreLmsMateri: async (id: string) => (
     await api.post(`/lms/materi/${id}/restore`)
   ).data,
+  ajukanTelaahLmsMateri: async (id: string | number, catatan?: string) => (
+    await api.post(`/lms/materi/${id}/ajukan-telaah`, { catatan })
+  ).data,
+  supervisiLmsMateri: async (id: string | number, payload: { status_supervisi: string; catatan_koreksi?: string }) => (
+    await api.post(`/lms/materi/${id}/supervisi`, payload)
+  ).data,
+  getLmsMateriSupervisiLogs: async (id: string | number) => (
+    await api.get(`/lms/materi/${id}/supervisi-logs`)
+  ).data,
   getLmsModulAjarList: async (params: ListParams = {}) => (
     await api.get('/lms/modul-ajar', { params })
   ).data,
@@ -980,5 +1069,25 @@ export const mobileApiService = {
   ).data,
   getCodeGeneratorPreview: async (params: { entity_type: string; unit_id?: string; extra?: string }) => (
     await api.get('/code-generator/preview', { params })
+  ).data,
+
+  // Teacher Discipline & Violations (Zero Hardcode - Dynamic Master Data)
+  getDisciplineCategories: async (params: { type?: string } = {}) => (
+    await api.get('/teacher/discipline-categories', { params })
+  ).data,
+  getDisciplineViolations: async (params: ListParams = {}) => (
+    await api.get('/teacher/discipline-violations', { params })
+  ).data,
+  storeDisciplineViolation: async (payload: {
+    student_id: string;
+    category_id: string;
+    points?: number;
+    custom_points?: number;
+    transaction_date: string;
+    description: string;
+    status?: string;
+    follow_up?: string;
+  }) => (
+    await api.post('/teacher/discipline-violations', payload)
   ).data,
 };

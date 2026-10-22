@@ -153,11 +153,9 @@ const getCandidateUrls = (): string[] => {
 
   const rawCandidates: (string | null)[] = [
     API_BASE_URL,
-    Platform.OS === 'web' || Platform.OS === 'ios'
-      ? 'http://127.0.0.1:8000/api'
-      : 'http://10.0.2.2:8000/api',
-    'http://127.0.0.1:8000/api',
     'http://localhost:8000/api',
+    Platform.OS === 'android' ? 'http://10.0.2.2:8000/api' : 'http://127.0.0.1:8000/api',
+    'http://127.0.0.1:8000/api',
     metroApiUrl,
   ];
 
@@ -226,7 +224,7 @@ export const api = axios.create({
 // Interceptor to attach Sanctum Bearer token & log requests safely
 api.interceptors.request.use((config) => {
   (config as any).metadata = { startTime: Date.now() };
-  config.baseURL = activeBaseUrl;
+  config.baseURL = config.baseURL || activeBaseUrl;
   const token = useAuthStore.getState().token;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
