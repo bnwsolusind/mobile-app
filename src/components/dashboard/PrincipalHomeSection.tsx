@@ -852,7 +852,7 @@ export default function PrincipalHomeSection({
         <View style={styles.qBtnGrid}>
           {(activeMenuTab === 'semua' || activeMenuTab === 'manajemen') && (
             <>
-              <QBtn icon="database-outline"       iconBg="#0284C7" label="Data Master"     onPress={() => safeNavigate('Data')} />
+              <QBtn icon="database-outline"       iconBg="#059669" label="Data Master"     onPress={() => safeNavigate('Data')} />
               <QBtn icon="human-male-board"       iconBg="#0F766E" label="Supervisi Guru"  onPress={() => setIsTeacherMonitoringModalOpen(true)} />
               <QBtn icon="account-switch"         iconBg="#7C3AED" label="Kelola Alumni & Mutasi"  onPress={() => safeNavigate('MutasiSiswa')} />
               <QBtn icon="google-classroom"       iconBg="#D97706" label="Pantau Kelas"  onPress={() => safeNavigate('PantauKelas')} />
@@ -872,23 +872,23 @@ export default function PrincipalHomeSection({
 
           {(activeMenuTab === 'semua' || activeMenuTab === 'akademik') && (
             <>
-              <QBtn icon="calendar-clock"   iconBg="#2563EB" label="Jadwal Pelajaran" onPress={() => safeNavigate('Jadwal')} />
-              <QBtn icon="calendar-month"   iconBg="#0891B2" label="Kalender Akademik" onPress={() => safeNavigate('Kalender')} />
-              <QBtn icon="book-open-page-variant" iconBg="#0D9488" label="Materi Belajar" onPress={() => safeNavigate('Materi')} />
+              <QBtn icon="clock-time-four"  iconBg="#7C3AED" label="Jadwal Pelajaran" onPress={() => safeNavigate('Jadwal')} />
+              <QBtn icon="calendar-month"   iconBg="#0284C7" label="Kalender Akademik" onPress={() => safeNavigate('Kalender')} />
+              <QBtn icon="book-multiple"    iconBg="#0D9488" label="Materi Belajar" onPress={() => safeNavigate('Materi')} />
               <QBtn icon="clipboard-text"   iconBg="#F59E0B" label="Tugas Siswa"    onPress={() => safeNavigate('Tugas')} />
-              <QBtn icon="card-account-details-star-outline" iconBg="#10B981" label="Penilaian & Rapor" onPress={() => safeNavigate('Nilai')} />
-              <QBtn icon="laptop"           iconBg="#7C3AED" label="Bank Soal CBT"   onPress={() => safeNavigate('BankSoal')} />
+              <QBtn icon="chart-box"        iconBg="#10B981" label="Penilaian & Rapor" onPress={() => safeNavigate('Nilai')} />
+              <QBtn icon="database-outline" iconBg="#0D9488" label="Bank Soal CBT"   onPress={() => safeNavigate('BankSoal')} />
             </>
           )}
 
           {(activeMenuTab === 'semua' || activeMenuTab === 'keagamaan') && (
             <>
-              <QBtn icon="book-marker"          iconBg="#059669" label="Setoran Tahfizh" onPress={() => safeNavigate('Tahfizh')} />
-              <QBtn icon="clipboard-check"      iconBg="#E11D48" label="Mutaba'ah"       onPress={() => safeNavigate('Mutabaah')} />
-              <QBtn icon="book-open-variant"    iconBg="#0284C7" label="Al-Qur'an"       onPress={() => safeNavigate('Quran')} />
-              <QBtn icon="hands-pray"           iconBg="#0D9488" label="Doa & Dzikir"    onPress={() => safeNavigate('DoaDzikir')} />
-              <QBtn icon="message-text-outline" iconBg="#059669" label="Chat Pegawai"    onPress={() => safeNavigate('Chat Guru')} />
-              <QBtn icon="bullhorn-outline"     iconBg="#0284C7" label="Informasi"       onPress={() => safeNavigate('Informasi')} />
+              <QBtn icon="book-marker"          iconBg="#2563EB" label="Setoran Tahfizh" onPress={() => safeNavigate('Tahfizh')} />
+              <QBtn icon="clipboard-check"      iconBg="#D97706" label="Mutaba'ah"       onPress={() => safeNavigate('Mutabaah')} />
+              <QBtn icon="book-open-variant"    iconBg="#059669" label="Al-Qur'an"       onPress={() => safeNavigate('Quran')} />
+              <QBtn icon="hands-pray"           iconBg="#F97316" label="Doa & Dzikir"    onPress={() => safeNavigate('DoaDzikir')} />
+              <QBtn icon="book-open-page-variant" iconBg="#8B5CF6" label="Chat Pegawai"   onPress={() => safeNavigate('Chat Guru')} />
+              <QBtn icon="bullhorn"             iconBg="#E11D48" label="Informasi"       onPress={() => safeNavigate('Informasi')} />
             </>
           )}
         </View>

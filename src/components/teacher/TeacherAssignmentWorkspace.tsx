@@ -27,6 +27,7 @@ import { isTuRole, isTeacherRole, isPrincipalRole, isSuperAdminRole } from '../.
 import { getDynamicAcademicYear, getDynamicAcademicSemester } from '../../utils/academicYear';
 import AppFeedbackModal, { FeedbackType } from '../AppFeedbackModal';
 import EmptyStateCard from '../EmptyStateCard';
+import InAppEmbedModal from '../InAppEmbedModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -444,7 +445,25 @@ export default function TeacherAssignmentWorkspace({
     return d.toISOString().split('T')[0]; // Format Tanggal Manual: YYYY-MM-DD
   });
   const [formBobot, setFormBobot] = useState<string>('100');
-  const [formJenisTugas, setFormJenisTugas] = useState<'tugas' | 'quiz' | 'proyek'>('tugas');
+  const [formJenisTugas, setFormJenisTugas] = useState<string>('tertulis');
+  const [formSurah, setFormSurah] = useState<string>('');
+  const [formAyatAwal, setFormAyatAwal] = useState<string>('');
+  const [formAyatAkhir, setFormAyatAkhir] = useState<string>('');
+  const [formMinWords, setFormMinWords] = useState<string>('150');
+  const [formMaxGroupMembers, setFormMaxGroupMembers] = useState<string>('4');
+  const [formLinkLampiran, setFormLinkLampiran] = useState<string>('');
+
+  // In-App Embed Modal State
+  const [embedModalVisible, setEmbedModalVisible] = useState<boolean>(false);
+  const [embedTargetUrl, setEmbedTargetUrl] = useState<string | null>(null);
+  const [embedTargetTitle, setEmbedTargetTitle] = useState<string>('Pratinjau Berkas & Tautan');
+
+  const handleOpenEmbedUrl = (url?: string | null, title?: string) => {
+    if (!url) return;
+    setEmbedTargetUrl(url);
+    setEmbedTargetTitle(title || 'Pratinjau Berkas & Tautan');
+    setEmbedModalVisible(true);
+  };
   const [formTipeJawaban, setFormTipeJawaban] = useState<'both' | 'online' | 'upload'>('both');
   const [formMateriId, setFormMateriId] = useState<string>('');
   const [formDurasiMenit, setFormDurasiMenit] = useState<string>('30');
@@ -1214,9 +1233,17 @@ export default function TeacherAssignmentWorkspace({
           tipe: formTipe || 'individu',
           tipe_tugas: formTipe || 'individu',
           jenis_tugas: formJenisTugas,
+          metadata: {
+            surah: formSurah,
+            ayat_awal: formAyatAwal,
+            ayat_akhir: formAyatAkhir,
+            min_words: formMinWords,
+            max_group_members: formMaxGroupMembers,
+          },
+          link_lampiran: formLinkLampiran || undefined,
           izin_kumpul_terlambat: formIzinTerlambat,
           status: formStatus === 'draft' ? 'draft' : 'dipublikasikan',
-          lampiran: pickedAttachment?.name || undefined,
+          lampiran: pickedAttachment?.name || formLinkLampiran || undefined,
         };
 
         const executeSaveTu = async () => {
@@ -1331,6 +1358,14 @@ export default function TeacherAssignmentWorkspace({
           fd.append('durasi_menit', formDurasiMenit);
           fd.append('nilai_kkm', formNilaiKkm);
         }
+        fd.append('metadata', JSON.stringify({
+          surah: formSurah,
+          ayat_awal: formAyatAwal,
+          ayat_akhir: formAyatAkhir,
+          min_words: formMinWords,
+          max_group_members: formMaxGroupMembers,
+        }));
+        if (formLinkLampiran) fd.append('link_lampiran', formLinkLampiran);
         fd.append('izin_kumpul_terlambat', formIzinTerlambat ? '1' : '0');
         fd.append('status', formStatus);
         fd.append('file_lampiran', {
@@ -1349,6 +1384,14 @@ export default function TeacherAssignmentWorkspace({
           bobot: parseFloat(formBobot) || 100,
           tipe_tugas: formTipeJawaban,
           jenis_tugas: formJenisTugas,
+          metadata: {
+            surah: formSurah,
+            ayat_awal: formAyatAwal,
+            ayat_akhir: formAyatAkhir,
+            min_words: formMinWords,
+            max_group_members: formMaxGroupMembers,
+          },
+          link_lampiran: formLinkLampiran || undefined,
           jenis_soal: derivedJenis,
           soal_json: soalJsonStr || null,
           deskripsi: soalJsonStr || formInstruction.trim(),
@@ -2490,6 +2533,48 @@ export default function TeacherAssignmentWorkspace({
                       </View>
                     ) : null}
 
+                    {/* Metadata Pengumpulan (Metode Tahfizh / Anggota Kelompok) */}
+                    {(sub.metadata?.tahfizh_mode || sub.metadata?.group_members) && (
+                      <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 8, marginVertical: 4, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                        {sub.metadata?.tahfizh_mode && (
+                          <Text style={{ fontSize: 11, color: '#047857', fontWeight: '700' }}>
+                            Metode: {sub.metadata.tahfizh_mode === 'langsung' ? 'Setoran Tatap Muka di Kelas' : sub.metadata.tahfizh_mode === 'audio' ? 'Rekaman Audio Suara' : 'Tautan Video'}
+                          </Text>
+                        )}
+                        {sub.metadata?.group_members && (
+                          <Text style={{ fontSize: 11, color: '#3730A3', fontWeight: '600', marginTop: 2 }}>
+                            Anggota: {sub.metadata.group_members}
+                          </Text>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Tombol Pratinjau Berkas & Tautan Santri (In-App Embed Modal) */}
+                    {(sub.file_path || sub.file_url || sub.url_link) ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 5 }}>
+                        {(sub.file_path || sub.file_url) ? (
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => handleOpenEmbedUrl(sub.file_path || sub.file_url, `Berkas: ${studentName}`)}
+                            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+                          >
+                            <MaterialCommunityIcons name="paperclip" size={13} color="#059669" style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857' }}>Lihat Berkas (In-App)</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        {sub.url_link ? (
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => handleOpenEmbedUrl(sub.url_link, `Tautan: ${studentName}`)}
+                            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+                          >
+                            <MaterialCommunityIcons name="link-variant" size={13} color="#2563EB" style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#1D4ED8' }}>Buka Tautan (In-App)</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    ) : null}
+
                     {sub.catatan_guru ? (
                       <View style={styles.teacherNoteBox}>
                         <Text style={styles.teacherNoteLabel}>Catatan Guru:</Text>
@@ -2576,57 +2661,127 @@ export default function TeacherAssignmentWorkspace({
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {/* 1. Pemilihan Jenis Penugasan (Tugas vs Kuis vs Proyek) */}
+              {/* 1. Pemilihan 8 Jenis Penugasan */}
               <Text style={styles.formLabel}>Jenis Penugasan *</Text>
-              <View style={styles.formTaskTypeGroup}>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setFormJenisTugas('tugas')}
-                  style={[styles.formTaskTypeBtn, formJenisTugas === 'tugas' && styles.formTaskTypeBtnActiveEmerald]}
-                >
-                  <MaterialCommunityIcons
-                    name="clipboard-text-outline"
-                    size={16}
-                    color={formJenisTugas === 'tugas' ? '#047857' : '#64748B'}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text style={[styles.formTaskTypeBtnText, formJenisTugas === 'tugas' && styles.formTaskTypeBtnTextActiveEmerald]}>
-                    Tugas / PR
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setFormJenisTugas('quiz')}
-                  style={[styles.formTaskTypeBtn, formJenisTugas === 'quiz' && styles.formTaskTypeBtnActivePurple]}
-                >
-                  <MaterialCommunityIcons
-                    name="lightning-bolt"
-                    size={16}
-                    color={formJenisTugas === 'quiz' ? '#7C3AED' : '#64748B'}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text style={[styles.formTaskTypeBtnText, formJenisTugas === 'quiz' && styles.formTaskTypeBtnTextActivePurple]}>
-                    Kuis / Latihan
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setFormJenisTugas('proyek')}
-                  style={[styles.formTaskTypeBtn, formJenisTugas === 'proyek' && styles.formTaskTypeBtnActiveAmber]}
-                >
-                  <MaterialCommunityIcons
-                    name="palette-outline"
-                    size={16}
-                    color={formJenisTugas === 'proyek' ? '#D97706' : '#64748B'}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text style={[styles.formTaskTypeBtnText, formJenisTugas === 'proyek' && styles.formTaskTypeBtnTextActiveAmber]}>
-                    Proyek
-                  </Text>
-                </TouchableOpacity>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {[
+                  { key: 'tertulis', label: 'Tertulis', icon: 'lead-pencil', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+                  { key: 'quiz', label: 'Kuis CBT', icon: 'lightning-bolt', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' },
+                  { key: 'esai', label: 'Esai', icon: 'text-box-outline', color: '#0284C7', bg: '#F0F9FF', border: '#BAE6FD' },
+                  { key: 'dokumen', label: 'Dokumen', icon: 'file-pdf-box', color: '#DC2626', bg: '#FEF2F2', border: '#FECDD3' },
+                  { key: 'praktik', label: 'Praktik', icon: 'video-outline', color: '#E11D48', bg: '#FFF1F2', border: '#FECDD3' },
+                  { key: 'tahfizh', label: 'Tahfizh', icon: 'book-open-variant', color: '#0D9488', bg: '#F0FDFA', border: '#99F6E4' },
+                  { key: 'literasi', label: 'Literasi', icon: 'book-outline', color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+                  { key: 'proyek', label: 'Proyek', icon: 'account-group', color: '#4F46E5', bg: '#EEF2FF', border: '#C7D2FE' },
+                ].map((item) => {
+                  const isSelected = formJenisTugas === item.key;
+                  return (
+                    <TouchableOpacity
+                      key={item.key}
+                      activeOpacity={0.8}
+                      onPress={() => setFormJenisTugas(item.key)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        paddingHorizontal: 10,
+                        paddingVertical: 7,
+                        borderRadius: 10,
+                        borderWidth: 1.5,
+                        borderColor: isSelected ? item.color : '#E2E8F0',
+                        backgroundColor: isSelected ? item.bg : '#FFFFFF',
+                      }}
+                    >
+                      <MaterialCommunityIcons
+                        name={item.icon as any}
+                        size={14}
+                        color={isSelected ? item.color : '#64748B'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: isSelected ? '800' : '600',
+                          color: isSelected ? item.color : '#475569',
+                        }}
+                      >
+                        {item.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
+
+              {/* Dynamic Settings per Jenis Tugas */}
+              {formJenisTugas === 'tahfizh' && (
+                <View style={{ backgroundColor: '#F0FDF4', borderWidth: 1.5, borderColor: '#86EFAC', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <MaterialCommunityIcons name="book-open-page-variant" size={16} color="#059669" />
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#065F46' }}>Target Setoran Tahfizh Al-Qur'an:</Text>
+                  </View>
+                  <Text style={styles.formSubLabel}>Nama Surah Target</Text>
+                  <TextInput
+                    value={formSurah}
+                    onChangeText={setFormSurah}
+                    placeholder="Contoh: Al-Mulk, An-Naba', Al-Kahfi..."
+                    placeholderTextColor="#94A3B8"
+                    style={[styles.formInput, { marginBottom: 8 }]}
+                  />
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.formSubLabel}>Ayat Awal</Text>
+                      <TextInput
+                        value={formAyatAwal}
+                        onChangeText={setFormAyatAwal}
+                        placeholder="1"
+                        keyboardType="numeric"
+                        placeholderTextColor="#94A3B8"
+                        style={styles.formInput}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.formSubLabel}>Ayat Akhir</Text>
+                      <TextInput
+                        value={formAyatAkhir}
+                        onChangeText={setFormAyatAkhir}
+                        placeholder="30"
+                        keyboardType="numeric"
+                        placeholderTextColor="#94A3B8"
+                        style={styles.formInput}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {formJenisTugas === 'esai' && (
+                <View style={{ backgroundColor: '#F0F9FF', borderWidth: 1.5, borderColor: '#BAE6FD', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#0369A1', marginBottom: 6 }}>Pengaturan Esai:</Text>
+                  <Text style={styles.formSubLabel}>Batas Minimal Kata</Text>
+                  <TextInput
+                    value={formMinWords}
+                    onChangeText={setFormMinWords}
+                    placeholder="Contoh: 150"
+                    keyboardType="numeric"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.formInput}
+                  />
+                </View>
+              )}
+
+              {formJenisTugas === 'proyek' && (
+                <View style={{ backgroundColor: '#EEF2FF', borderWidth: 1.5, borderColor: '#C7D2FE', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#3730A3', marginBottom: 6 }}>Pengaturan Kelompok:</Text>
+                  <Text style={styles.formSubLabel}>Maksimal Anggota per Kelompok</Text>
+                  <TextInput
+                    value={formMaxGroupMembers}
+                    onChangeText={setFormMaxGroupMembers}
+                    placeholder="Contoh: 4 atau 5 siswa"
+                    keyboardType="numeric"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.formInput}
+                  />
+                </View>
+              )}
 
               {/* 2. Pemilihan Guru Pengampu, Kelas Sasaran, dan Mapel (Khusus TU / Staff vs Guru Biasa) */}
               {isTu || isStaff ? (
@@ -4530,6 +4685,13 @@ export default function TeacherAssignmentWorkspace({
           </View>
         </View>
       </Modal>
+      {/* IN-APP EMBED VIEWER MODAL (TIDAK KELUAR DARI APLIKASI) */}
+      <InAppEmbedModal
+        visible={embedModalVisible}
+        url={embedTargetUrl}
+        title={embedTargetTitle}
+        onClose={() => setEmbedModalVisible(false)}
+      />
     </View>
   );
 }
@@ -5303,6 +5465,13 @@ const styles = StyleSheet.create({
     color: '#334155',
     marginBottom: 6,
     marginTop: 8,
+  },
+  formSubLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 4,
+    marginTop: 4,
   },
   formInput: {
     backgroundColor: '#F8FAFC',

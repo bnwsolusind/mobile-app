@@ -341,7 +341,7 @@ export default function TuDashboardView({ dashboard, navigation }: TuDashboardVi
         </View>
         <View style={styles.qBtnGrid}>
           <QBtn icon="door-open"              iconBg="#0D9488" label="Absensi Gerbang"  onPress={() => navigation?.navigate('AbsensiGerbangTerminal')} />
-          <QBtn icon="calendar-check-outline" iconBg="#0891B2" label="Presensi KBM"     onPress={() => navigation?.navigate('PresensiKbmPengganti')} />
+          <QBtn icon="calendar-check-outline" iconBg="#059669" label="Presensi KBM"     onPress={() => navigation?.navigate('PresensiKbmPengganti')} />
           <QBtn icon="clipboard-list-outline" iconBg="#059669" label="Rekap Siswa"      onPress={() => navigation?.navigate('RekapPresensiSiswa')} />
           <QBtn icon="account-check-outline" iconBg="#10B981" label="Presensi Mandiri" onPress={() => navigation?.navigate('PresensiMandiriStaff')} />
         </View>
@@ -359,12 +359,12 @@ export default function TuDashboardView({ dashboard, navigation }: TuDashboardVi
           </View>
         </View>
         <View style={styles.qBtnGrid}>
-          <QBtn icon="calendar-clock"         iconBg="#7C3AED" label="Jadwal Pelajaran" onPress={() => navigation?.navigate('Jadwal')} />
+          <QBtn icon="clock-time-four"         iconBg="#7C3AED" label="Jadwal Pelajaran" onPress={() => navigation?.navigate('Jadwal')} />
           <QBtn icon="book-multiple"          iconBg="#0D9488" label="Bahan Ajar"      onPress={() => navigation?.navigate('Materi')} />
           <QBtn icon="clipboard-text"         iconBg="#F59E0B" label="Tugas LMS"       onPress={() => navigation?.navigate('Tugas')} />
-          <QBtn icon="calendar-month"         iconBg="#2563EB" label="Kalender KBM"     onPress={() => navigation?.navigate('Kalender')} />
+          <QBtn icon="calendar-month"         iconBg="#0284C7" label="Kalender KBM"     onPress={() => navigation?.navigate('Kalender')} />
           <QBtn icon="laptop"                 iconBg="#2563EB" label="Ujian CBT"       onPress={() => navigation?.navigate('CbtExams')} />
-          <QBtn icon="database-outline"       iconBg="#059669" label="Bank Soal"       onPress={() => navigation?.navigate('BankSoal')} />
+          <QBtn icon="database-outline"       iconBg="#0D9488" label="Bank Soal"       onPress={() => navigation?.navigate('BankSoal')} />
           <QBtn icon="file-question"          iconBg="#EF4444" label="Kisi-kisi"       onPress={() => navigation?.navigate('KisiKisi')} />
           <QBtn icon="chart-box"              iconBg="#10B981" label="Nilai Siswa"     onPress={() => navigation?.navigate('Nilai')} />
         </View>
@@ -401,9 +401,9 @@ export default function TuDashboardView({ dashboard, navigation }: TuDashboardVi
           </View>
         </View>
         <View style={styles.qBtnGrid}>
-          <QBtn icon="book-marker"            iconBg="#059669" label="Setoran Tahfizh"  onPress={() => navigation?.navigate('Tahfizh')} />
+          <QBtn icon="book-marker"            iconBg="#2563EB" label="Setoran Tahfizh"  onPress={() => navigation?.navigate('Tahfizh')} />
           <QBtn icon="message-text-outline"   iconBg="#059669" label="Chat Pegawai"     onPress={() => navigation?.navigate('Chat Guru')} />
-          <QBtn icon="bullhorn-outline"       iconBg="#0284C7" label="Informasi"        onPress={() => navigation?.navigate('Informasi')} />
+          <QBtn icon="bullhorn"               iconBg="#E11D48" label="Informasi"        onPress={() => navigation?.navigate('Informasi')} />
         </View>
       </View>
 

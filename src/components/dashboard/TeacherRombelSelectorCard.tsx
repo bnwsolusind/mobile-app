@@ -19,6 +19,9 @@ import {
   isDivisiRole,
   isTuRole,
   isSuperAdminRole,
+  isTahfizhTeacherRole,
+  isMutabaahSupervisorRole,
+  isMusyrifRole,
 } from '../../utils/roles';
 import { mobileApiService, unwrapCollection } from '../../services/mobileApiService';
 import AppFeedbackModal, { FeedbackType } from '../AppFeedbackModal';
@@ -567,7 +570,7 @@ export default function TeacherRombelSelectorCard({
             </View>
           </View>
 
-          {/* Grid 8 Menu Operasional Rombel */}
+          {/* Grid Menu Operasional Rombel (Modular RBAC) */}
           <View style={styles.rombelGrid}>
             {[
               {
@@ -577,6 +580,7 @@ export default function TeacherRombelSelectorCard({
                 color: '#059669',
                 bg: '#ECFDF5',
                 route: 'Absensi',
+                visible: true,
               },
               {
                 label: 'Bahan Ajar',
@@ -585,6 +589,7 @@ export default function TeacherRombelSelectorCard({
                 color: '#0D9488',
                 bg: '#E6FFFA',
                 route: 'GuruMaterials',
+                visible: true,
               },
               {
                 label: 'Tugas LMS',
@@ -593,6 +598,7 @@ export default function TeacherRombelSelectorCard({
                 color: '#D97706',
                 bg: '#FEF3C7',
                 route: 'Tugas',
+                visible: true,
               },
               {
                 label: 'Input Nilai',
@@ -601,6 +607,7 @@ export default function TeacherRombelSelectorCard({
                 color: '#10B981',
                 bg: '#E8FAF2',
                 route: 'Nilai',
+                visible: true,
               },
               {
                 label: 'Tahfizh',
@@ -609,6 +616,12 @@ export default function TeacherRombelSelectorCard({
                 color: '#2563EB',
                 bg: '#EFF6FF',
                 route: 'Tahfizh',
+                visible:
+                  isTahfizhTeacherRole(roles) ||
+                  isMusyrifRole(roles) ||
+                  isPrincipal ||
+                  isSuperAdmin ||
+                  ((user as any)?.permissions || []).includes('teacher.tahfizh.view'),
               },
               {
                 label: 'Mutaba\'ah',
@@ -617,6 +630,13 @@ export default function TeacherRombelSelectorCard({
                 color: '#7C3AED',
                 bg: '#F5F3FF',
                 route: 'Mutabaah',
+                visible:
+                  isMutabaahSupervisorRole(roles) ||
+                  isTahfizhTeacherRole(roles) ||
+                  isMusyrifRole(roles) ||
+                  isPrincipal ||
+                  isSuperAdmin ||
+                  ((user as any)?.permissions || []).includes('mutabaah.daily.view'),
               },
               {
                 label: 'Catatan Siswa',
@@ -625,6 +645,7 @@ export default function TeacherRombelSelectorCard({
                 color: '#E11D48',
                 bg: '#FFF1F2',
                 route: 'GuruNotes',
+                visible: true,
               },
               {
                 label: 'Chat Ortu',
@@ -633,8 +654,11 @@ export default function TeacherRombelSelectorCard({
                 color: '#0284C7',
                 bg: '#F0F9FF',
                 route: 'Chat',
+                visible: true,
               },
-            ].map((menu, idx) => {
+            ]
+              .filter((m) => m.visible)
+              .map((menu, idx) => {
               return (
                 <TouchableOpacity
                   key={idx}
