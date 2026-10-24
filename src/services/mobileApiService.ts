@@ -477,6 +477,12 @@ export const mobileApiService = {
   createTeacherStudentNote: async (payload: Record<string, unknown>) => (
     await api.post('/teacher/student-notes', payload)
   ).data,
+  updateTeacherStudentNote: async (id: string, payload: Record<string, unknown>) => (
+    await api.put(`/teacher/student-notes/${id}`, payload)
+  ).data,
+  deleteTeacherStudentNote: async (id: string) => (
+    await api.delete(`/teacher/student-notes/${id}`)
+  ).data,
 
   // Student card settings from web-dashboard
   getStudentCardSetting: async (educationUnitId?: string) => (
@@ -557,9 +563,19 @@ export const mobileApiService = {
   getPortalSchedules: async (params: { child_id?: string; date?: string; month?: string; academic_year?: string } = {}) => (
     await api.get('/portal/schedules', { params })
   ).data,
-  getPortalGrades: async (childId?: string) => (
-    await api.get('/portal/grades', childRequest(childId))
-  ).data,
+  getPortalGrades: async (
+    childId?: string,
+    params?: { semester?: string; academic_year?: string; semester_id?: string; academic_year_id?: string },
+  ) => {
+    const childConfig = childRequest(childId);
+    return (await api.get('/portal/grades', {
+      ...(childConfig || {}),
+      params: {
+        ...(childConfig?.params || {}),
+        ...(params || {}),
+      },
+    })).data;
+  },
   getPortalStudentNotes: async (childId?: string, page = 1) => {
     const childConfig = childRequest(childId);
     return (await api.get('/portal/student-notes', {

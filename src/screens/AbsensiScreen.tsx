@@ -82,6 +82,21 @@ const formatTanggalIndo = (val: unknown): string => {
   return d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+const formatTanggalSingkat = (val: unknown): string => {
+  if (!val) return '-';
+  const str = String(val);
+  const d = new Date(str.includes('T') ? str : `${str}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return str;
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+};
+
+const getLocalDateString = (d: Date = new Date()): string => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const formatJamIndo = (val: unknown): string => {
   if (!val) return '-';
   const str = String(val);
@@ -202,11 +217,19 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
   const [submittingReview, setSubmittingReview] = useState<boolean>(false);
 
-  // Period Filter: daily, weekly, monthly, semester, yearly
-  const [selectedPeriod, setSelectedPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'semester' | 'yearly'>('daily');
+  // Period Filter: daily, custom_date, weekly, monthly, semester, yearly
+  const [selectedPeriod, setSelectedPeriod] = useState<'daily' | 'custom_date' | 'weekly' | 'monthly' | 'semester' | 'yearly'>('daily');
+
+  // Filter Sesuai Tanggal (Kalender Interaktif)
+  const [selectedCustomDate, setSelectedCustomDate] = useState<string>('');
+  const [isDatePickerModalOpen, setIsDatePickerModalOpen] = useState<boolean>(false);
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
 
   // Student / Parent Status Filter (Harmonisasi Layout Mutabaah TU)
   const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | 'hadir' | 'izin' | 'sakit' | 'terlambat' | 'alpa'>('all');
+
+  // Filter Mata Pelajaran (Daftar Mapel Scrollable)
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('all');
 
   // TU & Manajerial: state rekap kehadiran siswa & pegawai
   const [tuStudentAttendances, setTuStudentAttendances] = useState<any[]>([]);
@@ -289,16 +312,16 @@ export default function AbsensiScreen({ route, navigation }: any) {
     setSelectedQrStudent(student);
   };
 
-  // Tombol Jadwal pada sticky header & body card (disamakan dengan halaman Jadwal)
+  // Tombol Kalender pada sticky header & body card (disamakan dengan halaman Beranda & Kalender)
   const openScheduleForStudent = useCallback((student: any) => {
-    const sid = student?.id || student?.student_id;
+    const sid = student?.id || student?.student_id || selectedChildId;
     if (sid) {
       const idStr = String(sid);
-      navigation?.navigate('Jadwal', { child_id: idStr, student_id: idStr });
+      navigation?.navigate('Kalender', { child_id: idStr, student_id: idStr });
     } else {
-      navigation?.navigate('Jadwal');
+      navigation?.navigate('Kalender');
     }
-  }, [navigation]);
+  }, [navigation, selectedChildId]);
 
   useEffect(() => {
     const rawTab = route?.params?.tab;
@@ -312,11 +335,20 @@ export default function AbsensiScreen({ route, navigation }: any) {
     }
   }, [route?.params?.tab, route?.params?.defaultSubject, navigation]);
 
+  // Sinkronkan selectedChildId dengan parameter rute dan store anak aktif global
   useEffect(() => {
-    if (route?.params?.child_id) {
-      setSelectedChildId(String(route.params.child_id));
+    const isSingleChild = route?.params?.single_child_only === true;
+    const incomingId = route?.params?.child_id || route?.params?.student_id;
+    if (incomingId) {
+      if (String(incomingId) !== String(selectedChildId)) {
+        setSelectedChildId(String(incomingId));
+      }
+    } else if (globalActiveChildId && !isSingleChild) {
+      if (String(globalActiveChildId) !== String(selectedChildId)) {
+        setSelectedChildId(String(globalActiveChildId));
+      }
     }
-  }, [route?.params?.child_id]);
+  }, [route?.params?.child_id, route?.params?.student_id, route?.params?.single_child_only, globalActiveChildId, selectedChildId]);
 
   // Modals
   const [selectedDetail, setSelectedDetail] = useState<any | null>(null);
@@ -330,40 +362,48 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const [permReason, setPermReason] = useState<string>('');
   const [permSubmitting, setPermSubmitting] = useState<boolean>(false);
 
-  // 1. Load Children if parent with offline cache (seluruh anak ditampilkan)
+  // 1. Load Children if parent with offline cache (selaras 100% dengan ananda terpilih di halaman utama)
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
+      const isSingleChild = route?.params?.single_child_only === true;
       const targetChildId = route?.params?.child_id || route?.params?.student_id || globalActiveChildId;
       const childCacheKey = offlineCache.buildKey('absensi_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<any[]>(childCacheKey);
         if (cached && isMounted && cached.length > 0) {
-          setChildren(cached);
-          if (!selectedChildId) {
-            const initId = targetChildId
-              ? String(targetChildId)
-              : String(cached[0]?.id || cached[0]?.student_id);
-            setSelectedChildId(initId);
-            const foundIdx = cached.findIndex((c: any) => String(c.id || c.student_id) === initId);
-            if (foundIdx >= 0) setActiveChildIndex(foundIdx);
-          }
+          const displayCached = (isSingleChild && targetChildId)
+            ? cached.filter((c: any) => String(c.id || c.student_id) === String(targetChildId))
+            : cached;
+          const safeCached = displayCached.length > 0 ? displayCached : cached;
+          setChildren(safeCached);
+          useActiveChildStore.getState().setChildren(cached);
+          const activeId = targetChildId
+            ? String(targetChildId)
+            : String(useActiveChildStore.getState().activeChildId || safeCached[0]?.id || safeCached[0]?.student_id);
+          setSelectedChildId(activeId);
+          const foundIdx = safeCached.findIndex((c: any) => String(c.id || c.student_id) === activeId);
+          if (foundIdx >= 0) setActiveChildIndex(foundIdx);
         }
       })();
 
       mobileApiService.getPortalChildren()
         .then((res) => {
-          const list = unwrapApiData<any[]>(res) || [];
+          const raw = unwrapApiData<any>(res);
+          const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
           if (isMounted && list.length > 0) {
-            setChildren(list);
-            if (targetChildId) {
-              setSelectedChildId(String(targetChildId));
-              const foundIdx = list.findIndex((c: any) => String(c.id || c.student_id) === String(targetChildId));
-              if (foundIdx >= 0) setActiveChildIndex(foundIdx);
-            } else if (!selectedChildId) {
-              setSelectedChildId(String(list[0]?.id || list[0]?.student_id));
-              setActiveChildIndex(0);
-            }
+            const displayList = (isSingleChild && targetChildId)
+              ? list.filter((c: any) => String(c.id || c.student_id) === String(targetChildId))
+              : list;
+            const safeList = displayList.length > 0 ? displayList : list;
+            setChildren(safeList);
+            useActiveChildStore.getState().setChildren(list);
+            const activeId = targetChildId
+              ? String(targetChildId)
+              : String(useActiveChildStore.getState().activeChildId || safeList[0]?.id || safeList[0]?.student_id);
+            setSelectedChildId(activeId);
+            const foundIdx = safeList.findIndex((c: any) => String(c.id || c.student_id) === activeId);
+            if (foundIdx >= 0) setActiveChildIndex(foundIdx);
             void offlineCache.set(childCacheKey, list);
           }
         })
@@ -374,7 +414,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, globalActiveChildId]);
+  }, [isParent, user?.id, globalActiveChildId, route?.params?.child_id, route?.params?.student_id, route?.params?.single_child_only]);
 
   const studentCardWidth = useMemo(() => {
     return children.length > 1
@@ -479,7 +519,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
         (c) => String(c.id || c.student_id) === String(selectedChildId)
       );
       if (idx >= 0 && idx !== activeChildIndex) {
-        setActiveChildIndex(idx);
+        goToLoopChild(idx);
       }
     }
   }, [selectedChildId, children, activeChildIndex]);
@@ -726,7 +766,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
     });
 
     const total = attendanceLogs.length;
-    const percentage = total > 0 ? Math.round(((hadir + terlambat) / total) * 100) : 100;
+    const percentage = total > 0 ? Math.round(((hadir + terlambat) / total) * 100) : 0;
 
     return { hadir, terlambat, izin, sakit, alpa, total, percentage };
   }, [attendanceLogs]);
@@ -1157,6 +1197,62 @@ export default function AbsensiScreen({ route, navigation }: any) {
     }).length;
   }, [permissionsHistory]);
 
+  // ── Tanggal Hari Ini & Daftar Mapel ──
+  const todayDateStr = useMemo(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+
+  const availableSubjects = useMemo(() => {
+    const set = new Set<string>();
+    attendanceLogs.forEach((item) => {
+      const name =
+        item.jadwal_pelajaran?.subject?.name ||
+        item.jadwalPelajaran?.subject?.name ||
+        item.session?.subject?.name ||
+        item.session?.schedule?.subject?.name ||
+        item.subject_name;
+      if (name && typeof name === 'string' && name.trim()) {
+        set.add(name.trim());
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [attendanceLogs]);
+
+  // Calendar Grid Days untuk Modal Kalender Filter Tanggal
+  const calendarGridDays = useMemo(() => {
+    try {
+      const year = calendarMonth.getFullYear();
+      const month = calendarMonth.getMonth();
+      const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sunday
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const days: { dayNum: number | null; dateStr: string; isSelected: boolean; isToday: boolean }[] = [];
+      const todayStr = todayDateStr;
+      const activeTargetDate = selectedCustomDate || todayDateStr;
+
+      for (let i = 0; i < firstDayIndex; i++) {
+        days.push({ dayNum: null, dateStr: '', isSelected: false, isToday: false });
+      }
+      for (let d = 1; d <= daysInMonth; d++) {
+        const mm = String(month + 1).padStart(2, '0');
+        const dd = String(d).padStart(2, '0');
+        const dateStr = `${year}-${mm}-${dd}`;
+        days.push({
+          dayNum: d,
+          dateStr,
+          isSelected: dateStr === activeTargetDate,
+          isToday: dateStr === todayStr,
+        });
+      }
+      return days;
+    } catch {
+      return [];
+    }
+  }, [calendarMonth, selectedCustomDate, todayDateStr]);
+
   // ── 4. Unified List Items ──
   const unifiedItems = useMemo(() => {
     if (isStaff) {
@@ -1307,9 +1403,24 @@ export default function AbsensiScreen({ route, navigation }: any) {
         raw: item,
       }));
 
+      let staffFiltered = rawStaffList;
+      if (selectedPeriod === 'daily') {
+        staffFiltered = staffFiltered.filter((it) => String(it.date || '').slice(0, 10) === todayDateStr);
+      } else if (selectedPeriod === 'custom_date') {
+        const targetDate = selectedCustomDate || todayDateStr;
+        staffFiltered = staffFiltered.filter((it) => String(it.date || '').slice(0, 10) === targetDate);
+      } else if (selectedPeriod === 'weekly') {
+        const past7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const past7Str = `${past7.getFullYear()}-${String(past7.getMonth() + 1).padStart(2, '0')}-${String(past7.getDate()).padStart(2, '0')}`;
+        staffFiltered = staffFiltered.filter((it) => String(it.date || '').slice(0, 10) >= past7Str);
+      } else if (selectedPeriod === 'monthly') {
+        const currentMonth = todayDateStr.slice(0, 7);
+        staffFiltered = staffFiltered.filter((it) => String(it.date || '').slice(0, 10).startsWith(currentMonth));
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        return rawStaffList.filter((it) =>
+        return staffFiltered.filter((it) =>
           it.title.toLowerCase().includes(q) ||
           it.subtitle.toLowerCase().includes(q) ||
           it.status.toLowerCase().includes(q) ||
@@ -1317,7 +1428,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
         );
       }
 
-      return rawStaffList;
+      return staffFiltered;
     }
 
     const list: any[] = [];
@@ -1434,6 +1545,75 @@ export default function AbsensiScreen({ route, navigation }: any) {
       });
     }
 
+    // Filter by selectedSubjectFilter (Daftar Mapel Scrollable)
+    if (!isStaff && selectedSubjectFilter !== 'all') {
+      filteredList = filteredList.filter((it) => {
+        if (it.category !== 'attendance') return false;
+        const subName = (it.raw as any)?.jadwal_pelajaran?.subject?.name ||
+          (it.raw as any)?.jadwalPelajaran?.subject?.name ||
+          (it.raw as any)?.session?.subject?.name ||
+          (it.raw as any)?.session?.schedule?.subject?.name ||
+          (it.raw as any)?.subject_name ||
+          it.title;
+        return String(subName || '').toLowerCase().includes(selectedSubjectFilter.toLowerCase());
+      });
+    }
+
+    // Filter by selectedPeriod (Harian = data hari ini, custom_date = tanggal spesifik, Mingguan = 7 hari terakhir, Bulanan = bulan ini)
+    if (!isStaff && selectedPeriod) {
+      if (selectedPeriod === 'daily') {
+        filteredList = filteredList.filter((it) => {
+          if (!it.date) return false;
+          const itDate = String(it.date).slice(0, 10);
+          if (it.category === 'permission') {
+            const startDate = String((it.raw as any)?.start_date || (it.raw as any)?.tanggal_mulai || itDate).slice(0, 10);
+            const endDate = String((it.raw as any)?.end_date || (it.raw as any)?.tanggal_selesai || startDate).slice(0, 10);
+            return todayDateStr >= startDate && todayDateStr <= endDate;
+          }
+          if (it.category === 'boarding_pass') {
+            const rawStatus = (it.raw as any)?.status;
+            if (rawStatus === 'active' || rawStatus === 'keluar') return true;
+            return itDate === todayDateStr;
+          }
+          return itDate === todayDateStr;
+        });
+      } else if (selectedPeriod === 'custom_date') {
+        const targetDate = selectedCustomDate || todayDateStr;
+        filteredList = filteredList.filter((it) => {
+          if (!it.date) return false;
+          const itDate = String(it.date).slice(0, 10);
+          if (it.category === 'permission') {
+            const startDate = String((it.raw as any)?.start_date || (it.raw as any)?.tanggal_mulai || itDate).slice(0, 10);
+            const endDate = String((it.raw as any)?.end_date || (it.raw as any)?.tanggal_selesai || startDate).slice(0, 10);
+            return targetDate >= startDate && targetDate <= endDate;
+          }
+          if (it.category === 'boarding_pass') {
+            const rawStatus = (it.raw as any)?.status;
+            if (rawStatus === 'active' || rawStatus === 'keluar') return true;
+            return itDate === targetDate;
+          }
+          return itDate === targetDate;
+        });
+      } else if (selectedPeriod === 'weekly') {
+        const dToday = new Date();
+        const dWeekAgo = new Date();
+        dWeekAgo.setDate(dToday.getDate() - 7);
+        const weekAgoStr = `${dWeekAgo.getFullYear()}-${String(dWeekAgo.getMonth() + 1).padStart(2, '0')}-${String(dWeekAgo.getDate()).padStart(2, '0')}`;
+        filteredList = filteredList.filter((it) => {
+          if (!it.date) return false;
+          const itDate = String(it.date).slice(0, 10);
+          return itDate >= weekAgoStr && itDate <= todayDateStr;
+        });
+      } else if (selectedPeriod === 'monthly') {
+        const thisMonthStr = todayDateStr.slice(0, 7);
+        filteredList = filteredList.filter((it) => {
+          if (!it.date) return false;
+          const itDate = String(it.date).slice(0, 7);
+          return itDate === thisMonthStr;
+        });
+      }
+    }
+
     // Filter by search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -1446,16 +1626,9 @@ export default function AbsensiScreen({ route, navigation }: any) {
     }
 
     return filteredList;
-  }, [isTuStaff, isAboveTu, canViewStudentReport, tuStudentAttendances, rekapPegawaiAttendances, isStaff, employeeHistory, activeTab, attendanceLogs, permissionsHistory, staffPermFilter, dormitoryPermits, searchQuery, studentStatusFilter]);
+  }, [isTuStaff, isAboveTu, canViewStudentReport, tuStudentAttendances, rekapPegawaiAttendances, isStaff, employeeHistory, activeTab, attendanceLogs, permissionsHistory, staffPermFilter, dormitoryPermits, searchQuery, studentStatusFilter, selectedSubjectFilter, selectedPeriod, selectedCustomDate, todayDateStr]);
 
   // ── 5. Employee Actions (Check In / Out) ──
-  const todayDateStr = useMemo(() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }, []);
 
   const todayRecord = useMemo(() => {
     return employeeHistory.find((it: any) => {
@@ -2098,25 +2271,85 @@ export default function AbsensiScreen({ route, navigation }: any) {
   };
 
   const getStatusColor = (statusKey: string) => {
-    if (statusKey.includes('dinas') || statusKey.includes('tugas_luar')) {
-      return { bg: '#F0FDFA', text: '#0D9488', border: '#99F6E4', icon: 'briefcase-check-outline' };
+    const k = (statusKey || '').toLowerCase();
+    if (k.includes('dinas') || k.includes('tugas_luar')) {
+      return {
+        bg: '#F0FDFA',
+        text: '#0D9488',
+        border: '#99F6E4',
+        icon: 'briefcase-check-outline',
+        gradient: ['#0D9488', '#14B8A6'] as [string, string],
+        lightBg: '#CCFBF1',
+      };
     }
-    if (statusKey.includes('hadir') || statusKey.includes('approved') || statusKey.includes('disetujui')) {
-      return { bg: '#ECFDF5', text: '#059669', border: '#A7F3D0', icon: 'check-circle' };
+    if (k.includes('hadir') || k.includes('present') || k.includes('approved') || k.includes('disetujui')) {
+      return {
+        bg: '#ECFDF5',
+        text: '#059669',
+        border: '#A7F3D0',
+        icon: 'check-circle',
+        gradient: ['#059669', '#10B981'] as [string, string],
+        lightBg: '#D1FAE5',
+      };
     }
-    if (statusKey.includes('terlambat') || statusKey.includes('late')) {
-      return { bg: '#FFFBEB', text: '#D97706', border: '#FDE68A', icon: 'clock-alert-outline' };
+    if (k.includes('terlambat') || k.includes('late')) {
+      return {
+        bg: '#FFFBEB',
+        text: '#D97706',
+        border: '#FDE68A',
+        icon: 'clock-alert-outline',
+        gradient: ['#D97706', '#F59E0B'] as [string, string],
+        lightBg: '#FEF3C7',
+      };
     }
-    if (statusKey.includes('izin')) {
-      return { bg: '#EFF6FF', text: '#2563EB', border: '#BFDBFE', icon: 'file-document-outline' };
+    if (k.includes('izin')) {
+      return {
+        bg: '#EFF6FF',
+        text: '#2563EB',
+        border: '#BFDBFE',
+        icon: 'file-document-outline',
+        gradient: ['#2563EB', '#3B82F6'] as [string, string],
+        lightBg: '#DBEAFE',
+      };
     }
-    if (statusKey.includes('sakit')) {
-      return { bg: '#FAF5FF', text: '#7C3AED', border: '#E9D5FF', icon: 'medical-bag' };
+    if (k.includes('sakit')) {
+      return {
+        bg: '#FAF5FF',
+        text: '#7C3AED',
+        border: '#E9D5FF',
+        icon: 'medical-bag',
+        gradient: ['#7C3AED', '#8B5CF6'] as [string, string],
+        lightBg: '#F3E8FF',
+      };
     }
-    if (statusKey.includes('pending') || statusKey.includes('menunggu')) {
-      return { bg: '#FFF7ED', text: '#EA580C', border: '#FFEDD5', icon: 'timer-sand' };
+    if (k.includes('active') || k.includes('boarding') || k.includes('keluar') || k.includes('pesiar')) {
+      return {
+        bg: '#F0F9FF',
+        text: '#0284C7',
+        border: '#BAE6FD',
+        icon: 'compass-outline',
+        gradient: ['#0284C7', '#38BDF8'] as [string, string],
+        lightBg: '#E0F2FE',
+      };
     }
-    return { bg: '#FEF2F2', text: '#DC2626', border: '#FECACA', icon: 'close-circle' };
+    if (k.includes('pending') || k.includes('menunggu')) {
+      return {
+        bg: '#FFF7ED',
+        text: '#EA580C',
+        border: '#FFEDD5',
+        icon: 'timer-sand',
+        gradient: ['#EA580C', '#F97316'] as [string, string],
+        lightBg: '#FFEDD5',
+      };
+    }
+    return {
+      bg: '#FEF2F2',
+      text: '#DC2626',
+      border: '#FECACA',
+      icon: 'close-circle',
+      gradient: ['#DC2626', '#EF4444'] as [string, string],
+      lightBg: '#FEE2E2',
+    };
   };
 
   return (
@@ -2396,8 +2629,8 @@ export default function AbsensiScreen({ route, navigation }: any) {
             }
           }}
           middleAction={{
-            label: 'Jadwal',
-            icon: 'calendar-clock',
+            label: 'Kalender',
+            icon: 'calendar-month',
             onPress: () => openScheduleForStudent(headerStudent),
           }}
           onOpenIdCard={(s) => openIdCard(s)}
@@ -2482,20 +2715,6 @@ export default function AbsensiScreen({ route, navigation }: any) {
              ══════════════════════════════════════════════════════════════ */}
           {!isStaff && children.length > 0 ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
-                </View>
-                {children.length > 1 && (
-                  <View style={styles.studentCardCountBadge}>
-                    <Text style={styles.studentCardCountBadgeText}>
-                      {safeCenter + 1} dari {children.length} Ananda
-                    </Text>
-                  </View>
-                )}
-              </View>
-
               {children.length === 1 ? (
                 <View style={styles.singleHeroCardContainer}>
                   <StudentHeroCard
@@ -2504,8 +2723,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
                     isSingleChild={true}
                     showActionButtons={true}
                     cardLabel="Kartu Siswa"
-                    calendarLabel="Jadwal"
+                    calendarLabel="Kalender"
+                    calendarIcon="calendar-month"
                     portalLabel="Menu"
+                    portalIcon="view-grid"
                     onPressCard={() => openIdCard(children[0])}
                     onPressQr={() => openQrCard(children[0])}
                     onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
@@ -2578,8 +2799,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
                           showActionButtons={true}
                           cardWidth={studentCardWidth}
                           cardLabel="Kartu Siswa"
-                          calendarLabel="Jadwal"
+                          calendarLabel="Kalender"
+                          calendarIcon="calendar-month"
                           portalLabel="Menu"
+                          portalIcon="view-grid"
                           onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
                           onPressCard={() => openIdCard(child)}
                           onPressQr={() => openQrCard(child)}
@@ -2605,6 +2828,8 @@ export default function AbsensiScreen({ route, navigation }: any) {
                             styles.paginationDot,
                             isDotActive && styles.paginationDotActive,
                           ]}
+                          accessibilityLabel={`Pilih Siswa ke-${dotIdx + 1}`}
+                          accessibilityRole="button"
                         />
                       );
                     })}
@@ -2614,13 +2839,6 @@ export default function AbsensiScreen({ route, navigation }: any) {
             </View>
           ) : headerStudent && !isStaff ? (
             <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Ananda</Text>
-                </View>
-              </View>
-
               <View style={styles.singleHeroCardContainer}>
                 <StudentHeroCard
                   child={headerStudent}
@@ -2628,8 +2846,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   isSingleChild={true}
                   showActionButtons={true}
                   cardLabel="Kartu Siswa"
-                  calendarLabel="Jadwal"
+                  calendarLabel="Kalender"
+                  calendarIcon="calendar-month"
                   portalLabel="Menu"
+                  portalIcon="view-grid"
                   onPressCard={() => openIdCard(headerStudent)}
                   onPressQr={() => openQrCard(headerStudent)}
                   onPressWeeklyReport={() => setSelectedWeeklyStudent(headerStudent)}
@@ -2655,7 +2875,9 @@ export default function AbsensiScreen({ route, navigation }: any) {
                 </View>
                 <View style={styles.attendanceRatePill}>
                   <MaterialCommunityIcons name="shield-check" size={13} color="#059669" />
-                  <Text style={styles.attendanceRateText}>{studentStats.percentage}% Kehadiran</Text>
+                  <Text style={styles.attendanceRateText}>
+                    {studentStats.total > 0 ? `${studentStats.percentage}% Kehadiran` : 'Belum Ada Data'}
+                  </Text>
                 </View>
               </View>
 
@@ -3422,59 +3644,113 @@ export default function AbsensiScreen({ route, navigation }: any) {
           {/* ══════════════════════════════════════════════════════════════
               SECTION 4: RIWAYAT & LOG KEHADIRAN
              ══════════════════════════════════════════════════════════════ */}
+          {/* ══════════════════════════════════════════════════════════════
+              SECTION 4: RIWAYAT & LOG KEHADIRAN (UNIFIED CARD DENGAN SCROLL MAPEL & HARIAN)
+             ══════════════════════════════════════════════════════════════ */}
           <View style={styles.containerBlock}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={styles.sectionHeaderTitleWrap}>
-                <MaterialCommunityIcons name="format-list-bulleted" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>
-                  {isStaff
-                    ? activeTab === 'permissions'
+            {isStaff && (
+              <View style={styles.sectionHeaderRow}>
+                <View style={styles.sectionHeaderTitleWrap}>
+                  <MaterialCommunityIcons name="format-list-bulleted" size={18} color="#18A165" />
+                  <Text style={styles.sectionTitle}>
+                    {activeTab === 'permissions'
                       ? 'Daftar Pengajuan Izin Santri'
                       : activeTab === 'boarding'
                         ? 'Daftar Izin Keluar Asrama'
                         : activeTab === 'rekap_pegawai'
                           ? 'Rekap Presensi Seluruh Pegawai'
-                          : 'Riwayat Presensi Mandiri'
-                    : `Riwayat & Log Kehadiran "${activeStudentName}"`}
-                </Text>
+                          : 'Riwayat Presensi Mandiri'}
+                  </Text>
+                </View>
               </View>
-              {!isStaff && isParent && activeTab === 'permissions' && (
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setIsPermissionModalOpen(true)}
-                  style={styles.headerActionPillBtn}
-                >
-                  <MaterialCommunityIcons name="plus" size={14} color="#059669" />
-                  <Text style={styles.headerActionPillText}>Ajukan Izin</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            )}
 
-            {/* UNIFIED FILTER CARD (Khusus Santri & Wali Menggunakan Pola Layout Filter Mutabaah TU) */}
+            {/* UNIFIED LOG & FILTER CARD (Khusus Santri & Wali Mengintegrasikan Label & Filter ke Dalam Satu Card) */}
             {!isStaff ? (
-              <View style={styles.mutabaahFilterCard}>
-                <View style={styles.mutabaahFilterCardHeader}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
-                    <MaterialCommunityIcons name="filter-variant" size={16} color="#059669" />
-                    <Text numberOfLines={1} style={styles.mutabaahFilterCardTitle}>Filter Log Kehadiran</Text>
+              <View style={styles.unifiedLogHistoryCard}>
+                {/* 1. Header Card: Label Riwayat & Log Kehadiran + Tombol Aksi */}
+                <View style={styles.unifiedLogCardHeader}>
+                  <View style={styles.unifiedLogHeaderLeft}>
+                    <View style={styles.unifiedLogCardIconBox}>
+                      <MaterialCommunityIcons name="clipboard-text-clock-outline" size={20} color="#059669" />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text numberOfLines={1} style={styles.unifiedLogCardTitle}>
+                        {isParent && activeStudentName
+                          ? `Riwayat & Log Kehadiran "${activeStudentName}"`
+                          : 'Riwayat & Log Kehadiran'}
+                      </Text>
+                      <Text style={styles.unifiedLogCardSub}>
+                        {unifiedItems.length} catatan aktivitas{selectedPeriod === 'daily' ? ' hari ini' : selectedPeriod === 'custom_date' ? ` pd ${formatTanggalSingkat(selectedCustomDate || todayDateStr)}` : selectedPeriod === 'weekly' ? ' 7 hari terakhir' : ''}
+                      </Text>
+                    </View>
                   </View>
-                  {(searchQuery.length > 0 || studentStatusFilter !== 'all' || activeTab !== 'all' || selectedPeriod !== 'daily') ? (
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setSearchQuery('');
-                        setStudentStatusFilter('all');
-                        setActiveTab('all');
-                        setSelectedPeriod('daily');
-                      }}
-                      style={{ flexShrink: 0 }}
-                    >
-                      <Text style={styles.mutabaahFilterResetBtn}>Reset Filter</Text>
-                    </TouchableOpacity>
-                  ) : null}
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    {isParent && activeTab === 'permissions' && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => setIsPermissionModalOpen(true)}
+                        style={styles.headerActionPillBtn}
+                      >
+                        <MaterialCommunityIcons name="plus" size={13} color="#059669" />
+                        <Text style={styles.headerActionPillText}>Ajukan Izin</Text>
+                      </TouchableOpacity>
+                    )}
+                    {(searchQuery.length > 0 || studentStatusFilter !== 'all' || activeTab !== 'all' || selectedPeriod !== 'daily' || selectedSubjectFilter !== 'all' || Boolean(selectedCustomDate)) ? (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          setSearchQuery('');
+                          setStudentStatusFilter('all');
+                          setSelectedSubjectFilter('all');
+                          setActiveTab('all');
+                          setSelectedPeriod('daily');
+                          setSelectedCustomDate('');
+                        }}
+                        style={styles.resetFilterPillBtn}
+                      >
+                        <MaterialCommunityIcons name="refresh" size={12} color="#059669" />
+                        <Text style={styles.mutabaahFilterResetBtn}>Reset</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                 </View>
 
-                {/* In-Card Search Input Bar (Harmonisasi VIS-B2-005) */}
+                {/* Divider Halus Pemisah Header & Filter */}
+                <View style={styles.unifiedLogDivider} />
+
+                {/* 2. Sub-Header Filter Bar */}
+                <View style={styles.filterBarTitleRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialCommunityIcons name="filter-variant" size={15} color="#059669" />
+                    <Text style={styles.mutabaahFilterCardTitle}>Filter Log Kehadiran</Text>
+                  </View>
+                  {selectedPeriod === 'daily' && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setIsDatePickerModalOpen(true)}
+                      style={styles.todayDateBadge}
+                    >
+                      <MaterialCommunityIcons name="calendar-today" size={11} color="#059669" />
+                      <Text style={styles.todayDateBadgeText}>{formatTanggalIndo(todayDateStr)}</Text>
+                      <MaterialCommunityIcons name="calendar-edit" size={11} color="#059669" style={{ marginLeft: 2 }} />
+                    </TouchableOpacity>
+                  )}
+                  {selectedPeriod === 'custom_date' && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setIsDatePickerModalOpen(true)}
+                      style={styles.customDateSelectedBadge}
+                    >
+                      <MaterialCommunityIcons name="calendar-check" size={12} color="#047857" />
+                      <Text style={styles.customDateBadgeText}>{formatTanggalIndo(selectedCustomDate || todayDateStr)}</Text>
+                      <MaterialCommunityIcons name="pencil-outline" size={11} color="#047857" style={{ marginLeft: 2 }} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* 3. In-Card Search Input Bar */}
                 <View style={styles.mutabaahSearchBox}>
                   <MaterialCommunityIcons name="magnify" size={18} color="#64748B" />
                   <TextInput
@@ -3491,7 +3767,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   ) : null}
                 </View>
 
-                {/* Kategori Log Presensi (Semua, Presensi Kelas, Izin, Asrama) */}
+                {/* 4. Kategori Log Presensi (Semua, Presensi Kelas, Izin, Asrama) */}
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -3544,35 +3820,139 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   )}
                 </ScrollView>
 
-                {/* Filter Rentang Periode Waktu */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.periodChipsRow}
-                  style={{ marginTop: 2 }}
-                >
-                  {[
-                    { key: 'daily', label: 'Harian' },
-                    { key: 'weekly', label: 'Mingguan' },
-                    { key: 'monthly', label: 'Bulanan' },
-                    { key: 'semester', label: 'Semester' },
-                    { key: 'yearly', label: 'Tahun Ajaran' },
-                  ].map((p) => {
-                    const isActive = selectedPeriod === p.key;
-                    return (
+                {/* 5. DAFTAR MATA PELAJARAN (SCROLL HORIZONTAL) */}
+                {availableSubjects.length > 0 && (
+                  <View style={styles.subjectFilterContainer}>
+                    <View style={styles.subjectSectionLabelRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                        <MaterialCommunityIcons name="book-open-page-variant-outline" size={13} color="#059669" />
+                        <Text style={styles.subjectSectionLabel}>Daftar Mata Pelajaran</Text>
+                      </View>
+                      {selectedSubjectFilter !== 'all' && (
+                        <TouchableOpacity onPress={() => setSelectedSubjectFilter('all')}>
+                          <Text style={styles.subjectResetText}>Semua Mapel</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.subjectChipsScroll}
+                    >
                       <TouchableOpacity
-                        key={p.key}
                         activeOpacity={0.8}
-                        onPress={() => setSelectedPeriod(p.key as any)}
-                        style={[styles.periodChip, isActive && styles.periodChipActive]}
+                        onPress={() => setSelectedSubjectFilter('all')}
+                        style={[
+                          styles.subjectChip,
+                          selectedSubjectFilter === 'all' && styles.subjectChipActive,
+                        ]}
                       >
-                        <Text style={[styles.periodChipText, isActive && styles.periodChipTextActive]}>
-                          {p.label}
+                        <MaterialCommunityIcons
+                          name="bookshelf"
+                          size={12}
+                          color={selectedSubjectFilter === 'all' ? '#047857' : '#64748B'}
+                        />
+                        <Text
+                          style={[
+                            styles.subjectChipText,
+                            selectedSubjectFilter === 'all' && styles.subjectChipTextActive,
+                          ]}
+                        >
+                          Semua Mapel ({availableSubjects.length})
                         </Text>
                       </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+
+                      {availableSubjects.map((sub) => {
+                        const isSubActive = selectedSubjectFilter.toLowerCase() === sub.toLowerCase();
+                        return (
+                          <TouchableOpacity
+                            key={sub}
+                            activeOpacity={0.8}
+                            onPress={() =>
+                              setSelectedSubjectFilter(isSubActive ? 'all' : sub)
+                            }
+                            style={[
+                              styles.subjectChip,
+                              isSubActive && styles.subjectChipActive,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name="book-outline"
+                              size={12}
+                              color={isSubActive ? '#047857' : '#64748B'}
+                            />
+                            <Text
+                              style={[
+                                styles.subjectChipText,
+                                isSubActive && styles.subjectChipTextActive,
+                              ]}
+                            >
+                              {sub}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 6. Filter Rentang Periode Waktu */}
+                <View style={styles.periodSectionContainer}>
+                  <View style={styles.periodLabelRow}>
+                    <MaterialCommunityIcons name="calendar-clock-outline" size={13} color="#059669" />
+                    <Text style={styles.subjectSectionLabel}>Rentang Waktu:</Text>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.periodChipsRow}
+                  >
+                    {[
+                      { key: 'daily', label: 'Hari Ini' },
+                      {
+                        key: 'custom_date',
+                        label: selectedPeriod === 'custom_date' && selectedCustomDate
+                          ? `Tgl: ${formatTanggalSingkat(selectedCustomDate)}`
+                          : 'Pilih Tanggal',
+                        icon: 'calendar-search',
+                      },
+                      { key: 'weekly', label: 'Mingguan' },
+                      { key: 'monthly', label: 'Bulanan' },
+                      { key: 'semester', label: 'Semester' },
+                      { key: 'yearly', label: 'Tahun Ajaran' },
+                    ].map((p) => {
+                      const isActive = selectedPeriod === p.key;
+                      return (
+                        <TouchableOpacity
+                          key={p.key}
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            if (p.key === 'custom_date') {
+                              setSelectedPeriod('custom_date');
+                              if (!selectedCustomDate) setSelectedCustomDate(todayDateStr);
+                              setIsDatePickerModalOpen(true);
+                            } else {
+                              setSelectedPeriod(p.key as any);
+                            }
+                          }}
+                          style={[styles.periodChip, isActive && styles.periodChipActive]}
+                        >
+                          {p.icon && (
+                            <MaterialCommunityIcons
+                              name={p.icon as any}
+                              size={12}
+                              color={isActive ? '#047857' : '#64748B'}
+                              style={{ marginRight: 3 }}
+                            />
+                          )}
+                          <Text style={[styles.periodChipText, isActive && styles.periodChipTextActive]}>
+                            {p.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
               </View>
             ) : (
               <>
@@ -3584,7 +3964,14 @@ export default function AbsensiScreen({ route, navigation }: any) {
                   style={{ marginBottom: 12 }}
                 >
                   {[
-                    { key: 'daily', label: 'Harian' },
+                    { key: 'daily', label: 'Hari Ini' },
+                    {
+                      key: 'custom_date',
+                      label: selectedPeriod === 'custom_date' && selectedCustomDate
+                        ? `Tgl: ${formatTanggalSingkat(selectedCustomDate)}`
+                        : 'Pilih Tanggal',
+                      icon: 'calendar-search',
+                    },
                     { key: 'weekly', label: 'Mingguan' },
                     { key: 'monthly', label: 'Bulanan' },
                     { key: 'semester', label: 'Semester' },
@@ -3595,9 +3982,25 @@ export default function AbsensiScreen({ route, navigation }: any) {
                       <TouchableOpacity
                         key={p.key}
                         activeOpacity={0.8}
-                        onPress={() => setSelectedPeriod(p.key as any)}
+                        onPress={() => {
+                          if (p.key === 'custom_date') {
+                            setSelectedPeriod('custom_date');
+                            if (!selectedCustomDate) setSelectedCustomDate(todayDateStr);
+                            setIsDatePickerModalOpen(true);
+                          } else {
+                            setSelectedPeriod(p.key as any);
+                          }
+                        }}
                         style={[styles.periodChip, isActive && styles.periodChipActive]}
                       >
+                        {p.icon && (
+                          <MaterialCommunityIcons
+                            name={p.icon as any}
+                            size={12}
+                            color={isActive ? '#047857' : '#64748B'}
+                            style={{ marginRight: 3 }}
+                          />
+                        )}
                         <Text style={[styles.periodChipText, isActive && styles.periodChipTextActive]}>
                           {p.label}
                         </Text>
@@ -3743,8 +4146,24 @@ export default function AbsensiScreen({ route, navigation }: any) {
             ) : unifiedItems.length === 0 ? (
               <EmptyStateCard
                 icon="clipboard-check-outline"
-                title="Belum Ada Riwayat Presensi"
-                description="Riwayat presensi kelas dan catatan kehadiran akan tampil otomatis di sini setelah dicatat guru."
+                title={
+                  selectedPeriod === 'daily'
+                    ? 'Belum Ada Presensi Hari Ini'
+                    : selectedPeriod === 'custom_date'
+                      ? `Belum Ada Presensi (${formatTanggalSingkat(selectedCustomDate || todayDateStr)})`
+                      : selectedSubjectFilter !== 'all'
+                        ? `Belum Ada Presensi ${selectedSubjectFilter}`
+                        : 'Belum Ada Riwayat Presensi'
+                }
+                description={
+                  selectedPeriod === 'daily'
+                    ? `Tidak ditemukan catatan kehadiran pada hari ini (${formatTanggalIndo(todayDateStr)}). Pilih rentang waktu "Mingguan" atau "Semua" untuk melihat riwayat sebelumnya.`
+                    : selectedPeriod === 'custom_date'
+                      ? `Tidak ditemukan catatan kehadiran pada tanggal ${formatTanggalIndo(selectedCustomDate || todayDateStr)}. Anda dapat memilih tanggal lain melalui tombol kalender di atas.`
+                      : selectedSubjectFilter !== 'all'
+                        ? `Tidak ditemukan catatan presensi untuk mata pelajaran ${selectedSubjectFilter}. Tekan tombol "Semua Mapel" untuk melihat mapel lainnya.`
+                        : 'Riwayat presensi kelas dan catatan kehadiran akan tampil otomatis di sini setelah dicatat guru.'
+                }
               />
             ) : (
               <View style={!isStaff ? styles.mutabaahItemsList : styles.itemsListWrap}>
@@ -3763,7 +4182,14 @@ export default function AbsensiScreen({ route, navigation }: any) {
                           setSelectedDetail(item);
                           setIsDetailModalOpen(true);
                         }}
-                        style={styles.mutabaahStudentCard}
+                        style={[
+                          styles.mutabaahStudentCard,
+                          {
+                            borderLeftWidth: 4.5,
+                            borderLeftColor: tone.text,
+                            borderColor: tone.border,
+                          },
+                        ]}
                       >
                         {/* Card Header: Avatar/Icon + Judul/Mapel + Badge Status */}
                         <View style={styles.mutabaahCardHeader}>
@@ -3778,7 +4204,8 @@ export default function AbsensiScreen({ route, navigation }: any) {
                               {item.subtitle}
                             </Text>
                           </View>
-                          <View style={[styles.mutabaahStatusBadge, { backgroundColor: tone.bg, borderColor: tone.border }]}>
+                          <View style={[styles.mutabaahStatusBadge, { backgroundColor: tone.bg, borderColor: tone.border, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                            <MaterialCommunityIcons name={tone.icon as any} size={11} color={tone.text} />
                             <Text style={[styles.mutabaahStatusBadgeText, { color: tone.text }]}>
                               {item.status}
                             </Text>
@@ -3787,23 +4214,27 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
                         {/* Tanggal & Waktu Presensi */}
                         <View style={styles.mutabaahCardDetailsRow}>
-                          <View style={styles.infoMetaPill}>
+                          <View style={[styles.infoMetaPill, { backgroundColor: '#ECFDF5', paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8, borderWidth: 1, borderColor: '#A7F3D0' }]}>
                             <MaterialCommunityIcons name="calendar-month-outline" size={12} color="#059669" />
-                            <Text style={[styles.infoMetaText, { color: '#059669', fontWeight: '700' }]}>
+                            <Text style={[styles.infoMetaText, { color: '#059669', fontWeight: '800' }]}>
                               {formatTanggalIndo(item.date)}
                             </Text>
                           </View>
-                          <View style={styles.infoMetaPill}>
-                            <MaterialCommunityIcons name="clock-outline" size={12} color="#64748B" />
-                            <Text style={styles.infoMetaText}>{item.time}</Text>
+                          <View style={[styles.infoMetaPill, { backgroundColor: '#F0F9FF', paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8, borderWidth: 1, borderColor: '#BAE6FD' }]}>
+                            <MaterialCommunityIcons name="clock-outline" size={12} color="#0284C7" />
+                            <Text style={[styles.infoMetaText, { color: '#0284C7', fontWeight: '700' }]}>{item.time}</Text>
                           </View>
                         </View>
 
                         {/* Notes / Catatan Kehadiran */}
                         {item.notes ? (
-                          <View style={styles.notesBox}>
-                            <Text numberOfLines={3} style={styles.notesText}>
-                              Catatan: {item.notes}
+                          <View style={[styles.notesBox, { backgroundColor: tone.bg, borderColor: tone.border, borderLeftWidth: 3.5, borderLeftColor: tone.text }]}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                              <MaterialCommunityIcons name="comment-text-outline" size={13} color={tone.text} />
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: tone.text }}>Catatan Presensi:</Text>
+                            </View>
+                            <Text numberOfLines={3} style={[styles.notesText, { color: '#334155' }]}>
+                              {item.notes}
                             </Text>
                           </View>
                         ) : null}
@@ -3813,10 +4244,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
                           <TouchableOpacity
                             activeOpacity={0.8}
                             onPress={() => openAttachmentPreview(item.attachmentUrl, `Lampiran - ${item.title}`)}
-                            style={styles.attachmentBadgeBtn}
+                            style={[styles.attachmentBadgeBtn, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}
                           >
                             <MaterialCommunityIcons name="paperclip" size={14} color="#059669" />
-                            <Text style={styles.attachmentBadgeBtnText}>Lihat Lampiran Surat / Bukti</Text>
+                            <Text style={[styles.attachmentBadgeBtnText, { color: '#059669', fontWeight: '700' }]}>Lihat Lampiran Surat / Bukti</Text>
                             <MaterialCommunityIcons name="open-in-new" size={12} color="#059669" />
                           </TouchableOpacity>
                         ) : null}
@@ -3824,10 +4255,12 @@ export default function AbsensiScreen({ route, navigation }: any) {
                         {/* Card Bottom: Tap to Detail */}
                         <View style={styles.mutabaahCardActionRow}>
                           <View style={styles.mutabaahDetailHint}>
-                            <MaterialCommunityIcons name="information-outline" size={13} color="#059669" />
-                            <Text style={styles.mutabaahDetailHintText}>Ketuk untuk rincian lengkap</Text>
+                            <MaterialCommunityIcons name="information-outline" size={13} color={tone.text} />
+                            <Text style={[styles.mutabaahDetailHintText, { color: tone.text }]}>Ketuk untuk rincian catatan lengkap</Text>
                           </View>
-                          <MaterialCommunityIcons name="chevron-right" size={16} color="#94A3B8" />
+                          <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: tone.bg, alignItems: 'center', justifyContent: 'center' }}>
+                            <MaterialCommunityIcons name="chevron-right" size={15} color={tone.text} />
+                          </View>
                         </View>
                       </TouchableOpacity>
                     );
@@ -3841,7 +4274,14 @@ export default function AbsensiScreen({ route, navigation }: any) {
                         setSelectedDetail(item);
                         setIsDetailModalOpen(true);
                       }}
-                      style={styles.historyItemCard}
+                      style={[
+                        styles.historyItemCard,
+                        {
+                          borderLeftWidth: 4.5,
+                          borderLeftColor: tone.text,
+                          borderColor: tone.border,
+                        },
+                      ]}
                     >
                       <View style={styles.historyItemTop}>
                         <View style={[styles.itemCategoryIconBox, { backgroundColor: tone.bg, borderColor: tone.border }]}>
@@ -3855,26 +4295,33 @@ export default function AbsensiScreen({ route, navigation }: any) {
                             {item.subtitle}
                           </Text>
                         </View>
-                        <View style={[styles.statusBadgePill, { backgroundColor: tone.bg, borderColor: tone.border }]}>
+                        <View style={[styles.statusBadgePill, { backgroundColor: tone.bg, borderColor: tone.border, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                          <MaterialCommunityIcons name={tone.icon as any} size={12} color={tone.text} />
                           <Text style={[styles.statusBadgeText, { color: tone.text }]}>{item.status}</Text>
                         </View>
                       </View>
 
                       <View style={styles.historyItemBottom}>
-                        <View style={styles.infoMetaPill}>
-                          <MaterialCommunityIcons name={isStaffReview ? "calendar-range" : "calendar-month-outline"} size={12} color={isStaffReview ? "#0D9488" : "#64748B"} />
-                          <Text style={[styles.infoMetaText, isStaffReview && { color: '#0D9488', fontWeight: '700' }]}>{item.time}</Text>
+                        <View style={[styles.infoMetaPill, { backgroundColor: '#ECFDF5', paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8, borderWidth: 1, borderColor: '#A7F3D0' }]}>
+                          <MaterialCommunityIcons name={isStaffReview ? "calendar-range" : "calendar-month-outline"} size={12} color={isStaffReview ? "#0D9488" : "#059669"} />
+                          <Text style={[styles.infoMetaText, { color: isStaffReview ? '#0D9488' : '#059669', fontWeight: '800' }]}>{item.time}</Text>
                         </View>
-                        <View style={styles.infoMetaPill}>
-                          <MaterialCommunityIcons name="clock-outline" size={12} color="#64748B" />
-                          <Text style={styles.infoMetaText}>{isStaffReview ? `Diajukan: ${formatTanggalIndo(item.date)}` : item.time}</Text>
+                        <View style={[styles.infoMetaPill, { backgroundColor: '#F0F9FF', paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8, borderWidth: 1, borderColor: '#BAE6FD' }]}>
+                          <MaterialCommunityIcons name="clock-outline" size={12} color="#0284C7" />
+                          <Text style={[styles.infoMetaText, { color: '#0284C7', fontWeight: '700' }]}>{isStaffReview ? `Diajukan: ${formatTanggalIndo(item.date)}` : item.time}</Text>
                         </View>
                       </View>
 
                       {item.notes ? (
-                        <View style={styles.notesBox}>
-                          <Text numberOfLines={3} style={styles.notesText}>
-                            {isStaffReview ? `Alasan: ${item.notes}` : `Catatan: ${item.notes}`}
+                        <View style={[styles.notesBox, { backgroundColor: tone.bg, borderColor: tone.border, borderLeftWidth: 3.5, borderLeftColor: tone.text }]}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                            <MaterialCommunityIcons name="comment-text-outline" size={13} color={tone.text} />
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: tone.text }}>
+                              {isStaffReview ? 'Alasan Pengajuan:' : 'Catatan Presensi:'}
+                            </Text>
+                          </View>
+                          <Text numberOfLines={3} style={[styles.notesText, { color: '#334155' }]}>
+                            {item.notes}
                           </Text>
                         </View>
                       ) : null}
@@ -5571,7 +6018,213 @@ export default function AbsensiScreen({ route, navigation }: any) {
       />
 
       {/* ══════════════════════════════════════════════════════════════
-          MODAL 1: DETAIL INFORMASI PRESENSI / PERIZINAN
+          MODAL KALENDER: FILTER DATA PRESENSI SESUAI TANGGAL
+         ══════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={isDatePickerModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsDatePickerModalOpen(false)}
+        statusBarTranslucent
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsDatePickerModalOpen(false)} />
+          <View style={[styles.calendarPickerModalCard, { paddingBottom: modalBottomInset }]}>
+            {/* Header Modal */}
+            <View style={styles.calendarModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                <View style={styles.calendarHeaderIconBox}>
+                  <MaterialCommunityIcons name="calendar-search" size={20} color="#059669" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.calendarModalTitle}>Pilih Tanggal Presensi</Text>
+                  <Text numberOfLines={1} style={styles.calendarModalSub}>
+                    {formatTanggalIndo(selectedCustomDate || todayDateStr)}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsDatePickerModalOpen(false)}
+                style={styles.modalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Presets (Pintasan Cepat) */}
+            <View style={styles.calendarQuickPresets}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[
+                  styles.calendarPresetBtn,
+                  (selectedCustomDate === todayDateStr || (!selectedCustomDate && selectedPeriod === 'daily')) && styles.calendarPresetBtnActive,
+                ]}
+                onPress={() => {
+                  setSelectedCustomDate(todayDateStr);
+                  setSelectedPeriod('custom_date');
+                  setIsDatePickerModalOpen(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.calendarPresetText,
+                    (selectedCustomDate === todayDateStr || (!selectedCustomDate && selectedPeriod === 'daily')) && styles.calendarPresetTextActive,
+                  ]}
+                >
+                  Hari Ini
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[
+                  styles.calendarPresetBtn,
+                  selectedCustomDate === getLocalDateString(new Date(Date.now() - 24 * 60 * 60 * 1000)) && styles.calendarPresetBtnActive,
+                ]}
+                onPress={() => {
+                  const yesterday = new Date();
+                  yesterday.setDate(yesterday.getDate() - 1);
+                  const dStr = getLocalDateString(yesterday);
+                  setSelectedCustomDate(dStr);
+                  setSelectedPeriod('custom_date');
+                  setIsDatePickerModalOpen(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.calendarPresetText,
+                    selectedCustomDate === getLocalDateString(new Date(Date.now() - 24 * 60 * 60 * 1000)) && styles.calendarPresetTextActive,
+                  ]}
+                >
+                  Kemarin
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[
+                  styles.calendarPresetBtn,
+                  selectedCustomDate === getLocalDateString(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)) && styles.calendarPresetBtnActive,
+                ]}
+                onPress={() => {
+                  const twoDaysAgo = new Date();
+                  twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+                  const dStr = getLocalDateString(twoDaysAgo);
+                  setSelectedCustomDate(dStr);
+                  setSelectedPeriod('custom_date');
+                  setIsDatePickerModalOpen(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.calendarPresetText,
+                    selectedCustomDate === getLocalDateString(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)) && styles.calendarPresetTextActive,
+                  ]}
+                >
+                  2 Hari Lalu
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Month Nav */}
+            <View style={styles.calendarMonthNav}>
+              <TouchableOpacity
+                style={styles.calendarNavBtn}
+                onPress={() => {
+                  const prevMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1);
+                  setCalendarMonth(prevMonth);
+                }}
+              >
+                <MaterialCommunityIcons name="chevron-left" size={22} color="#334155" />
+              </TouchableOpacity>
+              <Text style={styles.calendarMonthTitle}>
+                {new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(calendarMonth)}
+              </Text>
+              <TouchableOpacity
+                style={styles.calendarNavBtn}
+                onPress={() => {
+                  const nextMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1);
+                  setCalendarMonth(nextMonth);
+                }}
+              >
+                <MaterialCommunityIcons name="chevron-right" size={22} color="#334155" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Day Header Row */}
+            <View style={styles.calendarDayHeaderRow}>
+              {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map((d) => (
+                <Text key={d} style={styles.calendarDayHeaderCol}>{d}</Text>
+              ))}
+            </View>
+
+            {/* Day Grid */}
+            <View style={styles.calendarGrid}>
+              {calendarGridDays.map((item, idx) => {
+                if (!item.dayNum) {
+                  return <View key={`empty-${idx}`} style={styles.calendarGridCell} />;
+                }
+                const isItemChosen = item.dateStr === (selectedCustomDate || todayDateStr);
+                return (
+                  <TouchableOpacity
+                    key={item.dateStr}
+                    style={[
+                      styles.calendarGridCell,
+                      isItemChosen && styles.calendarGridCellActive,
+                      item.isToday && !isItemChosen && styles.calendarGridCellToday,
+                    ]}
+                    onPress={() => {
+                      setSelectedCustomDate(item.dateStr);
+                      setSelectedPeriod('custom_date');
+                      setIsDatePickerModalOpen(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.calendarGridDayText,
+                        isItemChosen && styles.calendarGridDayTextActive,
+                        item.isToday && !isItemChosen && styles.calendarGridDayTextToday,
+                      ]}
+                    >
+                      {item.dayNum}
+                    </Text>
+                    {item.isToday && !isItemChosen && (
+                      <View style={styles.todayDotIndicator} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Footer Modal Action */}
+            <View style={styles.calendarModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={styles.calendarFooterCancelBtn}
+                onPress={() => setIsDatePickerModalOpen(false)}
+              >
+                <Text style={styles.calendarFooterCancelText}>Tutup</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={styles.calendarFooterApplyBtn}
+                onPress={() => {
+                  if (!selectedCustomDate) setSelectedCustomDate(todayDateStr);
+                  setSelectedPeriod('custom_date');
+                  setIsDatePickerModalOpen(false);
+                }}
+              >
+                <MaterialCommunityIcons name="check" size={16} color="#FFFFFF" />
+                <Text style={styles.calendarFooterApplyText}>Terapkan Tanggal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ══════════════════════════════════════════════════════════════
+          MODAL 1: DETAIL INFORMASI PRESENSI / PERIZINAN (Color Styled)
          ══════════════════════════════════════════════════════════════ */}
       <Modal
         visible={Boolean(isDetailModalOpen && selectedDetail)}
@@ -5582,176 +6235,327 @@ export default function AbsensiScreen({ route, navigation }: any) {
       >
         <View style={styles.modalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsDetailModalOpen(false)} />
-          <View style={[styles.modalCard, { paddingBottom: modalBottomInset }]}>
-            <View style={styles.modalDragHandle} />
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalHeaderTitle}>Detail Catatan Presensi</Text>
-              <TouchableOpacity onPress={() => setIsDetailModalOpen(false)} style={styles.modalCloseBtn}>
-                <MaterialCommunityIcons name="close" size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
+          <View style={[styles.modalCard, { paddingBottom: modalBottomInset, overflow: 'hidden' }]}>
+            {selectedDetail && (() => {
+              const detailTone = getStatusColor(selectedDetail.statusKey);
+              return (
+                <>
+                  {/* Top Accent Gradient Line */}
+                  <LinearGradient
+                    colors={detailTone.gradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.modalTopAccentLine}
+                  />
 
-            {selectedDetail && (
-              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: SCREEN_HEIGHT * 0.62 }}>
-                <View style={styles.modalDetailBody}>
-                  <View style={styles.detailHeaderBox}>
-                    <Text style={styles.detailTitle}>{selectedDetail.title}</Text>
-                    <Text style={styles.detailSubtitle}>{selectedDetail.subtitle}</Text>
-                    <View style={{ marginTop: 10, flexDirection: 'row' }}>
-                      {(() => {
-                        const tone = getStatusColor(selectedDetail.statusKey);
-                        return (
+                  <View style={styles.modalDragHandle} />
+
+                  <View style={styles.modalHeaderRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, marginRight: 8 }}>
+                      <View style={[styles.modalHeaderIconBadge, { backgroundColor: detailTone.bg, borderColor: detailTone.border }]}>
+                        <MaterialCommunityIcons name="clipboard-text-search-outline" size={20} color={detailTone.text} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text numberOfLines={1} style={styles.modalHeaderTitle}>Detail Catatan Presensi</Text>
+                        <Text numberOfLines={1} style={styles.modalHeaderSub}>Informasi & Catatan Kehadiran Siswa</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity onPress={() => setIsDetailModalOpen(false)} style={styles.modalCloseBtn}>
+                      <MaterialCommunityIcons name="close" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: SCREEN_HEIGHT * 0.62 }}>
+                    <View style={styles.modalDetailBody}>
+                      {/* Detail Header Banner with Tone Color */}
+                      <View style={[styles.detailHeaderBox, { backgroundColor: detailTone.bg, borderColor: detailTone.border }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.detailTitle}>{selectedDetail.title}</Text>
+                            <Text style={styles.detailSubtitle}>{selectedDetail.subtitle}</Text>
+                          </View>
                           <View
                             style={[
                               styles.statusBadgePill,
-                              { backgroundColor: tone.bg, borderColor: tone.border, paddingVertical: 5, paddingHorizontal: 12 },
+                              { backgroundColor: '#FFFFFF', borderColor: detailTone.border, paddingVertical: 5, paddingHorizontal: 10, borderWidth: 1.5, flexDirection: 'row', alignItems: 'center', gap: 4 },
                             ]}
                           >
-                            <MaterialCommunityIcons name={tone.icon as any} size={14} color={tone.text} />
-                            <Text style={[styles.statusBadgeText, { color: tone.text, fontSize: 12, marginLeft: 4 }]}>
+                            <MaterialCommunityIcons name={detailTone.icon as any} size={14} color={detailTone.text} />
+                            <Text style={[styles.statusBadgeText, { color: detailTone.text, fontSize: 11, fontWeight: '800' }]}>
                               {selectedDetail.status}
                             </Text>
                           </View>
-                        );
-                      })()}
-                    </View>
-                  </View>
-
-                  <View style={styles.detailFieldsGrid}>
-                    <View style={styles.detailFieldRow}>
-                      <Text style={styles.detailFieldLabel}>Tanggal:</Text>
-                      <Text style={styles.detailFieldVal}>{formatTanggalIndo(selectedDetail.date)}</Text>
-                    </View>
-
-                    <View style={styles.detailFieldRow}>
-                      <Text style={styles.detailFieldLabel}>Waktu Kehadiran:</Text>
-                      <Text style={styles.detailFieldVal}>{selectedDetail.time}</Text>
-                    </View>
-
-                    {selectedDetail.category === 'attendance' && (
-                      <>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Guru Pengampu:</Text>
-                          <Text style={styles.detailFieldVal}>{selectedDetail.subtitle || '-'}</Text>
                         </View>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Metode Presensi:</Text>
-                          <Text style={styles.detailFieldVal}>
-                            {selectedDetail.raw?.recorded_method || 'Aplikasi / LMS'}
-                          </Text>
-                        </View>
-                      </>
-                    )}
-
-                    {selectedDetail.category === 'permission' && (
-                      <>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Rentang Waktu:</Text>
-                          <Text style={styles.detailFieldVal}>{selectedDetail.subtitle}</Text>
-                        </View>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Alasan / Keterangan:</Text>
-                          <Text style={styles.detailFieldVal}>{selectedDetail.notes || '-'}</Text>
-                        </View>
-                      </>
-                    )}
-
-                    {selectedDetail.category === 'boarding_pass' && (
-                      <>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Nomor Boarding Pass:</Text>
-                          <Text style={[styles.detailFieldVal, { fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }]}>
-                            {selectedDetail.raw?.permit_number || '-'}
-                          </Text>
-                        </View>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Status Keberadaan:</Text>
-                          <Text style={[styles.detailFieldVal, { fontWeight: '700', color: selectedDetail.raw?.presence_status === 'berobat' ? '#D97706' : selectedDetail.raw?.presence_status === 'di_luar' ? '#2563EB' : '#059669' }]}>
-                            {selectedDetail.raw?.presence_status === 'berobat'
-                              ? 'Sedang Berobat'
-                              : selectedDetail.raw?.presence_status === 'di_luar'
-                              ? 'Sedang di Luar Pesantren'
-                              : selectedDetail.raw?.presence_status === 'pulang'
-                              ? 'Pulang ke Rumah'
-                              : 'Berada di Asrama / Pondok'}
-                          </Text>
-                        </View>
-                        {selectedDetail.raw?.is_emergency && (
-                          <View style={styles.detailFieldRow}>
-                            <Text style={styles.detailFieldLabel}>Klasifikasi Medis:</Text>
-                            <Text style={[styles.detailFieldVal, { color: '#DC2626', fontWeight: '800' }]}>
-                              🚨 Rujukan Cepat / Darurat
-                            </Text>
-                          </View>
-                        )}
-                        {selectedDetail.raw?.medical_complaint && (
-                          <View style={styles.detailFieldRow}>
-                            <Text style={styles.detailFieldLabel}>Keluhan Sakit:</Text>
-                            <Text style={styles.detailFieldVal}>{selectedDetail.raw?.medical_complaint}</Text>
-                          </View>
-                        )}
-                        {selectedDetail.raw?.medical_escort_name && (
-                          <View style={styles.detailFieldRow}>
-                            <Text style={styles.detailFieldLabel}>Pendamping Medis:</Text>
-                            <Text style={styles.detailFieldVal}>{selectedDetail.raw?.medical_escort_name}</Text>
-                          </View>
-                        )}
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Alamat / Tujuan:</Text>
-                          <Text style={styles.detailFieldVal}>{selectedDetail.raw?.medical_destination || selectedDetail.raw?.destination || '-'}</Text>
-                        </View>
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Batas Wajib Kembali:</Text>
-                          <Text style={[styles.detailFieldVal, { fontWeight: '700', color: selectedDetail.raw?.deadline_status === 'overdue' ? '#DC2626' : '#1E293B' }]}>
-                            {formatJamIndo(selectedDetail.raw?.scheduled_return_at)}
-                            {selectedDetail.raw?.deadline_status === 'overdue' ? ' (Terlambat)' : selectedDetail.raw?.deadline_status === 'near_deadline' ? ' (Mendekati Batas)' : ''}
-                          </Text>
-                        </View>
-                        {selectedDetail.raw?.extension_count > 0 && (
-                          <View style={styles.detailFieldRow}>
-                            <Text style={styles.detailFieldLabel}>Riwayat Perpanjangan:</Text>
-                            <Text style={styles.detailFieldVal}>
-                              Diperpanjang {selectedDetail.raw?.extension_count}x (Batas awal: {formatJamIndo(selectedDetail.raw?.original_scheduled_return_at)})
-                            </Text>
-                          </View>
-                        )}
-                        {selectedDetail.raw?.actual_return_at && (
-                          <View style={styles.detailFieldRow}>
-                            <Text style={styles.detailFieldLabel}>Absensi Kembali Riil:</Text>
-                            <Text style={[styles.detailFieldVal, { color: selectedDetail.raw?.late_minutes > 0 ? '#DC2626' : '#059669', fontWeight: 'bold' }]}>
-                              {formatJamIndo(selectedDetail.raw?.actual_return_at)} {selectedDetail.raw?.late_minutes > 0 ? `(Terlambat +${selectedDetail.raw?.late_minutes}m)` : '(Tepat Waktu)'}
-                            </Text>
-                          </View>
-                        )}
-                        <View style={styles.detailFieldRow}>
-                          <Text style={styles.detailFieldLabel}>Penjemput / Wali:</Text>
-                          <Text style={styles.detailFieldVal}>
-                            {selectedDetail.raw?.guardian_name || selectedDetail.raw?.pickup_person_name || 'Orang Tua / Wali'} {selectedDetail.raw?.guardian_phone || selectedDetail.raw?.pickup_person_phone ? `(${selectedDetail.raw?.guardian_phone || selectedDetail.raw?.pickup_person_phone})` : ''}
-                          </Text>
-                        </View>
-                      </>
-                    )}
-
-                    {selectedDetail.notes ? (
-                      <View style={[styles.detailFieldRow, { flexDirection: 'column', alignItems: 'flex-start' }]}>
-                        <Text style={[styles.detailFieldLabel, { marginBottom: 4 }]}>Catatan Tambahan:</Text>
-                        <Text style={[styles.detailFieldVal, { textAlign: 'left', lineHeight: 18 }]}>
-                          {selectedDetail.notes}
-                        </Text>
                       </View>
-                    ) : null}
-                  </View>
-                </View>
-              </ScrollView>
-            )}
 
-            <TouchableOpacity
-              activeOpacity={0.88}
-              onPress={() => setIsDetailModalOpen(false)}
-              style={styles.modalActionBtn}
-            >
-              <Text style={styles.modalActionBtnText}>Tutup</Text>
-            </TouchableOpacity>
+                      {/* Detail Fields with Colorful Icon Chips */}
+                      <View style={styles.detailFieldsGrid}>
+                        {/* Tanggal */}
+                        <View style={styles.detailFieldItemColored}>
+                          <View style={[styles.detailFieldIconBox, { backgroundColor: '#ECFDF5' }]}>
+                            <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#059669" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.detailFieldLabel}>Tanggal Presensi:</Text>
+                            <Text style={styles.detailFieldValText}>{formatTanggalIndo(selectedDetail.date)}</Text>
+                          </View>
+                        </View>
+
+                        {/* Waktu Kehadiran */}
+                        <View style={styles.detailFieldItemColored}>
+                          <View style={[styles.detailFieldIconBox, { backgroundColor: '#F0F9FF' }]}>
+                            <MaterialCommunityIcons name="clock-outline" size={16} color="#0284C7" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.detailFieldLabel}>Waktu Kehadiran:</Text>
+                            <Text style={styles.detailFieldValText}>{selectedDetail.time}</Text>
+                          </View>
+                        </View>
+
+                        {/* Presensi Pembelajaran Fields */}
+                        {selectedDetail.category === 'attendance' && (
+                          <>
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#EEF2FF' }]}>
+                                <MaterialCommunityIcons name="account-tie" size={16} color="#4F46E5" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Guru Pengampu:</Text>
+                                <Text style={styles.detailFieldValText}>{selectedDetail.subtitle || '-'}</Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#F0FDFA' }]}>
+                                <MaterialCommunityIcons name="cellphone-check" size={16} color="#0D9488" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Metode Presensi:</Text>
+                                <Text style={styles.detailFieldValText}>
+                                  {selectedDetail.raw?.recorded_method || 'Aplikasi / LMS Terpadu'}
+                                </Text>
+                              </View>
+                            </View>
+                          </>
+                        )}
+
+                        {/* Perizinan Fields */}
+                        {selectedDetail.category === 'permission' && (
+                          <>
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#FFFBEB' }]}>
+                                <MaterialCommunityIcons name="calendar-range" size={16} color="#D97706" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Rentang Waktu Izin:</Text>
+                                <Text style={styles.detailFieldValText}>{selectedDetail.subtitle}</Text>
+                              </View>
+                            </View>
+                          </>
+                        )}
+
+                        {/* Boarding Pass Fields */}
+                        {selectedDetail.category === 'boarding_pass' && (
+                          <>
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#FAF5FF' }]}>
+                                <MaterialCommunityIcons name="ticket-confirmation-outline" size={16} color="#7C3AED" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Nomor Boarding Pass:</Text>
+                                <Text style={[styles.detailFieldValText, { fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }]}>
+                                  {selectedDetail.raw?.permit_number || '-'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#F0F9FF' }]}>
+                                <MaterialCommunityIcons name="map-marker-radius" size={16} color="#0284C7" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Status Keberadaan:</Text>
+                                <Text style={[styles.detailFieldValText, { fontWeight: '700', color: selectedDetail.raw?.presence_status === 'berobat' ? '#D97706' : selectedDetail.raw?.presence_status === 'di_luar' ? '#2563EB' : '#059669' }]}>
+                                  {selectedDetail.raw?.presence_status === 'berobat'
+                                    ? 'Sedang Berobat'
+                                    : selectedDetail.raw?.presence_status === 'di_luar'
+                                    ? 'Sedang di Luar Pesantren'
+                                    : selectedDetail.raw?.presence_status === 'pulang'
+                                    ? 'Pulang ke Rumah'
+                                    : 'Berada di Asrama / Pondok'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {selectedDetail.raw?.is_emergency && (
+                              <View style={styles.detailFieldItemColored}>
+                                <View style={[styles.detailFieldIconBox, { backgroundColor: '#FEF2F2' }]}>
+                                  <MaterialCommunityIcons name="alert-decagram" size={16} color="#DC2626" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.detailFieldLabel}>Klasifikasi Medis:</Text>
+                                  <Text style={[styles.detailFieldValText, { color: '#DC2626', fontWeight: '800' }]}>
+                                    🚨 Rujukan Cepat / Darurat
+                                  </Text>
+                                </View>
+                              </View>
+                            )}
+
+                            {selectedDetail.raw?.medical_complaint && (
+                              <View style={styles.detailFieldItemColored}>
+                                <View style={[styles.detailFieldIconBox, { backgroundColor: '#FFF1F2' }]}>
+                                  <MaterialCommunityIcons name="medical-bag" size={16} color="#E11D48" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.detailFieldLabel}>Keluhan Sakit:</Text>
+                                  <Text style={styles.detailFieldValText}>{selectedDetail.raw?.medical_complaint}</Text>
+                                </View>
+                              </View>
+                            )}
+
+                            {selectedDetail.raw?.medical_escort_name && (
+                              <View style={styles.detailFieldItemColored}>
+                                <View style={[styles.detailFieldIconBox, { backgroundColor: '#F0FDFA' }]}>
+                                  <MaterialCommunityIcons name="account-heart-outline" size={16} color="#0D9488" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.detailFieldLabel}>Pendamping Medis:</Text>
+                                  <Text style={styles.detailFieldValText}>{selectedDetail.raw?.medical_escort_name}</Text>
+                                </View>
+                              </View>
+                            )}
+
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#EEF2FF' }]}>
+                                <MaterialCommunityIcons name="map-marker-outline" size={16} color="#4F46E5" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Alamat / Tujuan:</Text>
+                                <Text style={styles.detailFieldValText}>{selectedDetail.raw?.medical_destination || selectedDetail.raw?.destination || '-'}</Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: selectedDetail.raw?.deadline_status === 'overdue' ? '#FEF2F2' : '#F8FAFC' }]}>
+                                <MaterialCommunityIcons name="clock-alert-outline" size={16} color={selectedDetail.raw?.deadline_status === 'overdue' ? '#DC2626' : '#64748B'} />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Batas Wajib Kembali:</Text>
+                                <Text style={[styles.detailFieldValText, { fontWeight: '700', color: selectedDetail.raw?.deadline_status === 'overdue' ? '#DC2626' : '#1E293B' }]}>
+                                  {formatJamIndo(selectedDetail.raw?.scheduled_return_at)}
+                                  {selectedDetail.raw?.deadline_status === 'overdue' ? ' (Terlambat)' : selectedDetail.raw?.deadline_status === 'near_deadline' ? ' (Mendekati Batas)' : ''}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {selectedDetail.raw?.extension_count > 0 && (
+                              <View style={styles.detailFieldItemColored}>
+                                <View style={[styles.detailFieldIconBox, { backgroundColor: '#FFFBEB' }]}>
+                                  <MaterialCommunityIcons name="timer-plus-outline" size={16} color="#D97706" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.detailFieldLabel}>Riwayat Perpanjangan:</Text>
+                                  <Text style={styles.detailFieldValText}>
+                                    Diperpanjang {selectedDetail.raw?.extension_count}x (Batas awal: {formatJamIndo(selectedDetail.raw?.original_scheduled_return_at)})
+                                  </Text>
+                                </View>
+                              </View>
+                            )}
+
+                            {selectedDetail.raw?.actual_return_at && (
+                              <View style={styles.detailFieldItemColored}>
+                                <View style={[styles.detailFieldIconBox, { backgroundColor: selectedDetail.raw?.late_minutes > 0 ? '#FEF2F2' : '#ECFDF5' }]}>
+                                  <MaterialCommunityIcons name="clock-check-outline" size={16} color={selectedDetail.raw?.late_minutes > 0 ? '#DC2626' : '#059669'} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.detailFieldLabel}>Absensi Kembali Riil:</Text>
+                                  <Text style={[styles.detailFieldValText, { color: selectedDetail.raw?.late_minutes > 0 ? '#DC2626' : '#059669', fontWeight: 'bold' }]}>
+                                    {formatJamIndo(selectedDetail.raw?.actual_return_at)} {selectedDetail.raw?.late_minutes > 0 ? `(Terlambat +${selectedDetail.raw?.late_minutes}m)` : '(Tepat Waktu)'}
+                                  </Text>
+                                </View>
+                              </View>
+                            )}
+
+                            <View style={styles.detailFieldItemColored}>
+                              <View style={[styles.detailFieldIconBox, { backgroundColor: '#F0F9FF' }]}>
+                                <MaterialCommunityIcons name="account-child-outline" size={16} color="#0284C7" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.detailFieldLabel}>Penjemput / Wali:</Text>
+                                <Text style={styles.detailFieldValText}>
+                                  {selectedDetail.raw?.guardian_name || selectedDetail.raw?.pickup_person_name || 'Orang Tua / Wali'} {selectedDetail.raw?.guardian_phone || selectedDetail.raw?.pickup_person_phone ? `(${selectedDetail.raw?.guardian_phone || selectedDetail.raw?.pickup_person_phone})` : ''}
+                                </Text>
+                              </View>
+                            </View>
+                          </>
+                        )}
+                      </View>
+
+                      {/* CATATAN PRESENSI CALLOUT SECTION */}
+                      {selectedDetail.notes ? (
+                        <View style={[styles.modalNotesCallout, { backgroundColor: detailTone.bg, borderColor: detailTone.border, borderLeftColor: detailTone.text }]}>
+                          <View style={styles.modalNotesCalloutHeader}>
+                            <View style={[styles.modalNotesIconWrap, { backgroundColor: '#FFFFFF', borderColor: detailTone.border }]}>
+                              <MaterialCommunityIcons name="message-draw" size={16} color={detailTone.text} />
+                            </View>
+                            <Text style={[styles.modalNotesCalloutTitle, { color: detailTone.text }]}>
+                              Catatan Guru / Pembina Presensi:
+                            </Text>
+                          </View>
+                          <View style={styles.modalNotesContentCard}>
+                            <Text style={styles.modalNotesCalloutText}>
+                              {selectedDetail.notes}
+                            </Text>
+                          </View>
+                        </View>
+                      ) : (
+                        <View style={styles.modalNoNotesPill}>
+                          <MaterialCommunityIcons name="information-outline" size={14} color="#94A3B8" />
+                          <Text style={styles.modalNoNotesText}>Tidak ada catatan khusus dari guru untuk sesi presensi ini.</Text>
+                        </View>
+                      )}
+
+                      {/* Lampiran File/Bukti jika ada */}
+                      {selectedDetail.attachmentUrl ? (
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => openAttachmentPreview(selectedDetail.attachmentUrl, `Lampiran - ${selectedDetail.title}`)}
+                          style={styles.modalAttachmentBtn}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                            <View style={styles.modalAttachmentIconBox}>
+                              <MaterialCommunityIcons name="file-document-outline" size={20} color="#059669" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.modalAttachmentTitle}>Dokumen Bukti / Surat Izin</Text>
+                              <Text style={styles.modalAttachmentSub}>Ketuk untuk melihat foto atau file lampiran</Text>
+                            </View>
+                          </View>
+                          <MaterialCommunityIcons name="open-in-new" size={18} color="#059669" />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </ScrollView>
+
+                  {/* Gradient Close Button */}
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    onPress={() => setIsDetailModalOpen(false)}
+                    style={{ marginTop: 14 }}
+                  >
+                    <LinearGradient
+                      colors={detailTone.gradient}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.modalActionBtnGradient}
+                    >
+                      <MaterialCommunityIcons name="check" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.modalActionBtnText}>Tutup Rincian Presensi</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
           </View>
         </View>
       </Modal>
@@ -7157,8 +7961,10 @@ const styles = StyleSheet.create({
   notesBox: {
     marginTop: 8,
     backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 10,
+    padding: 9,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   notesText: {
     fontSize: 11,
@@ -7273,6 +8079,149 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
     textAlign: 'right',
+  },
+  modalTopAccentLine: {
+    height: 5,
+    width: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  modalHeaderIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalHeaderSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+    fontWeight: '500',
+  },
+  detailFieldItemColored: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  detailFieldIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailFieldValText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  modalNotesCallout: {
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderLeftWidth: 4.5,
+    padding: 12,
+    marginTop: 4,
+  },
+  modalNotesCalloutHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  modalNotesIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalNotesCalloutTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  modalNotesContentCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+  },
+  modalNotesCalloutText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+    lineHeight: 18,
+  },
+  modalNoNotesPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalNoNotesText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontStyle: 'italic',
+    flex: 1,
+  },
+  modalAttachmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    padding: 12,
+    marginTop: 4,
+  },
+  modalAttachmentIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalAttachmentTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  modalAttachmentSub: {
+    fontSize: 11,
+    color: '#059669',
+    marginTop: 1,
+  },
+  modalActionBtnGradient: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 13,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
   },
 
   // Permission Form Styles
@@ -8761,6 +9710,375 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  unifiedLogHistoryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 12,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+    gap: 10,
+  },
+  unifiedLogCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  unifiedLogHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  unifiedLogCardIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  unifiedLogCardTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 18,
+  },
+  unifiedLogCardSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  resetFilterPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  unifiedLogDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 2,
+  },
+  filterBarTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  todayDateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  todayDateBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  customDateSelectedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#10B981',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  customDateBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  calendarPickerModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 16,
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+    gap: 12,
+  },
+  calendarModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  calendarHeaderIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calendarModalTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  calendarModalSub: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#059669',
+    marginTop: 1,
+  },
+  calendarQuickPresets: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  calendarPresetBtn: {
+    flex: 1,
+    paddingVertical: 6.5,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarPresetBtnActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
+  },
+  calendarPresetText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  calendarPresetTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  calendarMonthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  calendarNavBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  calendarMonthTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  calendarDayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: 2,
+  },
+  calendarDayHeaderCol: {
+    width: 36,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-around',
+    rowGap: 6,
+  },
+  calendarGridCell: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    position: 'relative',
+  },
+  calendarGridCellActive: {
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  calendarGridCellToday: {
+    borderWidth: 1.2,
+    borderColor: '#10B981',
+    backgroundColor: '#F0FDF4',
+  },
+  calendarGridDayText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  calendarGridDayTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  calendarGridDayTextToday: {
+    color: '#059669',
+    fontWeight: '800',
+  },
+  todayDotIndicator: {
+    position: 'absolute',
+    bottom: 3,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#059669',
+  },
+  calendarModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  calendarFooterCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarFooterCancelText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  calendarFooterApplyBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  calendarFooterApplyText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  subjectFilterContainer: {
+    gap: 6,
+    marginTop: 2,
+  },
+  subjectSectionLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  subjectSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  subjectResetText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  subjectChipsScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  subjectChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5.5,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    flexShrink: 0,
+  },
+  subjectChipActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    elevation: 1.5,
+  },
+  subjectChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  subjectChipTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  periodSectionContainer: {
+    gap: 5,
+    marginTop: 2,
+  },
+  periodLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
   mutabaahFilterCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -8865,14 +10183,14 @@ const styles = StyleSheet.create({
   mutabaahStudentCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 12,
-    borderWidth: 1.5,
+    padding: 13,
+    borderWidth: 1.2,
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 2.5,
   },
   mutabaahCardHeader: {
     flexDirection: 'row',

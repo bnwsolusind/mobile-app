@@ -861,8 +861,9 @@ export default function ParentPortalScreen({ route, navigation }: any) {
         const monitoring = dashboard?.mutabaah_monitoring;
         const periods = monitoring?.periods || {};
         const activePeriod = periods[mutabaahPeriod] || periods.harian || monitoring;
-        const scoreVal = activePeriod?.score != null ? Math.round(Number(activePeriod.score)) : 90;
+        const scoreVal = activePeriod?.score != null ? Math.round(Number(activePeriod.score)) : 0;
         const isHarian = mutabaahPeriod === 'harian';
+        const activeSemesterLabel = periods?.semester?.semester_name || periods?.semester?.badge || 'Semester Aktif';
 
         // 4 pillars
         const fardhuItems = activePeriod?.shalat_fardhu || [];
@@ -893,7 +894,7 @@ export default function ParentPortalScreen({ route, navigation }: any) {
                 { id: 'harian', label: 'Harian', desc: 'Catatan Terakhir', icon: 'calendar-today' },
                 { id: 'mingguan', label: 'Mingguan', desc: '7 Hari', icon: 'calendar-week' },
                 { id: 'bulanan', label: 'Bulanan', desc: '30 Hari', icon: 'calendar-month' },
-                { id: 'semester', label: 'Semester', desc: 'Semester 1', icon: 'school-outline' },
+                { id: 'semester', label: 'Semester', desc: activeSemesterLabel, icon: 'school-outline' },
               ].map((p) => {
                 const isSelected = mutabaahPeriod === p.id;
                 return (

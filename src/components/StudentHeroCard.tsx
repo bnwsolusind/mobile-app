@@ -127,8 +127,8 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
   const cardWidthStyle = isSingleChild
     ? styles.childCardHeroSizeSingle
     : cardWidth
-    ? [styles.childCardHeroSize, { width: cardWidth, marginRight: 0 }]
-    : styles.childCardHeroSize;
+      ? [styles.childCardHeroSize, { width: cardWidth, marginRight: 0 }]
+      : styles.childCardHeroSize;
 
   return (
     <View
@@ -151,196 +151,196 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
         <View pointerEvents={(!onSelect || isSelected) ? 'auto' : 'none'}>
           {/* 1. Baris Paling Atas: Lencana Unit Pendidikan (Kiri) & 3 Tombol Aksi / Indikator (Kanan) */}
           <View style={styles.studentCardTopBar}>
-          <View style={styles.studentUnitBadgeTop}>
-            <MaterialCommunityIcons
-              name="school"
-              size={11}
-              color="#FFFFFF"
-              style={{ marginRight: 4 }}
-            />
-            <Text numberOfLines={1} style={styles.studentUnitText}>
-              {sUnit}
-            </Text>
-          </View>
-
-          {/* Kanan: 3 Tombol Aksi (Notifikasi, Laporan, QR) ATAU Indikator Pilihan Anak */}
-          {shouldShowButtons ? (
-            <View style={styles.studentCardHeaderActions}>
-              {(() => {
-                const globalUnread = useNotificationBadgeStore.getState().unreadNotificationCount;
-                const childUnread = Number(child?.unread_notifications_count ?? child?.unread_count ?? 0);
-                const showBellDot = (globalUnread > 0 && isSelected) || childUnread > 0;
-
-                return (
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={onPressNotifications || (() => {})}
-                    style={[styles.studentQrBtn, { position: 'relative' }]}
-                    accessibilityLabel="Pengingat & Notifikasi Siswa"
-                  >
-                    <MaterialCommunityIcons name="bell-ring-outline" size={17} color="#059669" />
-                    {showBellDot ? (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: -2,
-                          right: -2,
-                          width: 9,
-                          height: 9,
-                          borderRadius: 4.5,
-                          backgroundColor: '#EF4444',
-                          borderWidth: 1.5,
-                          borderColor: '#FFFFFF',
-                        }}
-                      />
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })()}
-
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={onPressWeeklyReport || (() => {})}
-                style={styles.studentQrBtn}
-                accessibilityLabel="Laporan Perkembangan Pekanan Siswa"
-              >
-                <MaterialCommunityIcons name="clipboard-text-outline" size={17} color="#059669" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={onPressQr || onPressCard || (() => {})}
-                style={styles.studentQrBtn}
-                accessibilityLabel="Tampilkan QR Code Siswa"
-              >
-                <MaterialCommunityIcons name="qrcode-scan" size={17} color="#059669" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View
-              style={[
-                styles.selectedActionBtnRight,
-                !isSelected && styles.selectedActionBtnRightInactive,
-              ]}
-            >
+            <View style={styles.studentUnitBadgeTop}>
               <MaterialCommunityIcons
-                name={isSelected ? 'check-circle' : 'gesture-tap'}
-                size={15}
-                color={isSelected ? '#18A165' : '#FFFFFF'}
+                name="school"
+                size={11}
+                color="#FFFFFF"
+                style={{ marginRight: 4 }}
               />
-              <Text
+              <Text numberOfLines={1} style={styles.studentUnitText}>
+                {sUnit}
+              </Text>
+            </View>
+
+            {/* Kanan: 3 Tombol Aksi (Notifikasi, Laporan, QR) ATAU Indikator Pilihan Anak */}
+            {shouldShowButtons ? (
+              <View style={styles.studentCardHeaderActions}>
+                {(() => {
+                  const globalUnread = useNotificationBadgeStore.getState().unreadNotificationCount;
+                  const childUnread = Number(child?.unread_notifications_count ?? child?.unread_count ?? 0);
+                  const showBellDot = (globalUnread > 0 && isSelected) || childUnread > 0;
+
+                  return (
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={onPressNotifications || (() => { })}
+                      style={[styles.studentQrBtn, { position: 'relative' }]}
+                      accessibilityLabel="Pengingat & Notifikasi Siswa"
+                    >
+                      <MaterialCommunityIcons name="bell-ring-outline" size={17} color="#059669" />
+                      {showBellDot ? (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: -2,
+                            right: -2,
+                            width: 9,
+                            height: 9,
+                            borderRadius: 4.5,
+                            backgroundColor: '#EF4444',
+                            borderWidth: 1.5,
+                            borderColor: '#FFFFFF',
+                          }}
+                        />
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })()}
+
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={onPressWeeklyReport || (() => { })}
+                  style={styles.studentQrBtn}
+                  accessibilityLabel="Laporan Perkembangan Pekanan Siswa"
+                >
+                  <MaterialCommunityIcons name="clipboard-text-outline" size={17} color="#059669" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={onPressQr || onPressCard || (() => { })}
+                  style={styles.studentQrBtn}
+                  accessibilityLabel="Tampilkan QR Code Siswa"
+                >
+                  <MaterialCommunityIcons name="qrcode-scan" size={17} color="#059669" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View
                 style={[
-                  styles.selectedActionBtnText,
-                  !isSelected && styles.selectedActionBtnTextInactive,
+                  styles.selectedActionBtnRight,
+                  !isSelected && styles.selectedActionBtnRightInactive,
                 ]}
               >
-                {isSelected ? 'Terpilih' : 'Pilih'}
+                <MaterialCommunityIcons
+                  name={isSelected ? 'check-circle' : 'gesture-tap'}
+                  size={15}
+                  color={isSelected ? '#18A165' : '#FFFFFF'}
+                />
+                <Text
+                  style={[
+                    styles.selectedActionBtnText,
+                    !isSelected && styles.selectedActionBtnTextInactive,
+                  ]}
+                >
+                  {isSelected ? 'Terpilih' : 'Pilih'}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* 2. Baris Profil Tengah: Avatar + Nama Siswa Penuh (Sangat Lega 2 Baris, Tanpa Terpotong/Terhimpit) */}
+          <View style={styles.studentCardProfileRow}>
+            <TouchableOpacity
+              activeOpacity={onPressCard ? 0.8 : 1}
+              disabled={!onPressCard}
+              onPress={onPressCard}
+              style={[styles.studentAvatarBox, !isSelected && styles.avatarBorderWrapHeroInactive]}
+            >
+              {avatarUri && !imageError ? (
+                <Image
+                  source={{ uri: avatarUri }}
+                  style={styles.childAvatarImgHero}
+                  resizeMode="cover"
+                  onError={() => setImageError(true)}
+                />
+              ) : (
+                <Image
+                  source={isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR}
+                  style={styles.childAvatarImgHero}
+                  resizeMode="cover"
+                />
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.studentInfoCol}>
+              <Text numberOfLines={2} style={styles.studentFullName}>
+                {sName}
               </Text>
+              <Text numberOfLines={1} style={styles.studentNisText}>
+                NIS: {sNis} {sNisn && sNisn !== '-' ? `· NISN: ${sNisn}` : ''}
+              </Text>
+            </View>
+          </View>
+
+          {/* 3. Kotak Atribut (Kelas | Jenjang | Presensi) - Jarak Rapat Presisi (Total 10px) */}
+          <View style={styles.studentAttributesGrid}>
+            <View style={styles.studentAttrBox}>
+              <View style={styles.studentAttrLabelRow}>
+                <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                <Text style={styles.studentAttrLabel}>Kelas</Text>
+              </View>
+              <Text numberOfLines={1} style={styles.studentAttrValue}>{sKelas}</Text>
+            </View>
+
+            <View style={styles.studentAttrDivider} />
+
+            <View style={styles.studentAttrBox}>
+              <View style={styles.studentAttrLabelRow}>
+                <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                <Text style={styles.studentAttrLabel}>Jenjang</Text>
+              </View>
+              <Text numberOfLines={1} style={styles.studentAttrValue}>{sJenjang}</Text>
+            </View>
+
+            <View style={styles.studentAttrDivider} />
+
+            <View style={styles.studentAttrBox}>
+              <View style={styles.studentAttrLabelRow}>
+                <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
+                <Text style={styles.studentAttrLabel}>Presensi</Text>
+              </View>
+              <View style={styles.studentPresensiValueRow}>
+                <Text numberOfLines={1} style={[styles.studentAttrValue, { color: presensiTextColor }]}>
+                  {rawPresensi}
+                </Text>
+                <View style={[styles.presensiGreenDot, { backgroundColor: presensiDotColor }]} />
+              </View>
+            </View>
+          </View>
+
+          {/* 4. Baris Tombol Aksi Bawah: Kartu Siswa, Jadwal, Menu (HANYA 1 BARIS RAMPING) */}
+          {shouldShowButtons && (
+            <View style={styles.studentCardActionsRow}>
+              <TouchableOpacity
+                activeOpacity={0.82}
+                onPress={onPressCard}
+                style={styles.studentActionBtnCard}
+              >
+                <MaterialCommunityIcons name="card-account-details" size={15} color="#059669" style={{ marginRight: 4 }} />
+                <Text numberOfLines={1} style={styles.studentActionBtnCardText}>{cardLabel}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.82}
+                onPress={onPressCalendar}
+                style={styles.studentActionBtnSecondary}
+              >
+                <MaterialCommunityIcons name={(calendarIcon as any) || 'calendar-month'} size={15} color="#2563EB" style={{ marginRight: 4 }} />
+                <Text numberOfLines={1} style={styles.studentActionBtnSecondaryText}>{calendarLabel}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={onPressPortal}
+                style={styles.studentActionBtnPrimary}
+              >
+                <MaterialCommunityIcons name={portalIcon === 'view-grid-outline' ? 'view-grid' : ((portalIcon as any) || 'view-grid')} size={15} color="#7C3AED" style={{ marginRight: 4 }} />
+                <Text numberOfLines={1} style={styles.studentActionBtnPrimaryText}>{portalLabel}</Text>
+              </TouchableOpacity>
             </View>
           )}
-        </View>
-
-        {/* 2. Baris Profil Tengah: Avatar + Nama Siswa Penuh (Sangat Lega 2 Baris, Tanpa Terpotong/Terhimpit) */}
-        <View style={styles.studentCardProfileRow}>
-          <TouchableOpacity
-            activeOpacity={onPressCard ? 0.8 : 1}
-            disabled={!onPressCard}
-            onPress={onPressCard}
-            style={[styles.studentAvatarBox, !isSelected && styles.avatarBorderWrapHeroInactive]}
-          >
-            {avatarUri && !imageError ? (
-              <Image
-                source={{ uri: avatarUri }}
-                style={styles.childAvatarImgHero}
-                resizeMode="cover"
-                onError={() => setImageError(true)}
-              />
-            ) : (
-              <Image
-                source={isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR}
-                style={styles.childAvatarImgHero}
-                resizeMode="cover"
-              />
-            )}
-          </TouchableOpacity>
-
-          <View style={styles.studentInfoCol}>
-            <Text numberOfLines={2} style={styles.studentFullName}>
-              {sName}
-            </Text>
-            <Text numberOfLines={1} style={styles.studentNisText}>
-              NIS: {sNis} {sNisn && sNisn !== '-' ? `· NISN: ${sNisn}` : ''}
-            </Text>
-          </View>
-        </View>
-
-        {/* 3. Kotak Atribut (Kelas | Jenjang | Presensi) - Jarak Rapat Presisi (Total 10px) */}
-        <View style={styles.studentAttributesGrid}>
-          <View style={styles.studentAttrBox}>
-            <View style={styles.studentAttrLabelRow}>
-              <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-              <Text style={styles.studentAttrLabel}>Kelas</Text>
-            </View>
-            <Text numberOfLines={1} style={styles.studentAttrValue}>{sKelas}</Text>
-          </View>
-
-          <View style={styles.studentAttrDivider} />
-
-          <View style={styles.studentAttrBox}>
-            <View style={styles.studentAttrLabelRow}>
-              <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-              <Text style={styles.studentAttrLabel}>Jenjang</Text>
-            </View>
-            <Text numberOfLines={1} style={styles.studentAttrValue}>{sJenjang}</Text>
-          </View>
-
-          <View style={styles.studentAttrDivider} />
-
-          <View style={styles.studentAttrBox}>
-            <View style={styles.studentAttrLabelRow}>
-              <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-              <Text style={styles.studentAttrLabel}>Presensi</Text>
-            </View>
-            <View style={styles.studentPresensiValueRow}>
-              <Text numberOfLines={1} style={[styles.studentAttrValue, { color: presensiTextColor }]}>
-                {rawPresensi}
-              </Text>
-              <View style={[styles.presensiGreenDot, { backgroundColor: presensiDotColor }]} />
-            </View>
-          </View>
-        </View>
-
-        {/* 4. Baris Tombol Aksi Bawah: Kartu Siswa, Jadwal, Menu (HANYA 1 BARIS RAMPING) */}
-        {shouldShowButtons && (
-          <View style={styles.studentCardActionsRow}>
-            <TouchableOpacity
-              activeOpacity={0.82}
-              onPress={onPressCard}
-              style={styles.studentActionBtnCard}
-            >
-              <MaterialCommunityIcons name="card-account-details" size={15} color="#059669" style={{ marginRight: 4 }} />
-              <Text numberOfLines={1} style={styles.studentActionBtnCardText}>{cardLabel}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.82}
-              onPress={onPressCalendar}
-              style={styles.studentActionBtnSecondary}
-            >
-              <MaterialCommunityIcons name={(calendarIcon as any) || 'calendar-month'} size={15} color="#2563EB" style={{ marginRight: 4 }} />
-              <Text numberOfLines={1} style={styles.studentActionBtnSecondaryText}>{calendarLabel}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={onPressPortal}
-              style={styles.studentActionBtnPrimary}
-            >
-              <MaterialCommunityIcons name={portalIcon === 'view-grid-outline' ? 'view-grid' : ((portalIcon as any) || 'view-grid')} size={15} color="#7C3AED" style={{ marginRight: 4 }} />
-              <Text numberOfLines={1} style={styles.studentActionBtnPrimaryText}>{portalLabel}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
         </View>
       </LinearGradient>
 

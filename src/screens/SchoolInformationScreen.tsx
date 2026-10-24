@@ -344,7 +344,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
-      const targetChildId = route?.params?.child_id;
+      const targetChildId = route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId;
       mobileApiService.getPortalChildren()
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
@@ -356,7 +356,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
             if (targetChildId) {
               setSelectedChildId(String(targetChildId));
             } else if (!selectedChildId && arr.length > 0) {
-              setSelectedChildId(String(arr[0].id));
+              setSelectedChildId(useActiveChildStore.getState().activeChildId || String(arr[0].id));
             }
           }
         })

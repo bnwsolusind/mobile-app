@@ -52,13 +52,13 @@ export const SubjectDetailModal: React.FC<{
     }
     const items: Array<{ label: string; pct?: string; score: number | string }> = [];
     if (subject.score_assignment !== null && subject.score_assignment !== undefined) {
-      items.push({ label: 'Tugas Harian', score: subject.score_assignment });
+      items.push({ label: 'Tugas Harian', score: Math.round(Number(subject.score_assignment)) });
     }
     if (subject.score_mid !== null && subject.score_mid !== undefined) {
-      items.push({ label: 'PTS (Tengah Semester)', score: subject.score_mid });
+      items.push({ label: 'PTS (Tengah Semester)', score: Math.round(Number(subject.score_mid)) });
     }
     if (subject.score_final !== null && subject.score_final !== undefined) {
-      items.push({ label: 'PAS (Akhir Semester)', score: subject.score_final });
+      items.push({ label: 'PAS (Akhir Semester)', score: Math.round(Number(subject.score_final)) });
     }
     return items;
   }, [subject]);
@@ -113,7 +113,7 @@ export const SubjectDetailModal: React.FC<{
                   >
                     <Text style={modalStyles.scoreCardTitle}>Nilai Akhir Semester</Text>
                     <View style={modalStyles.bigScoreRow}>
-                      <Text style={modalStyles.bigScoreNum}>{subject.score}</Text>
+                      <Text style={modalStyles.bigScoreNum}>{Math.round(Number(subject.score) || 0)}</Text>
                       <View style={modalStyles.scorePredBox}>
                         <Text style={modalStyles.scorePredText}>{subject.predicate}</Text>
                       </View>
@@ -136,7 +136,7 @@ export const SubjectDetailModal: React.FC<{
                       <Text style={modalStyles.kkmLabel}>
                         KKM Sekolah: {kkmVal != null ? kkmVal : '-'}
                       </Text>
-                      <Text style={modalStyles.kkmLabelBold}>Nilai Ananda: {subject.score}</Text>
+                      <Text style={modalStyles.kkmLabelBold}>Nilai Ananda: {Math.round(Number(subject.score) || 0)}</Text>
                     </View>
                     <View style={modalStyles.kkmTrack}>
                       <View
@@ -600,7 +600,7 @@ export const SemesterReportModal: React.FC<{
             <View style={modalStyles.kpiRow}>
               <View style={modalStyles.kpiBox}>
                 <Text style={modalStyles.kpiLabel}>Rata-rata</Text>
-                <Text style={modalStyles.kpiValue}>{average}</Text>
+                <Text style={modalStyles.kpiValue}>{average != null ? Math.round(Number(average)) : '-'}</Text>
                 <Text style={modalStyles.kpiSub}>Predikat {predicate}</Text>
               </View>
               <View style={modalStyles.kpiBox}>
@@ -620,9 +620,9 @@ export const SemesterReportModal: React.FC<{
                 <Text style={modalStyles.kpiLabel}>Kehadiran</Text>
                 <Text style={modalStyles.kpiValue}>
                   {student?.attendance_percentage != null
-                    ? `${student.attendance_percentage}%`
+                    ? `${Math.round(Number(student.attendance_percentage))}%`
                     : student?.persentase_kehadiran != null
-                    ? `${student.persentase_kehadiran}%`
+                    ? `${Math.round(Number(student.persentase_kehadiran))}%`
                     : '-'}
                 </Text>
                 <Text style={modalStyles.kpiSub}>

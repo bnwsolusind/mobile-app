@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -27,6 +28,7 @@ import {
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { StudentStickyHeader, useStickyScroll } from '../components/StudentStickyHeader';
 import { StudentIdCardModal } from '../components/StudentIdCardModal';
@@ -39,6 +41,12 @@ import TeacherScheduleWorkspace from '../components/schedule/TeacherScheduleWork
 import { resolveUnitName } from '../utils/employeeUtils';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const STUDENT_CARD_GAP = 12;
+const STUDENT_PEEK_WIDTH = 26;
+const studentCardWidth = SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP;
+const studentSnapInterval = studentCardWidth + STUDENT_CARD_GAP;
+const studentTrackPad = STUDENT_PEEK_WIDTH;
+const centerLoopOffset = studentSnapInterval;
 
 type Child = Record<string, any>;
 type ScheduleItem = Record<string, any>;
@@ -308,29 +316,7 @@ export default function ScheduleScreen({ route, navigation }: any) {
     }
   }, [route?.params?.child_id, route?.params?.student_id, globalActiveChildId, selectedChildId]);
 
-  const handleStudentScrollEnd = (e: any) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 50 + 12;
-    const index = Math.round(offsetX / cardWidth);
-    const childList = Array.isArray(children) ? children : [];
-    if (index >= 0 && index < childList.length) {
-      const targetChild = childList[index];
-      if (targetChild && String(targetChild.id) !== selectedChildId) {
-        const sid = String(targetChild.id);
-        setSelectedChildId(sid);
-        useActiveChildStore.getState().setActiveChildId(sid);
-      }
-    }
-  };
-
-  const selectChildWithScroll = (childId: string, index: number) => {
-    setSelectedChildId(childId);
-    useActiveChildStore.getState().setActiveChildId(childId);
-    studentScrollRef.current?.scrollTo({
-      x: index * (SCREEN_WIDTH - 50 + 12),
-      animated: true,
-    });
-  };
+  const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
 
   // Date selection state: otomatis langsung ke hari ini (Sabtu, 17 Oktober 2026)
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
@@ -379,6 +365,7 @@ export default function ScheduleScreen({ route, navigation }: any) {
   const [selectedExamDetail, setSelectedExamDetail] = useState<any | null>(null);
   const [selectedExamCategory, setSelectedExamCategory] = useState<string>('all');
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -508,17 +495,64 @@ export default function ScheduleScreen({ route, navigation }: any) {
     }
   }, [selectedChildId, selectedDate, user?.id]);
 
-  // 3. Load Exam Schedules (PTS, PAS, PAT)
+  // 3. Load Exam Schedules (PTS, PAS, PAT & Ujian CBT Portal)
   const loadExamSchedules = useCallback(async () => {
     try {
       setLoadingExams(true);
       const activeChild = children.find((c) => String(c.id) === String(selectedChildId)) || children[0];
       const kelasId = activeChild?.class_id || (scheduleData?.student?.class_id ? String(scheduleData.student.class_id) : undefined);
-      const res: any = await mobileApiService.getExamSchedules({
-        kelas_id: kelasId,
-      });
-      const list = unwrapApiData<any[]>(res) || (Array.isArray(res) ? res : res?.data || []);
-      setExamSchedules(Array.isArray(list) ? list : []);
+      const targetChildId = selectedChildId || useActiveChildStore.getState().activeChildId || undefined;
+
+      const [examRes, cbtRes] = await Promise.allSettled([
+        mobileApiService.getExamSchedules({ kelas_id: kelasId }),
+        mobileApiService.getPortalCbtExams(targetChildId || undefined),
+      ]);
+
+      let list: any[] = [];
+      if (examRes.status === 'fulfilled') {
+        const raw = unwrapApiData<any[]>(examRes.value) || (Array.isArray(examRes.value) ? examRes.value : (examRes.value as any)?.data || []);
+        if (Array.isArray(raw) && raw.length > 0) {
+          list = raw;
+        }
+      }
+
+      if (list.length === 0 && cbtRes.status === 'fulfilled') {
+        const rawCbt = unwrapApiData<any>(cbtRes.value);
+        const cbtList = Array.isArray(rawCbt?.exams)
+          ? rawCbt.exams
+          : Array.isArray(rawCbt?.data)
+          ? rawCbt.data
+          : Array.isArray(rawCbt)
+          ? rawCbt
+          : [];
+
+        list = cbtList.map((exam: any) => ({
+          id: exam.id,
+          exam_date: exam.waktu_mulai ? exam.waktu_mulai.slice(0, 10) : '',
+          time_start: exam.waktu_mulai ? exam.waktu_mulai.slice(11, 16) : '',
+          time_end: exam.waktu_selesai ? exam.waktu_selesai.slice(11, 16) : '',
+          subject: {
+            name: exam.mata_pelajaran || exam.judul_ujian || 'Ujian Terpadu',
+            code: 'CBT',
+          },
+          exam_category: {
+            id: 'cbt',
+            name: exam.judul_ujian?.includes('PTS')
+              ? 'PTS (Tengah Semester)'
+              : exam.judul_ujian?.includes('PAS')
+              ? 'PAS (Akhir Semester)'
+              : 'Ujian CBT',
+            color: '#2563EB',
+          },
+          invigilator: {
+            nama_lengkap: exam.guru || 'Guru Pengampu',
+          },
+          room: 'LMS / Lab Komputer',
+          raw_cbt: exam,
+        }));
+      }
+
+      setExamSchedules(list);
     } catch {
       setExamSchedules([]);
     } finally {
@@ -668,19 +702,101 @@ export default function ScheduleScreen({ route, navigation }: any) {
     return [];
   }, [scheduleData, selectedDate]);
 
-  // Jadwal setelah difilter per mata pelajaran
+  // Jadwal setelah difilter per mata pelajaran dan pencarian
   const displaySchedules: ScheduleItem[] = useMemo(() => {
-    if (selectedSubjectFilter === 'all') return dayBaseSchedules;
-    return dayBaseSchedules.filter((s: any) => {
-      const isActivity = (s.activity_type ?? 'kbm') !== 'kbm';
-      const actName = s.activity_name ?? '';
-      const name = (isActivity && actName) ? actName : (s.subject?.name || s.subject?.nama_mapel || '');
-      const id = s.subject?.id ? String(s.subject.id) : name;
-      return id === selectedSubjectFilter || name === selectedSubjectFilter;
-    });
-  }, [dayBaseSchedules, selectedSubjectFilter]);
+    let result = dayBaseSchedules;
+    if (selectedSubjectFilter !== 'all') {
+      result = result.filter((s: any) => {
+        const isActivity = (s.activity_type ?? 'kbm') !== 'kbm';
+        const actName = s.activity_name ?? '';
+        const name = (isActivity && actName) ? actName : (s.subject?.name || s.subject?.nama_mapel || '');
+        const id = s.subject?.id ? String(s.subject.id) : name;
+        return id === selectedSubjectFilter || name === selectedSubjectFilter;
+      });
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((s: any) => {
+        const subName = String(s.subject?.name || s.subject?.nama_mapel || s.activity_name || '').toLowerCase();
+        const teacherName = String(s.teacher?.name || s.teacher?.nama_lengkap || '').toLowerCase();
+        const roomName = String(s.room || s.ruangan || '').toLowerCase();
+        return subName.includes(q) || teacherName.includes(q) || roomName.includes(q);
+      });
+    }
+    return result;
+  }, [dayBaseSchedules, selectedSubjectFilter, searchQuery]);
 
   const safeChildren = Array.isArray(children) ? children : [];
+  const studentLoopCount = safeChildren.length;
+  const safeCenter = studentLoopCount > 0 ? ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount : 0;
+
+  const loopWindow = useMemo(() => {
+    const n = studentLoopCount;
+    if (n <= 1) return { list: safeChildren, realIdx: [0] };
+    const cur = ((activeChildIndex % n) + n) % n;
+    const prev = (cur - 1 + n) % n;
+    const next = (cur + 1) % n;
+    return {
+      list: [safeChildren[prev], safeChildren[cur], safeChildren[next]],
+      realIdx: [prev, cur, next],
+    };
+  }, [safeChildren, activeChildIndex, studentLoopCount]);
+
+  const syncLoopChildId = useCallback((newIdx: number) => {
+    if (!safeChildren || safeChildren.length === 0) return;
+    const n = safeChildren.length;
+    const norm = ((newIdx % n) + n) % n;
+    const targetChild = safeChildren[norm];
+    if (targetChild) {
+      const targetId = String(targetChild.id || targetChild.student_id);
+      setSelectedChildId(targetId);
+      useActiveChildStore.getState().setActiveChildId(targetId);
+    }
+  }, [safeChildren]);
+
+  const recenterLoop = useCallback(() => {
+    if (studentLoopCount > 1) {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
+    }
+  }, [studentLoopCount]);
+
+  const goToLoopChild = useCallback((targetRealIdx: number) => {
+    if (studentLoopCount <= 1) {
+      setActiveChildIndex(0);
+      syncLoopChildId(0);
+      return;
+    }
+    const n = studentLoopCount;
+    const cur = safeCenter;
+    const target = ((targetRealIdx % n) + n) % n;
+    if (target === cur) {
+      recenterLoop();
+      return;
+    }
+    setActiveChildIndex(target);
+    syncLoopChildId(target);
+    const forwardStep = (target - cur + n) % n;
+    const backwardStep = (cur - target + n) % n;
+    if (forwardStep <= backwardStep) {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
+    } else {
+      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
+    }
+    setTimeout(() => {
+      recenterLoop();
+    }, 280);
+  }, [studentLoopCount, safeCenter, syncLoopChildId, recenterLoop]);
+
+  useEffect(() => {
+    if (safeChildren.length > 0 && selectedChildId) {
+      const idx = safeChildren.findIndex(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (idx >= 0 && idx !== activeChildIndex) {
+        setActiveChildIndex(idx);
+      }
+    }
+  }, [selectedChildId, safeChildren, activeChildIndex]);
   const safeDisplaySchedules = Array.isArray(displaySchedules) ? displaySchedules : [];
   const safeDayBaseSchedules = Array.isArray(dayBaseSchedules) ? dayBaseSchedules : [];
   const safeAvailableSubjects = Array.isArray(availableSubjects) ? availableSubjects : [];
@@ -765,6 +881,20 @@ export default function ScheduleScreen({ route, navigation }: any) {
   }, [safeDayBaseSchedules, selectedDate]);
 
   const handleBack = () => {
+    const currentActiveChildId = selectedChildId || useActiveChildStore.getState().activeChildId || route?.params?.child_id || route?.params?.student_id;
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, {
+      ...route?.params,
+      child_id: currentActiveChildId,
+      student_id: currentActiveChildId,
+    });
+    if (handled) return;
+    if (currentActiveChildId) {
+      navigation?.navigate('Beranda' as any, {
+        reopen_child_portal_id: String(currentActiveChildId),
+        reopen_timestamp: Date.now(),
+      });
+      return;
+    }
     if (navigation?.canGoBack()) {
       navigation.goBack();
     } else {
@@ -797,7 +927,7 @@ export default function ScheduleScreen({ route, navigation }: any) {
             ? idx
             : safeChildren.findIndex((c) => String(c.id || c.student_id) === String(cid));
           if (foundIdx >= 0) {
-            selectChildWithScroll(String(cid), foundIdx);
+            goToLoopChild(foundIdx);
           }
         }}
         middleAction={{
@@ -898,10 +1028,13 @@ export default function ScheduleScreen({ route, navigation }: any) {
                       isSelected={true}
                       isSingleChild={true}
                       showActionButtons={true}
+                      cardLabel="Kartu Siswa"
+                      calendarLabel="Jadwal"
+                      portalLabel="Menu"
                       onPressCard={() => openIdCard(safeChildren[0])}
+                      onPressQr={() => openQrCard(safeChildren[0])}
                       onPressWeeklyReport={() => setSelectedWeeklyStudent(safeChildren[0])}
                       onPressNotifications={() => setSelectedNotificationStudent(safeChildren[0])}
-                      onPressQr={() => openQrCard(safeChildren[0])}
                       onPressPortal={() => setSelectedMenuStudent(safeChildren[0])}
                     />
                   </View>
@@ -910,38 +1043,87 @@ export default function ScheduleScreen({ route, navigation }: any) {
                     <ScrollView
                       ref={studentScrollRef}
                       horizontal
+                      nestedScrollEnabled={true}
                       showsHorizontalScrollIndicator={false}
-                      snapToInterval={SCREEN_WIDTH - 50 + 12}
+                      contentOffset={{ x: centerLoopOffset, y: 0 }}
+                      contentContainerStyle={[
+                        styles.studentCardsTrack,
+                        { paddingHorizontal: studentTrackPad },
+                      ]}
                       decelerationRate="fast"
-                      onMomentumScrollEnd={handleStudentScrollEnd}
+                      snapToInterval={studentSnapInterval}
+                      snapToAlignment="start"
+                      disableIntervalMomentum
+                      onMomentumScrollEnd={(e) => {
+                        if (studentLoopCount === 0) return;
+                        const offsetX = e.nativeEvent.contentOffset.x;
+                        const slot = Math.round(offsetX / studentSnapInterval);
+                        const n = studentLoopCount;
+                        const cur = ((activeChildIndex % n) + n) % n;
+                        let realIdx = cur;
+                        if (slot === 2) realIdx = (cur + 1) % n;
+                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                        if (realIdx !== cur) {
+                          setActiveChildIndex(realIdx);
+                          syncLoopChildId(realIdx);
+                          requestAnimationFrame(() => {
+                            recenterLoop();
+                          });
+                        } else {
+                          recenterLoop();
+                        }
+                      }}
+                      onScrollEndDrag={(e) => {
+                        if (studentLoopCount === 0) return;
+                        const offsetX = e.nativeEvent.contentOffset.x;
+                        const slot = Math.round(offsetX / studentSnapInterval);
+                        const n = studentLoopCount;
+                        const cur = ((activeChildIndex % n) + n) % n;
+                        let realIdx = cur;
+                        if (slot === 2) realIdx = (cur + 1) % n;
+                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                        if (realIdx !== cur) {
+                          setActiveChildIndex(realIdx);
+                          syncLoopChildId(realIdx);
+                        }
+                      }}
+                      scrollEventThrottle={16}
                       style={styles.heroCardScrollContainer}
-                      contentContainerStyle={styles.heroCardScroll}
                     >
-                      {safeChildren.map((child, idx) => (
-                        <StudentHeroCard
-                          key={String(child.id || idx)}
-                          child={child}
-                          isSelected={String(child.id) === selectedChildId}
-                          isSingleChild={false}
-                          showActionButtons={true}
-                          onSelect={() => selectChildWithScroll(String(child.id), idx)}
-                          onPressCard={() => openIdCard(child)}
-                          onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                          onPressNotifications={() => setSelectedNotificationStudent(child)}
-                          onPressQr={() => openQrCard(child)}
-                          onPressPortal={() => setSelectedMenuStudent(child)}
-                        />
-                      ))}
+                      {loopWindow.list.map((child: any, sIdx: number) => {
+                        const realIdx = loopWindow.realIdx[sIdx] ?? 0;
+                        const isCardActive = realIdx === safeCenter;
+                        return (
+                          <StudentHeroCard
+                            key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
+                            child={child}
+                            isSelected={isCardActive}
+                            isSingleChild={false}
+                            showActionButtons={true}
+                            cardWidth={studentCardWidth}
+                            cardLabel="Kartu Siswa"
+                            calendarLabel="Jadwal"
+                            portalLabel="Menu"
+                            onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
+                            onPressCard={() => openIdCard(child)}
+                            onPressQr={() => openQrCard(child)}
+                            onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
+                            onPressNotifications={() => setSelectedNotificationStudent(child)}
+                            onPressPortal={() => setSelectedMenuStudent(child)}
+                          />
+                        );
+                      })}
                     </ScrollView>
 
                     {/* DOT INDIKATOR SCROLL SISWA */}
                     <View style={styles.paginationDotsRow}>
-                      {children.map((c, i) => {
-                        const isDotActive = String(c.id) === selectedChildId;
+                      {safeChildren.map((_, dotIdx) => {
+                        const isDotActive = dotIdx === safeCenter;
                         return (
                           <TouchableOpacity
-                            key={String(c.id || i)}
-                            onPress={() => selectChildWithScroll(String(c.id), i)}
+                            key={dotIdx}
+                            activeOpacity={0.7}
+                            onPress={() => goToLoopChild(dotIdx)}
                             style={[
                               styles.paginationDot,
                               isDotActive && styles.paginationDotActive,
@@ -1212,361 +1394,283 @@ export default function ScheduleScreen({ route, navigation }: any) {
               </View>
             </View>
 
-            {/* ── TAB SWITCHER: HARIAN VS SEMUA JADWAL VS UJIAN (TAILGRIDS HARMONIZED) ── */}
-            <View style={styles.tabSwitcherWrap}>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setActiveTab('kbm')}
-                style={[
-                  styles.tabSwitcherBtn,
-                  activeTab === 'kbm' && styles.tabSwitcherBtnActiveKbm,
-                ]}
+            {/* 2. CARD HARI & TANGGAL BELAJAR (DENGAN TAB HARIAN, SEMUA JADWAL, UJIAN DI DALAMNYA) */}
+            {/* 2. CARD HARI & TANGGAL BELAJAR (DENGAN TAB HARIAN, SEMUA JADWAL, UJIAN DI DALAMNYA) */}
+            <View style={styles.dayStripContainer}>
+              {/* HEADER CARD DENGAN STYLED BACKGROUND EMERALD HALUS */}
+              <LinearGradient
+                colors={['#ECFDF5', '#F0FDF4']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.dayStripHeaderBanner}
               >
-                {activeTab === 'kbm' && (
-                  <LinearGradient
-                    colors={['#064E3B', '#047857', '#059669']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                )}
-                <View
-                  style={[
-                    styles.tabSwitcherIconSquircle,
-                    activeTab === 'kbm' ? styles.tabSwitcherIconSquircleActiveKbm : styles.tabSwitcherIconSquircleInactive,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="calendar-clock"
-                    size={16}
-                    color={activeTab === 'kbm' ? '#FFFFFF' : '#047857'}
-                  />
-                </View>
-                <View style={styles.tabSwitcherTextWrap}>
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.75}
-                    style={[
-                      styles.tabSwitcherText,
-                      activeTab === 'kbm' && styles.tabSwitcherTextActiveKbm,
-                    ]}
-                  >
-                    Harian
-                  </Text>
-                </View>
-              </TouchableOpacity>
+                <View style={styles.dayStripHeaderTopRow}>
+                  <View style={styles.dayStripHeaderLeft}>
+                    {/* ICON MENYESUAIKAN DENGAN STYLE ICON RINGKASAN JADWAL (GRADIENT + SHADOW) */}
+                    <LinearGradient
+                      colors={['#059669', '#047857']}
+                      style={styles.sectionIconBadgeModern}
+                    >
+                      <MaterialCommunityIcons name="calendar-range" size={17} color="#FFFFFF" />
+                    </LinearGradient>
+                    <View style={styles.dayStripTitleColumn}>
+                      <Text style={styles.sectionTitleBold}>Hari & Tanggal Belajar</Text>
+                      <Text numberOfLines={1} style={styles.summarySubtitleText}>
+                        {activeTab === 'kbm'
+                          ? formattedSelectedDate
+                          : activeTab === 'semua'
+                          ? 'Jadwal Mingguan Lengkap'
+                          : 'Jadwal Penilaian & Ujian'}
+                      </Text>
+                    </View>
+                  </View>
 
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setActiveTab('semua')}
-                style={[
-                  styles.tabSwitcherBtn,
-                  activeTab === 'semua' && styles.tabSwitcherBtnActiveSemua,
-                ]}
-              >
-                {activeTab === 'semua' && (
-                  <LinearGradient
-                    colors={['#0F766E', '#0D9488', '#14B8A6']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                )}
-                <View
-                  style={[
-                    styles.tabSwitcherIconSquircle,
-                    activeTab === 'semua' ? styles.tabSwitcherIconSquircleActiveSemua : styles.tabSwitcherIconSquircleInactive,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="calendar-month-outline"
-                    size={16}
-                    color={activeTab === 'semua' ? '#FFFFFF' : '#0D9488'}
-                  />
-                </View>
-                <View style={styles.tabSwitcherTextWrap}>
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.75}
-                    style={[
-                      styles.tabSwitcherText,
-                      activeTab === 'semua' && styles.tabSwitcherTextActiveSemua,
-                    ]}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setIsDatePickerModalVisible(true)}
+                    style={styles.openCalendarBtn}
+                    accessibilityLabel="Buka Kalender Pemilih Tanggal"
                   >
-                    Semua Jadwal
-                  </Text>
+                    <MaterialCommunityIcons name="calendar-month-outline" size={14} color="#047857" />
+                    <Text numberOfLines={1} style={styles.openCalendarBtnText}>Kalender</Text>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
+              </LinearGradient>
 
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setActiveTab('exam')}
-                style={[
-                  styles.tabSwitcherBtn,
-                  activeTab === 'exam' && styles.tabSwitcherBtnActiveExam,
-                ]}
-              >
-                {activeTab === 'exam' && (
-                  <LinearGradient
-                    colors={['#1E3A8A', '#1D4ED8', '#2563EB']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                )}
-                <View
-                  style={[
-                    styles.tabSwitcherIconSquircle,
-                    activeTab === 'exam' ? styles.tabSwitcherIconSquircleActiveExam : styles.tabSwitcherIconSquircleInactive,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="file-document-edit-outline"
-                    size={16}
-                    color={activeTab === 'exam' ? '#FFFFFF' : '#2563EB'}
-                  />
-                </View>
-                <View style={styles.tabSwitcherTextWrap}>
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.75}
+              {/* CARD BODY DENGAN JARAK PRESISI & RAPI */}
+              <View style={[styles.dayStripBody, activeTab !== 'kbm' && styles.dayStripBodyCompact]}>
+                {/* TAB SWITCHER: HARIAN VS SEMUA JADWAL VS UJIAN */}
+                <View style={[styles.tabSwitcherWrap, activeTab !== 'kbm' && styles.tabSwitcherWrapCompact]}>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setActiveTab('kbm')}
                     style={[
-                      styles.tabSwitcherText,
-                      activeTab === 'exam' && styles.tabSwitcherTextActiveExam,
+                      styles.tabSwitcherBtn,
+                      activeTab === 'kbm' && styles.tabSwitcherBtnActiveKbm,
                     ]}
                   >
-                    Ujian
-                  </Text>
+                    {activeTab === 'kbm' && (
+                      <LinearGradient
+                        colors={['#064E3B', '#047857', '#059669']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                    )}
+                    <View
+                      style={[
+                        styles.tabSwitcherIconSquircle,
+                        activeTab === 'kbm' ? styles.tabSwitcherIconSquircleActiveKbm : styles.tabSwitcherIconSquircleInactive,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name="calendar-clock"
+                        size={15}
+                        color={activeTab === 'kbm' ? '#FFFFFF' : '#047857'}
+                      />
+                    </View>
+                    <View style={styles.tabSwitcherTextWrap}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        style={[
+                          styles.tabSwitcherText,
+                          activeTab === 'kbm' && styles.tabSwitcherTextActiveKbm,
+                        ]}
+                      >
+                        Harian
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setActiveTab('semua')}
+                    style={[
+                      styles.tabSwitcherBtn,
+                      activeTab === 'semua' && styles.tabSwitcherBtnActiveSemua,
+                    ]}
+                  >
+                    {activeTab === 'semua' && (
+                      <LinearGradient
+                        colors={['#0F766E', '#0D9488', '#14B8A6']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                    )}
+                    <View
+                      style={[
+                        styles.tabSwitcherIconSquircle,
+                        activeTab === 'semua' ? styles.tabSwitcherIconSquircleActiveSemua : styles.tabSwitcherIconSquircleInactive,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name="calendar-month-outline"
+                        size={15}
+                        color={activeTab === 'semua' ? '#FFFFFF' : '#0D9488'}
+                      />
+                    </View>
+                    <View style={styles.tabSwitcherTextWrap}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        style={[
+                          styles.tabSwitcherText,
+                          activeTab === 'semua' && styles.tabSwitcherTextActiveSemua,
+                        ]}
+                      >
+                        Semua Jadwal
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setActiveTab('exam')}
+                    style={[
+                      styles.tabSwitcherBtn,
+                      activeTab === 'exam' && styles.tabSwitcherBtnActiveExam,
+                    ]}
+                  >
+                    {activeTab === 'exam' && (
+                      <LinearGradient
+                        colors={['#1E3A8A', '#1D4ED8', '#2563EB']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                    )}
+                    <View
+                      style={[
+                        styles.tabSwitcherIconSquircle,
+                        activeTab === 'exam' ? styles.tabSwitcherIconSquircleActiveExam : styles.tabSwitcherIconSquircleInactive,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name="file-document-edit-outline"
+                        size={15}
+                        color={activeTab === 'exam' ? '#FFFFFF' : '#2563EB'}
+                      />
+                    </View>
+                    <View style={styles.tabSwitcherTextWrap}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        style={[
+                          styles.tabSwitcherText,
+                          activeTab === 'exam' && styles.tabSwitcherTextActiveExam,
+                        ]}
+                      >
+                        Ujian
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
+
+                {/* Baris 3: Tombol Pintas Ke Hari Ini (Hanya muncul saat tab Harian dan bukan hari ini) */}
+                {activeTab === 'kbm' && !scheduleKpi.isToday && (
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    onPress={() => setSelectedDate(new Date())}
+                    style={styles.quickTodayBannerRow}
+                    accessibilityLabel="Pilih Hari Ini Tanggal 17 Oktober"
+                  >
+                    <View style={styles.quickTodayBannerLeft}>
+                      <View style={styles.quickTodayIconCircle}>
+                        <MaterialCommunityIcons name="calendar-today" size={12} color="#047857" />
+                      </View>
+                      <Text numberOfLines={1} style={styles.quickTodayBannerText}>
+                        Kembali ke Hari Ini (Sabtu, 17 Okt 2026)
+                      </Text>
+                    </View>
+                    <View style={styles.quickTodayActionPill}>
+                      <Text style={styles.quickTodayActionPillText}>Pilih</Text>
+                      <MaterialCommunityIcons name="chevron-right" size={13} color="#FFFFFF" />
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                {/* Day Strip Row (Hanya muncul saat tab Harian) */}
+              {activeTab === 'kbm' && (
+                <ScrollView
+                  ref={dayScrollRef}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.dayStripRow}
+                >
+                  {weekDays.map((item) => {
+                    const isSel = item.isSelected;
+                    const isWeekend = item.isWeekend;
+                    return (
+                      <TouchableOpacity
+                        key={item.iso}
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedDate(item.dateObj)}
+                        style={[
+                          styles.dayPillBtn,
+                          isWeekend && styles.dayPillBtnWeekend,
+                          item.isToday && !isSel && styles.dayPillBtnToday,
+                          isSel && styles.dayPillBtnActive,
+                        ]}
+                      >
+                        {isSel && (
+                          <LinearGradient
+                            colors={['#064E3B', '#047857', '#059669']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={StyleSheet.absoluteFill}
+                          />
+                        )}
+                        {item.isToday && (
+                          <View style={[styles.todayIndicatorTag, isSel && styles.todayIndicatorTagActive]}>
+                            <View style={[styles.todayDot, isSel && styles.todayDotActive]} />
+                            <Text style={[styles.todayTagText, isSel && styles.todayTagTextActive]}>Hari Ini</Text>
+                          </View>
+                        )}
+                        <Text
+                          style={[
+                            styles.dayPillName,
+                            isWeekend && !isSel && styles.dayPillNameWeekend,
+                            item.isToday && !isSel && styles.dayPillNameToday,
+                            isSel && styles.dayPillNameActive,
+                          ]}
+                        >
+                          {item.dayName}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.dayPillNumber,
+                            isWeekend && !isSel && styles.dayPillNumberWeekend,
+                            item.isToday && !isSel && styles.dayPillNumberToday,
+                            isSel && styles.dayPillNumberActive,
+                          ]}
+                        >
+                          {item.dayNum}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.dayPillMonth,
+                            isWeekend && !isSel && styles.dayPillMonthWeekend,
+                            item.isToday && !isSel && styles.dayPillMonthToday,
+                            isSel && styles.dayPillMonthActive,
+                          ]}
+                        >
+                          {item.monthShort}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
+              </View>
             </View>
 
             {activeTab === 'kbm' ? (
               <>
-                {/* 2. DAY SELECTOR ROW (7 PILLS: SENIN S/D AHAD DENGAN WARNA SEMANTIK & PILIHAN TANGGAL 17) */}
-                <View style={styles.dayStripContainer}>
-                  <View style={styles.dayStripHeader}>
-                    {/* Baris 1: Judul Section & Tombol Kalender yang Lapang */}
-                    <View style={styles.dayStripHeaderTopRow}>
-                      <View style={styles.dayStripHeaderLeft}>
-                        <View style={styles.dayStripHeaderIconWrap}>
-                          <MaterialCommunityIcons name="calendar-range" size={15} color="#047857" />
-                        </View>
-                        <Text style={styles.dayStripHeaderTitle}>Hari & Tanggal Belajar</Text>
-                      </View>
-
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => setIsDatePickerModalVisible(true)}
-                        style={styles.openCalendarBtn}
-                        accessibilityLabel="Buka Kalender Pemilih Tanggal"
-                      >
-                        <MaterialCommunityIcons name="calendar-month-outline" size={14} color="#047857" />
-                        <Text numberOfLines={1} style={styles.openCalendarBtnText}>Kalender</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* Baris 2: Tombol Pintas Ke Hari Ini (Hanya muncul saat bukan hari ini, dengan ruang penuh dan teks utuh) */}
-                    {!scheduleKpi.isToday && (
-                      <TouchableOpacity
-                        activeOpacity={0.82}
-                        onPress={() => setSelectedDate(new Date())}
-                        style={styles.quickTodayBannerRow}
-                        accessibilityLabel="Pilih Hari Ini Tanggal 17 Oktober"
-                      >
-                        <View style={styles.quickTodayBannerLeft}>
-                          <View style={styles.quickTodayIconCircle}>
-                            <MaterialCommunityIcons name="calendar-today" size={12} color="#047857" />
-                          </View>
-                          <Text numberOfLines={1} style={styles.quickTodayBannerText}>
-                            Kembali ke Hari Ini (Sabtu, 17 Okt 2026)
-                          </Text>
-                        </View>
-                        <View style={styles.quickTodayActionPill}>
-                          <Text style={styles.quickTodayActionPillText}>Pilih</Text>
-                          <MaterialCommunityIcons name="chevron-right" size={13} color="#FFFFFF" />
-                        </View>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  <ScrollView
-                    ref={dayScrollRef}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.dayStripRow}
-                  >
-                    {weekDays.map((item) => {
-                      const isSel = item.isSelected;
-                      const isWeekend = item.isWeekend;
-                      return (
-                        <TouchableOpacity
-                          key={item.iso}
-                          activeOpacity={0.8}
-                          onPress={() => setSelectedDate(item.dateObj)}
-                          style={[
-                            styles.dayPillBtn,
-                            isWeekend && styles.dayPillBtnWeekend,
-                            item.isToday && !isSel && styles.dayPillBtnToday,
-                            isSel && styles.dayPillBtnActive,
-                          ]}
-                        >
-                          {isSel && (
-                            <LinearGradient
-                              colors={['#064E3B', '#047857', '#059669']}
-                              start={{ x: 0, y: 0 }}
-                              end={{ x: 1, y: 1 }}
-                              style={StyleSheet.absoluteFill}
-                            />
-                          )}
-                          {item.isToday && (
-                            <View style={[styles.todayIndicatorTag, isSel && styles.todayIndicatorTagActive]}>
-                              <View style={[styles.todayDot, isSel && styles.todayDotActive]} />
-                              <Text style={[styles.todayTagText, isSel && styles.todayTagTextActive]}>Hari Ini</Text>
-                            </View>
-                          )}
-                          <Text
-                            style={[
-                              styles.dayPillName,
-                              isWeekend && !isSel && styles.dayPillNameWeekend,
-                              item.isToday && !isSel && styles.dayPillNameToday,
-                              isSel && styles.dayPillNameActive,
-                            ]}
-                          >
-                            {item.dayName}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.dayPillNumber,
-                              isWeekend && !isSel && styles.dayPillNumberWeekend,
-                              item.isToday && !isSel && styles.dayPillNumberToday,
-                              isSel && styles.dayPillNumberActive,
-                            ]}
-                          >
-                            {item.dayNum}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.dayPillMonth,
-                              isWeekend && !isSel && styles.dayPillMonthWeekend,
-                              item.isToday && !isSel && styles.dayPillMonthToday,
-                              isSel && styles.dayPillMonthActive,
-                            ]}
-                          >
-                            {item.monthShort}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-
-                {/* 2.5 FILTER MATA PELAJARAN DENGAN PALET WARNA SEMANTIK KAYA & ICON */}
-                {safeAvailableSubjects.length > 0 && (
-                  <View style={styles.subjectFilterBlock}>
-                    <View style={styles.subjectFilterHeaderRow}>
-                      <View style={styles.subjectFilterHeaderLeft}>
-                        <View style={styles.subjectFilterIconBox}>
-                          <MaterialCommunityIcons name="book-open-page-variant" size={14} color="#047857" />
-                        </View>
-                        <Text style={styles.subjectFilterHeaderTitle}>Filter Mata Pelajaran</Text>
-                        {selectedSubjectFilter !== 'all' && (
-                          <View style={styles.subjectFilterActiveBadge}>
-                            <Text style={styles.subjectFilterActiveBadgeText}>1 Terpilih</Text>
-                          </View>
-                        )}
-                      </View>
-                      {selectedSubjectFilter !== 'all' && (
-                        <TouchableOpacity
-                          activeOpacity={0.7}
-                          onPress={() => setSelectedSubjectFilter('all')}
-                          hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
-                          style={styles.subjectFilterResetBtn}
-                        >
-                          <MaterialCommunityIcons name="close-circle-outline" size={14} color="#E11D48" />
-                          <Text style={styles.subjectFilterResetText}>Reset Filter</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.subjectFilterScroll}
-                    >
-                      {/* Tombol Semua Mapel */}
-                      <TouchableOpacity
-                        activeOpacity={0.75}
-                        onPress={() => setSelectedSubjectFilter('all')}
-                        style={[
-                          styles.subjectPillBtn,
-                          selectedSubjectFilter === 'all'
-                            ? styles.subjectPillBtnActiveAll
-                            : styles.subjectPillBtnDefault,
-                        ]}
-                      >
-                        <MaterialCommunityIcons
-                          name="apps"
-                          size={13}
-                          color={selectedSubjectFilter === 'all' ? '#FFFFFF' : '#047857'}
-                          style={{ marginRight: 5 }}
-                        />
-                        <Text
-                          style={[
-                            styles.subjectPillText,
-                            selectedSubjectFilter === 'all'
-                              ? styles.subjectPillTextActiveAll
-                              : { color: '#065F46' },
-                          ]}
-                        >
-                          Semua ({safeAvailableSubjects.length})
-                        </Text>
-                      </TouchableOpacity>
-
-                      {/* Mapel Individual dengan Style Warna Semantik */}
-                      {safeAvailableSubjects.map((sub, sIdx) => {
-                        const isSel = selectedSubjectFilter === sub.name || selectedSubjectFilter === sub.id;
-                        const sStyle = getSubjectStyle(sub.name, sIdx);
-                        return (
-                          <TouchableOpacity
-                            key={sub.id || sIdx}
-                            activeOpacity={0.75}
-                            onPress={() => setSelectedSubjectFilter(sub.name)}
-                            style={[
-                              styles.subjectPillBtn,
-                              {
-                                backgroundColor: isSel ? sStyle.color : sStyle.bg,
-                                borderColor: isSel ? sStyle.color : `${sStyle.color}50`,
-                                borderWidth: 1.5,
-                              },
-                            ]}
-                          >
-                            <MaterialCommunityIcons
-                              name={(sStyle.icon as any) || 'book-outline'}
-                              size={13}
-                              color={isSel ? '#FFFFFF' : sStyle.color}
-                              style={{ marginRight: 5 }}
-                            />
-                            <Text
-                              style={[
-                                styles.subjectPillText,
-                                {
-                                  color: isSel ? '#FFFFFF' : sStyle.color,
-                                  fontWeight: isSel ? '900' : '700',
-                                },
-                              ]}
-                            >
-                              {sub.name}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                )}
-
                 {/* 3. DATE CARD DENGAN PILIHAN TANGGAL INTERAKTIF (TANGGAL 17 & KALENDER) */}
                 <TouchableOpacity
                   activeOpacity={0.88}
@@ -1636,6 +1740,124 @@ export default function ScheduleScreen({ route, navigation }: any) {
                     </Text>
                   </TouchableOpacity>
                 )}
+
+                {/* 3.5 UNIFIED FILTER CARD JADWAL (Tepat di Atas Jalur Pembelajaran Hari Ini) */}
+                <View style={styles.scheduleFilterCard}>
+                  <View style={styles.scheduleFilterCardHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                      <MaterialCommunityIcons name="filter-variant" size={16} color="#059669" />
+                      <Text numberOfLines={1} style={styles.scheduleFilterCardTitle}>Filter Jadwal & Pelajaran</Text>
+                      {(selectedSubjectFilter !== 'all' || searchQuery.length > 0) && (
+                        <View style={styles.filterBadgeCount}>
+                          <Text style={styles.filterBadgeCountText}>
+                            {selectedSubjectFilter !== 'all' && searchQuery.length > 0 ? '2 Aktif' : '1 Aktif'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    {(selectedSubjectFilter !== 'all' || searchQuery.length > 0) && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          setSelectedSubjectFilter('all');
+                          setSearchQuery('');
+                        }}
+                        style={{ flexShrink: 0 }}
+                      >
+                        <Text style={styles.scheduleFilterResetBtn}>Reset Filter</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* In-Card Search Input Bar */}
+                  <View style={styles.scheduleSearchBox}>
+                    <MaterialCommunityIcons name="magnify" size={18} color="#64748B" />
+                    <TextInput
+                      placeholder="Cari mapel, guru pengampu, ruang kelas..."
+                      placeholderTextColor="#94A3B8"
+                      value={searchQuery}
+                      onChangeText={setSearchQuery}
+                      style={styles.scheduleSearchInput}
+                    />
+                    {searchQuery ? (
+                      <TouchableOpacity onPress={() => setSearchQuery('')}>
+                        <MaterialCommunityIcons name="close-circle" size={16} color="#94A3B8" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {/* Scrollable Subject Scope Pills */}
+                  {safeAvailableSubjects.length > 0 && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.scheduleScopeTabsScroll}
+                    >
+                      {/* Tombol Semua Mapel */}
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        onPress={() => setSelectedSubjectFilter('all')}
+                        style={[
+                          styles.scheduleScopePill,
+                          selectedSubjectFilter === 'all' && styles.scheduleScopePillActive,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name="apps"
+                          size={13}
+                          color={selectedSubjectFilter === 'all' ? '#047857' : '#64748B'}
+                        />
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.scheduleScopePillText,
+                            selectedSubjectFilter === 'all' && styles.scheduleScopePillTextActive,
+                          ]}
+                        >
+                          Semua ({safeAvailableSubjects.length})
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* Mapel Individual dengan Style Warna Semantik */}
+                      {safeAvailableSubjects.map((sub, sIdx) => {
+                        const isSel = selectedSubjectFilter === sub.name || selectedSubjectFilter === sub.id;
+                        const sStyle = getSubjectStyle(sub.name, sIdx);
+                        return (
+                          <TouchableOpacity
+                            key={sub.id || sIdx}
+                            activeOpacity={0.75}
+                            onPress={() => setSelectedSubjectFilter(sub.name)}
+                            style={[
+                              styles.scheduleScopePill,
+                              isSel && {
+                                backgroundColor: '#FFFFFF',
+                                borderColor: sStyle.color,
+                                borderWidth: 1.2,
+                                shadowColor: sStyle.color,
+                                shadowOpacity: 0.15,
+                              },
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name={(sStyle.icon as any) || 'book-outline'}
+                              size={13}
+                              color={isSel ? sStyle.color : '#64748B'}
+                            />
+                            <Text
+                              numberOfLines={1}
+                              style={[
+                                styles.scheduleScopePillText,
+                                isSel && { color: sStyle.color, fontWeight: '800' },
+                              ]}
+                            >
+                              {sub.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+                </View>
 
               {/* 4. MILESTONE SCHEDULE TIMELINE */}
               {loading ? (
@@ -1915,6 +2137,36 @@ export default function ScheduleScreen({ route, navigation }: any) {
                                   />
                                 </View>
                               </View>
+
+                              {/* Card Footer: Status Presensi Sesi & Action Hint (Harmonisasi TailGrids Card) */}
+                              <View style={styles.milestoneCardFooter}>
+                                {(() => {
+                                  const att = item.attendance;
+                                  const attMeta = att && att.status ? getAttendanceMeta(att) : null;
+                                  if (attMeta) {
+                                    return (
+                                      <View style={[styles.cardAttPill, { backgroundColor: attMeta.bg, borderColor: attMeta.border }]}>
+                                        <MaterialCommunityIcons name={attMeta.icon as any} size={11} color={attMeta.color} />
+                                        <Text numberOfLines={1} style={[styles.cardAttPillText, { color: attMeta.color }]}>
+                                          {attMeta.label}
+                                        </Text>
+                                      </View>
+                                    );
+                                  }
+                                  return (
+                                    <View style={styles.cardAttPendingPill}>
+                                      <MaterialCommunityIcons name="clock-outline" size={11} color="#64748B" />
+                                      <Text numberOfLines={1} style={styles.cardAttPendingText}>
+                                        Presensi KBM
+                                      </Text>
+                                    </View>
+                                  );
+                                })()}
+                                <View style={styles.cardTapHint}>
+                                  <Text style={styles.cardTapHintText}>Ketuk rincian</Text>
+                                  <MaterialCommunityIcons name="arrow-right" size={12} color={styleMeta.color} />
+                                </View>
+                              </View>
                             </LinearGradient>
                           </TouchableOpacity>
                         </View>
@@ -1925,16 +2177,23 @@ export default function ScheduleScreen({ route, navigation }: any) {
               ) : safeDayBaseSchedules.length > 0 && safeDisplaySchedules.length === 0 ? (
                 <View style={styles.emptyContainer}>
                   <MaterialCommunityIcons name="book-off-outline" size={44} color="#94A3B8" />
-                  <Text style={styles.emptyTitle}>Tidak Ada Jadwal {selectedSubjectFilter}</Text>
+                  <Text style={styles.emptyTitle}>
+                    {searchQuery ? `Tidak Ditemukan "${searchQuery}"` : `Tidak Ada Jadwal ${selectedSubjectFilter}`}
+                  </Text>
                   <Text style={styles.emptyText}>
-                    Tidak ada sesi untuk mata pelajaran &quot;{selectedSubjectFilter}&quot; pada {formattedSelectedDate}.
+                    {searchQuery
+                      ? `Tidak ada mata pelajaran atau guru yang cocok dengan pencarian "${searchQuery}" pada ${formattedSelectedDate}.`
+                      : `Tidak ada sesi untuk mata pelajaran "${selectedSubjectFilter}" pada ${formattedSelectedDate}.`}
                   </Text>
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    onPress={() => setSelectedSubjectFilter('all')}
+                    onPress={() => {
+                      setSelectedSubjectFilter('all');
+                      setSearchQuery('');
+                    }}
                     style={styles.emptyResetBtn}
                   >
-                    <Text style={styles.emptyResetBtnText}>Tampilkan Semua Mapel</Text>
+                    <Text style={styles.emptyResetBtnText}>Reset Filter & Tampilkan Semua</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -3229,6 +3488,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 4,
   },
+  studentCardsTrack: {
+    gap: STUDENT_CARD_GAP,
+    paddingBottom: 4,
+    zIndex: 1,
+  },
   childCardHeroSize: {
     width: SCREEN_WIDTH - 50,
     minHeight: 148,
@@ -3624,68 +3888,73 @@ const styles = StyleSheet.create({
     minHeight: 80,
   },
 
-  // 2. DAY SELECTOR PILLS (TAILGRIDS EMERALD SQUIRCLE)
+  // 2. DAY SELECTOR PILLS & MODE SWITCHER CONTAINER
   dayStripContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
     borderWidth: 1.5,
-    borderColor: '#D1FAE5',
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
     shadowColor: '#059669',
     shadowOpacity: 0.08,
-    shadowRadius: 6,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  dayStripHeader: {
+    marginTop: 8,
     marginBottom: 10,
-    paddingBottom: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0FDF4',
-    gap: 8,
+  },
+  dayStripHeaderBanner: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderBottomWidth: 1.2,
+    borderBottomColor: '#D1FAE5',
   },
   dayStripHeaderTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   dayStripHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
     flex: 1,
   },
-  dayStripHeaderIconWrap: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    backgroundColor: '#ECFDF5',
-    alignItems: 'center',
+  dayStripTitleColumn: {
+    flex: 1,
     justifyContent: 'center',
-  },
-  dayStripHeaderTitle: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#065F46',
   },
   openCalendarBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 11,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
     paddingVertical: 5.5,
-    borderRadius: 9,
+    borderRadius: 10,
     borderWidth: 1.2,
-    borderColor: '#6EE7B7',
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   openCalendarBtnText: {
     fontSize: 11,
     fontWeight: '800',
     color: '#047857',
+  },
+  dayStripBody: {
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 10,
+    gap: 8,
+  },
+  dayStripBodyCompact: {
+    paddingBottom: 8,
+    gap: 0,
   },
   quickTodayBannerRow: {
     flexDirection: 'row',
@@ -5022,18 +5291,21 @@ const styles = StyleSheet.create({
   // ── TAB SWITCHER STYLES (SQUIRCLE PILL MODERN) ──
   tabSwitcherWrap: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-    marginBottom: 12,
+    gap: 7,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  tabSwitcherWrapCompact: {
+    marginBottom: 0,
   },
   tabSwitcherBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
+    paddingVertical: 8,
     paddingHorizontal: 4,
-    borderRadius: 16,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
@@ -5495,6 +5767,160 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
+  // ── UNIFIED FILTER CARD JADWAL (Harmonisasi Layout Filter Mutabaah TU) ──
+  scheduleFilterCard: {
+    marginTop: 4,
+    marginBottom: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 13,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    gap: 4,
+  },
+  scheduleFilterCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0FDF4',
+  },
+  scheduleFilterCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.1,
+  },
+  filterBadgeCount: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  filterBadgeCountText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  scheduleFilterResetBtn: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#E11D48',
+  },
+  scheduleSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    gap: 8,
+    marginVertical: 6,
+  },
+  scheduleSearchInput: {
+    flex: 1,
+    fontSize: 11.5,
+    color: '#0F172A',
+    paddingVertical: 0,
+  },
+  scheduleScopeTabsScroll: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  scheduleScopePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 6.5,
+    paddingHorizontal: 11,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+  },
+  scheduleScopePillActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+    borderWidth: 1.2,
+    shadowColor: '#059669',
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  scheduleScopePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  scheduleScopePillTextActive: {
+    color: '#047857',
+    fontWeight: '900',
+  },
+
+  // ── MILESTONE CARD FOOTER & ATTENDANCE PILLS ──
+  milestoneCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  cardAttPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 7,
+    borderWidth: 1,
+  },
+  cardAttPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  cardAttPendingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  cardAttPendingText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  cardTapHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  cardTapHintText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+
+  // Fallbacks & legacy aliases
   subjectFilterBlock: {
     marginTop: 4,
     marginBottom: 10,
@@ -5503,20 +5929,12 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    shadowColor: '#000000',
-    shadowOpacity: 0.03,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
   subjectFilterHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
-    paddingBottom: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
   },
   subjectFilterHeaderLeft: {
     flexDirection: 'row',
@@ -5533,8 +5951,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
   },
   subjectFilterIconBox: {
     width: 22,
@@ -5557,8 +5973,6 @@ const styles = StyleSheet.create({
     paddingVertical: 2.5,
     borderRadius: 6,
     backgroundColor: '#FFF1F2',
-    borderWidth: 1,
-    borderColor: '#FECDD3',
   },
   subjectFilterResetText: {
     fontSize: 11,
@@ -5569,7 +5983,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 2,
   },
   subjectPillBtn: {
     flexDirection: 'row',
@@ -5580,11 +5993,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    shadowColor: '#000000',
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
   },
   subjectPillBtnDefault: {
     backgroundColor: '#ECFDF5',

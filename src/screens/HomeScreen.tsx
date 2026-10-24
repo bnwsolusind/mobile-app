@@ -54,6 +54,7 @@ import FoundationDashboardView from '../components/dashboard/FoundationDashboard
 import StaffDashboardView from '../components/dashboard/StaffDashboardView';
 import TuDashboardView from '../components/dashboard/TuDashboardView';
 import PrincipalHomeSection from '../components/dashboard/PrincipalHomeSection';
+import { StudentHeroCard } from '../components/StudentHeroCard';
 import {
   getProfileImageUrl,
   DEFAULT_PARENT_AVATAR,
@@ -297,6 +298,16 @@ const getActivityBadgeStyle = (badgeType: string) => {
   }
 };
 
+// Modul-level tap timestamp agar tidak pernah terkena ReferenceError di Hermes runtime
+let globalLastDirectTapTime = 0;
+// Backward-compat shim: jika ada cached bundle lama yang masih mengakses
+// lastDirectTapTimeRef.current, objek ini akan mendelegasikan ke globalLastDirectTapTime
+// sehingga tidak terjadi ReferenceError di Hermes runtime.
+const lastDirectTapTimeRef = {
+  get current() { return globalLastDirectTapTime; },
+  set current(v: number) { globalLastDirectTapTime = v; },
+};
+
 export default function HomeScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 16);
@@ -309,6 +320,8 @@ export default function HomeScreen({ navigation, route }: any) {
   const [dashboard, setDashboard] = useState<DashboardData>({});
   const [fetchedAnnouncements, setFetchedAnnouncements] = useState<any[]>([]);
   const [parentChildren, setParentChildren] = useState<any[]>([]);
+  const parentChildrenRef = useRef<any[]>([]);
+  useEffect(() => { parentChildrenRef.current = parentChildren; }, [parentChildren]);
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
   const activeChildIndexRef = useRef<number>(0);
   useEffect(() => {
@@ -330,58 +343,96 @@ export default function HomeScreen({ navigation, route }: any) {
     return (SCREEN_WIDTH - studentCardWidth) / 2;
   }, [studentCardWidth]);
 
-  // ── Carousel Kartu Siswa Linear Stabil & Konsisten ──
-  const lastDirectTapTimeRef = useRef<number>(0);
+  const studentLoopCount = parentChildren.length > 1 ? parentChildren.length : 0;
+  const safeCenter = studentLoopCount === 0
+    ? 0
+    : ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount;
+
+  const loopWindow = useMemo(() => {
+    if (studentLoopCount === 0) return { list: parentChildren, realIdx: [0] };
+    const n = studentLoopCount;
+    const prev = (safeCenter - 1 + n) % n;
+    const next = (safeCenter + 1) % n;
+    return {
+      list: [parentChildren[prev], parentChildren[safeCenter], parentChildren[next]],
+      realIdx: [prev, safeCenter, next],
+    };
+  }, [parentChildren, studentLoopCount, safeCenter]);
+
+  const centerLoopOffset = studentSnapInterval;
+
+  const recenterLoop = useCallback((): void => {
+    if (studentLoopCount === 0) return;
+    studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
+  }, [studentLoopCount, centerLoopOffset]);
+
+  const isUserDraggingRef = useRef<boolean>(false);
+  const isScrollingToTargetRef = useRef<boolean>(false);
+  const scrollingSafetyTimeoutRef = useRef<any>(null);
   const triggerInstantChildFetchRef = useRef<((childId: string) => void) | null>(null);
   const lastHandledGlobalChildIdRef = useRef<string | null>(null);
 
-  const syncLoopChildId = (realIdx: number): void => {
+  const syncLoopChildId = useCallback((realIdx: number): void => {
     const selChild = parentChildren[realIdx];
-    const sid = selChild?.id || selChild?.student_id;
-    if (sid) {
+    if (selChild) {
+      setSelectedPortalChild(selChild);
+    }
+    const sid = selChild?.id != null ? selChild.id : selChild?.student_id;
+    if (sid != null) {
       const strId = String(sid);
       lastHandledGlobalChildIdRef.current = strId;
       useActiveChildStore.getState().setActiveChildId(strId);
-    }
-  };
-
-  const handleStudentScrollEnd = useCallback((offsetX: number) => {
-    // Abaikan jika baru saja terjadi direct tap (animasi scrollTo sedang berlangsung)
-    if (Date.now() - lastDirectTapTimeRef.current < 750) return;
-    if (parentChildren.length === 0 || !studentSnapInterval) return;
-    const newIdx = Math.max(0, Math.min(parentChildren.length - 1, Math.round(offsetX / studentSnapInterval)));
-    if (newIdx !== activeChildIndexRef.current) {
-      activeChildIndexRef.current = newIdx;
-      setActiveChildIndex(newIdx);
-      syncLoopChildId(newIdx);
-      const selChild = parentChildren[newIdx];
-      const sid = selChild?.id || selChild?.student_id;
-      if (sid && triggerInstantChildFetchRef.current) {
-        triggerInstantChildFetchRef.current(String(sid));
+      if (triggerInstantChildFetchRef.current) {
+        triggerInstantChildFetchRef.current(strId);
       }
     }
-  }, [parentChildren, studentSnapInterval]);
+  }, [parentChildren]);
 
-  // Navigasi ke target ananda: scroll halus ke posisi kartu target dan sinkronkan data
-  const goToLoopChild = useCallback((target: number, isDirectTap = false): void => {
-    if (parentChildren.length === 0) return;
-    const tgt = Math.max(0, Math.min(parentChildren.length - 1, target));
-    activeChildIndexRef.current = tgt;
-    setActiveChildIndex(tgt);
-    syncLoopChildId(tgt);
-
-    lastDirectTapTimeRef.current = Date.now();
-    const selChild = parentChildren[tgt];
-    const sid = selChild?.id || selChild?.student_id;
-    if (sid && triggerInstantChildFetchRef.current) {
-      triggerInstantChildFetchRef.current(String(sid));
+  // Navigasi ke target ananda: scroll halus ke posisi kartu target dan sinkronkan data (identik dengan AbsensiScreen)
+  const goToLoopChild = useCallback((targetRealIndex: number, isDirectTap = false): void => {
+    if (studentLoopCount === 0) {
+      if (parentChildren.length === 1) {
+        setActiveChildIndex(0);
+        syncLoopChildId(0);
+      }
+      return;
     }
+    const n = studentLoopCount;
+    const normTarget = ((targetRealIndex % n) + n) % n;
+    if (normTarget === safeCenter) return;
 
-    studentScrollRef.current?.scrollTo({
-      x: tgt * studentSnapInterval,
-      animated: true,
+    let delta = normTarget - safeCenter;
+    if (delta > n / 2) delta -= n;
+    if (delta < -n / 2) delta += n;
+
+    if (delta === 1) {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
+      setTimeout(() => {
+        setActiveChildIndex(normTarget);
+        syncLoopChildId(normTarget);
+        recenterLoop();
+      }, 240);
+    } else if (delta === -1) {
+      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
+      setTimeout(() => {
+        setActiveChildIndex(normTarget);
+        syncLoopChildId(normTarget);
+        recenterLoop();
+      }, 240);
+    } else {
+      setActiveChildIndex(normTarget);
+      syncLoopChildId(normTarget);
+      recenterLoop();
+    }
+  }, [studentLoopCount, safeCenter, centerLoopOffset, parentChildren.length, recenterLoop, syncLoopChildId]);
+
+  // Posisikan ke tengah setiap kali jumlah anak / lebar card berubah
+  useEffect(() => {
+    if (studentLoopCount === 0) return;
+    requestAnimationFrame(() => {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
     });
-  }, [parentChildren, studentSnapInterval]);
+  }, [studentLoopCount, studentSnapInterval, centerLoopOffset]);
   const newsScrollRef = useRef<ScrollView>(null);
   const newsCarouselScrollRef = useRef<ScrollView>(null);
   const [activeNewsCarouselIndex, setActiveNewsCarouselIndex] = useState(0);
@@ -522,6 +573,8 @@ export default function HomeScreen({ navigation, route }: any) {
   // Sinkronisasi activeChildIndex saat globalActiveChildId berubah dari luar (Portal/GradeScreen)
   useEffect(() => {
     if (!globalActiveChildId || parentChildren.length === 0) return;
+    // Jangan scroll ulang jika sedang ada animasi direct-tap atau drag yang belum selesai
+    if (isScrollingToTargetRef.current || isUserDraggingRef.current) return;
     const strId = String(globalActiveChildId);
     if (strId === lastHandledGlobalChildIdRef.current) return;
     lastHandledGlobalChildIdRef.current = strId;
@@ -529,14 +582,14 @@ export default function HomeScreen({ navigation, route }: any) {
     const idx = parentChildren.findIndex(
       (c) => String(c.id || c.student_id) === strId
     );
-    if (idx !== -1 && idx !== activeChildIndex) {
+    if (idx !== -1 && idx !== activeChildIndexRef.current) {
+      activeChildIndexRef.current = idx;
       setActiveChildIndex(idx);
-      studentScrollRef.current?.scrollTo({
-        x: idx * studentSnapInterval,
-        animated: true,
+      requestAnimationFrame(() => {
+        recenterLoop();
       });
     }
-  }, [globalActiveChildId, parentChildren, activeChildIndex, studentSnapInterval]);
+  }, [globalActiveChildId, parentChildren, recenterLoop]);
 
   const fetchHomeWidgets = useCallback(async (childId?: string) => {
     try {
@@ -621,6 +674,40 @@ export default function HomeScreen({ navigation, route }: any) {
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
+
+      // 1. Pastikan kunci scrolling terbuka saat kembali ke layar Beranda
+      isScrollingToTargetRef.current = false;
+      if (scrollingSafetyTimeoutRef.current) {
+        clearTimeout(scrollingSafetyTimeoutRef.current);
+        scrollingSafetyTimeoutRef.current = null;
+      }
+
+      // 2. Sinkronkan posisi visual scroll kartu siswa dengan anak aktif global
+      //    Gunakan ref (bukan state) agar effect ini TIDAK re-fire saat parentChildren
+      //    berubah — hanya berjalan saat layar benar-benar mendapat fokus kembali.
+      const currentGlobalId = useActiveChildStore.getState().activeChildId;
+      const currentList = parentChildrenRef.current.length > 0 ? parentChildrenRef.current : (useActiveChildStore.getState().children || []);
+      if (!isUserDraggingRef.current && !isScrollingToTargetRef.current) {
+        if (currentGlobalId && currentList.length > 0) {
+          const targetIdx = currentList.findIndex(
+            (c: any) => String(c.id || c.student_id) === String(currentGlobalId)
+          );
+          if (targetIdx !== -1) {
+            if (targetIdx !== activeChildIndexRef.current) {
+              activeChildIndexRef.current = targetIdx;
+              setActiveChildIndex(targetIdx);
+              lastHandledGlobalChildIdRef.current = String(currentGlobalId);
+            }
+            setTimeout(() => {
+              if (!isUserDraggingRef.current && !isScrollingToTargetRef.current) {
+                recenterLoop();
+              }
+            }, 60);
+          }
+        }
+      }
+
+      // 3. Fetch jumlah notifikasi belum dibaca
       mobileApiService.getUnreadNotificationCount()
         .then((countRes: any) => {
           if (!isMounted) return;
@@ -636,7 +723,7 @@ export default function HomeScreen({ navigation, route }: any) {
       return () => {
         isMounted = false;
       };
-    }, [setUnreadNotificationCount])
+    }, [studentSnapInterval, setUnreadNotificationCount])
   );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -721,9 +808,12 @@ export default function HomeScreen({ navigation, route }: any) {
 
   const handleChildPortalMenuClick = useCallback(
     (route: string, tabKey?: string) => {
-      setShowChildPortalModal(false);
       const activeChild = parentChildren[activeChildIndex];
-      const childId = selectedPortalChild?.id || selectedPortalChild?.student_id || activeChild?.id || activeChild?.student_id;
+      // Jika modal sedang terbuka dan user memilih di modal, gunakan selectedPortalChild.
+      // Jika diklik dari menu inline di Beranda, gunakan anak aktif di carousel (activeChild).
+      const chosenChild = (showChildPortalModal && selectedPortalChild) ? selectedPortalChild : (activeChild || selectedPortalChild);
+      setShowChildPortalModal(false);
+      const childId = chosenChild?.id != null ? chosenChild.id : chosenChild?.student_id;
       const isGeneralIslamic = route === 'Quran' || route === 'DoaDzikir';
       const navParams: Record<string, any> = {};
       if (tabKey) {
@@ -740,7 +830,7 @@ export default function HomeScreen({ navigation, route }: any) {
         Object.keys(navParams).length > 0 ? navParams : undefined
       );
     },
-    [selectedPortalChild, parentChildren, activeChildIndex, navigation]
+    [showChildPortalModal, selectedPortalChild, parentChildren, activeChildIndex, navigation]
   );
 
   // Auto-sync santri terpilih saat pengguna kembali dari modul siswa
@@ -756,12 +846,33 @@ export default function HomeScreen({ navigation, route }: any) {
         (c: any) => String(c.id || c.student_id) === String(reopenChildId)
       );
       if (targetIndex >= 0) {
+        isScrollingToTargetRef.current = false;
+        if (scrollingSafetyTimeoutRef.current) {
+          clearTimeout(scrollingSafetyTimeoutRef.current);
+          scrollingSafetyTimeoutRef.current = null;
+        }
+        activeChildIndexRef.current = targetIndex;
         setActiveChildIndex(targetIndex);
         setSelectedPortalChild(allChildren[targetIndex]);
+        syncLoopChildId(targetIndex);
+
+        // Langsung segarkan data aktivitas & widget untuk ananda yang dibuka kembali
+        const targetSid = allChildren[targetIndex]?.id || allChildren[targetIndex]?.student_id || reopenChildId;
+        if (targetSid) {
+          void fetchTodayTimeline(String(targetSid), undefined, true);
+          void fetchHomeWidgets(String(targetSid));
+        }
+
+        requestAnimationFrame(() => {
+          recenterLoop();
+        });
+        setTimeout(() => {
+          recenterLoop();
+        }, 50);
       }
       navigation.setParams({ reopen_child_portal_id: undefined, reopen_timestamp: undefined });
     }
-  }, [route?.params?.reopen_child_portal_id, route?.params?.reopen_timestamp, parentChildren, navigation]);
+  }, [route?.params?.reopen_child_portal_id, route?.params?.reopen_timestamp, parentChildren, studentSnapInterval, navigation, fetchTodayTimeline, fetchHomeWidgets]);
 
   const childPortalMenus: { label: string; icon: string; color: string; bg: string; route: string; tab?: string }[] = useMemo(() => [
     { label: 'Jadwal', icon: 'clock-time-four', color: '#7C3AED', bg: '#F5F3FF', route: 'Jadwal' },
@@ -941,15 +1052,40 @@ export default function HomeScreen({ navigation, route }: any) {
           setActiveChildIndex(found);
         }
       }
-      requestAnimationFrame(() => {
-        studentScrollRef.current?.scrollTo({
-          x: initialIdx * studentSnapInterval,
-          animated: false,
+      if (!isUserDraggingRef.current && !isScrollingToTargetRef.current) {
+        requestAnimationFrame(() => {
+          recenterLoop();
         });
-      });
+      }
     } else if (!isParentUser) {
-      setParentChildren([]);
-      useActiveChildStore.getState().clear();
+      if (isStudentRole(roles)) {
+        const studentUser = useAuthStore.getState().user;
+        const sData = (studentUser as any)?.student || studentUser;
+        if (sData) {
+          const sObj = {
+            id: sData.id || sData.student_id || studentUser?.id,
+            student_id: sData.student_id || sData.id || studentUser?.id,
+            name: sData.nama_lengkap || sData.name || studentUser?.name || 'Siswa',
+            full_name: sData.nama_lengkap || sData.name || studentUser?.name || 'Siswa',
+            nama_lengkap: sData.nama_lengkap || sData.name || studentUser?.name || 'Siswa',
+            nis: sData.nis || (studentUser as any)?.nis || '-',
+            nisn: sData.nisn || (studentUser as any)?.nisn || '-',
+            kelas: sData.kelas || (studentUser as any)?.kelas || (studentUser as any)?.class_name || '-',
+            education_unit: sData.education_unit || (studentUser as any)?.education_unit || (studentUser as any)?.unit || null,
+            unit_name: sData.unit_name || (studentUser as any)?.unit_name || ((studentUser as any)?.education_unit?.name) || 'Unit Pendidikan',
+            gender: sData.gender || sData.jenis_kelamin || studentUser?.gender || 'L',
+            photo_url: getProfileImageUrl(sData) || getProfileImageUrl(studentUser) || null,
+            avatar_url: getProfileImageUrl(sData) || getProfileImageUrl(studentUser) || null,
+            attendance_today: sData.attendance_today || { status: 'Hadir' },
+          };
+          setParentChildren([sObj]);
+          useActiveChildStore.getState().setChildren([sObj]);
+          useActiveChildStore.getState().setActiveChildId(String(sObj.id));
+        }
+      } else {
+        setParentChildren([]);
+        useActiveChildStore.getState().clear();
+      }
     }
 
     // 2. Fetch dari backend
@@ -1004,21 +1140,21 @@ export default function HomeScreen({ navigation, route }: any) {
           setParentChildren(chList);
           useActiveChildStore.getState().setChildren(chList);
           const gid = useActiveChildStore.getState().activeChildId;
-          let curIdx = activeChildIndex;
+          let curIdx = activeChildIndexRef.current;
           if (gid) {
             const found = chList.findIndex((c) => String(c.id || c.student_id) === String(gid));
             if (found !== -1) {
               curIdx = found;
+              activeChildIndexRef.current = found;
               setActiveChildIndex(found);
             }
           }
-          // Pastikan scroll tetap berada di posisi anak aktif, jangan melompat ke anak pertama
-          requestAnimationFrame(() => {
-            studentScrollRef.current?.scrollTo({
-              x: curIdx * studentSnapInterval,
-              animated: false,
+          // Pastikan scroll tetap berada di posisi anak aktif, jangan melompat ke anak pertama jika pengguna sedang berinteraksi
+          if (!isUserDraggingRef.current && !isScrollingToTargetRef.current) {
+            requestAnimationFrame(() => {
+              recenterLoop();
             });
-          });
+          }
           if (chList.length > 0) {
             void offlineCache.set(cacheKeyChildren, chList);
             const curActive = chList[curIdx] || chList[0];
@@ -1033,8 +1169,38 @@ export default function HomeScreen({ navigation, route }: any) {
           }
         }
       } else if (!isParentActive) {
-        setParentChildren([]);
-        useActiveChildStore.getState().clear();
+        if (isStudentRole(currentRoles)) {
+          const studentUser = useAuthStore.getState().user;
+          const sData = (studentUser as any)?.student || studentUser;
+          if (sData) {
+            const sObj = {
+              id: sData.id || sData.student_id || studentUser?.id,
+              student_id: sData.student_id || sData.id || studentUser?.id,
+              name: sData.nama_lengkap || sData.name || studentUser?.name || 'Siswa',
+              full_name: sData.nama_lengkap || sData.name || studentUser?.name || 'Siswa',
+              nama_lengkap: sData.nama_lengkap || sData.name || studentUser?.name || 'Siswa',
+              nis: sData.nis || (studentUser as any)?.nis || '-',
+              nisn: sData.nisn || (studentUser as any)?.nisn || '-',
+              kelas: sData.kelas || (studentUser as any)?.kelas || (studentUser as any)?.class_name || '-',
+              education_unit: sData.education_unit || (studentUser as any)?.education_unit || (studentUser as any)?.unit || null,
+              unit_name: sData.unit_name || (studentUser as any)?.unit_name || ((studentUser as any)?.education_unit?.name) || 'Unit Pendidikan',
+              gender: sData.gender || sData.jenis_kelamin || studentUser?.gender || 'L',
+              photo_url: getProfileImageUrl(sData) || getProfileImageUrl(studentUser) || null,
+              avatar_url: getProfileImageUrl(sData) || getProfileImageUrl(studentUser) || null,
+              attendance_today: sData.attendance_today || { status: 'Hadir' },
+            };
+            setParentChildren([sObj]);
+            useActiveChildStore.getState().setChildren([sObj]);
+            useActiveChildStore.getState().setActiveChildId(String(sObj.id));
+            activeChildIndexRef.current = 0;
+            setActiveChildIndex(0);
+            void fetchTodayTimeline(String(sObj.id), undefined, true);
+            void fetchHomeWidgets(String(sObj.id));
+          }
+        } else {
+          setParentChildren([]);
+          useActiveChildStore.getState().clear();
+        }
       }
     } catch (requestError) {
       // Offline: data cache sudah tampil dari step 1
@@ -1411,7 +1577,7 @@ export default function HomeScreen({ navigation, route }: any) {
   // atau instan 0ms saat tombol/kartu ditap langsung).
   useEffect(() => {
     if (!isParentRole(roles) && !isStudentRole(roles)) return;
-    const isDirectTap = Date.now() - lastDirectTapTimeRef.current < 600;
+    const isDirectTap = Date.now() - globalLastDirectTapTime < 600;
     if (isDirectTap) {
       void fetchTodayTimeline(activeChildId, viewedDate, isViewingToday);
       return;
@@ -1476,7 +1642,7 @@ export default function HomeScreen({ navigation, route }: any) {
   // Fetch widget tugas & jadwal hari ini saat child aktif berubah
   useEffect(() => {
     if (!isParentRole(roles) && !isStudentRole(roles)) return;
-    const isDirectTap = Date.now() - lastDirectTapTimeRef.current < 600;
+    const isDirectTap = Date.now() - globalLastDirectTapTime < 600;
     if (isDirectTap) {
       void fetchHomeWidgets(activeChildId);
       return;
@@ -2479,276 +2645,90 @@ export default function HomeScreen({ navigation, route }: any) {
               horizontal
               nestedScrollEnabled={true}
               showsHorizontalScrollIndicator={false}
+              contentOffset={{ x: studentLoopCount > 0 ? centerLoopOffset : 0, y: 0 }}
               contentContainerStyle={[styles.studentCardsTrack, { paddingHorizontal: studentTrackPad }]}
               decelerationRate="fast"
               snapToInterval={studentSnapInterval}
               snapToAlignment="start"
-              keyboardShouldPersistTaps="always"
+              disableIntervalMomentum
+              onScrollBeginDrag={() => {
+                isUserDraggingRef.current = true;
+              }}
               onMomentumScrollEnd={(e) => {
-                handleStudentScrollEnd(e.nativeEvent.contentOffset.x);
+                isUserDraggingRef.current = false;
+                if (studentLoopCount === 0) return;
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const slot = Math.round(offsetX / studentSnapInterval);
+                const n = studentLoopCount;
+                const cur = ((activeChildIndex % n) + n) % n;
+                let realIdx = cur;
+                if (slot === 2) realIdx = (cur + 1) % n;
+                else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                if (realIdx !== cur) {
+                  setActiveChildIndex(realIdx);
+                  syncLoopChildId(realIdx);
+                  requestAnimationFrame(() => {
+                    recenterLoop();
+                  });
+                } else {
+                  recenterLoop();
+                }
               }}
               onScrollEndDrag={(e) => {
-                if (Date.now() - lastDirectTapTimeRef.current >= 750) {
-                  const x = e.nativeEvent.contentOffset.x;
-                  setTimeout(() => {
-                    handleStudentScrollEnd(x);
-                  }, 100);
+                isUserDraggingRef.current = false;
+                if (studentLoopCount === 0) return;
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const slot = Math.round(offsetX / studentSnapInterval);
+                const n = studentLoopCount;
+                const cur = ((activeChildIndex % n) + n) % n;
+                let realIdx = cur;
+                if (slot === 2) realIdx = (cur + 1) % n;
+                else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                if (realIdx !== cur) {
+                  setActiveChildIndex(realIdx);
+                  syncLoopChildId(realIdx);
                 }
               }}
               scrollEventThrottle={16}
             >
-              {parentChildren.map((student: any, realIdx: number) => {
-                const isCardActive = realIdx === activeChildIndex;
-                const sName = student.full_name || student.nama_lengkap || student.name || 'Siswa';
-                const sNis = student.nis || '-';
-                const sNisn = student.nisn || student.metadata?.nisn || '-';
-                const sUnit = student.education_unit?.name || student.unit_name || 'Unit Pendidikan';
-                const rawKelas =
-                  (typeof student.kelas === 'object' && student.kelas ? (student.kelas.nama_kelas || student.kelas.name) : '') ||
-                  (typeof student.class_name === 'string' ? student.class_name : '') ||
-                  (typeof student.kelas === 'string' ? student.kelas : '') ||
-                  (typeof student.rombel === 'string' ? student.rombel : '') ||
-                  (typeof student.rombel === 'object' && student.rombel ? (student.rombel.name || student.rombel.nama_rombel) : '') ||
-                  '-';
-                const sKelas = rawKelas.replace(/\s*\([^)]*\)/g, '').trim() || rawKelas;
-                const sJenjang = (student.kelas?.jenjang || student.education_unit?.level || 'Terpadu').replace(/\s*\([^)]*\)/g, '').trim();
-                const rawPresensi =
-                  student.attendance_today?.status ||
-                  student.presensi_hari_ini?.status ||
-                  student.attendance_status ||
-                  student.status_kehadiran ||
-                  student.presensi_status ||
-                  (String(todayTimeline?.student?.id || '') === String(student.id || '') ? todayTimeline?.summary?.attendance_status : undefined) ||
-                  'Hadir';
-                const isHadir = String(rawPresensi).toLowerCase().includes('hadir');
-                const isIzinSakit = String(rawPresensi).toLowerCase().includes('izin') || String(rawPresensi).toLowerCase().includes('sakit');
-                const isTerlambat = String(rawPresensi).toLowerCase().includes('terlambat') || String(rawPresensi).toLowerCase().includes('alpha');
-                const displayPresensi = isHadir
-                  ? 'Hadir'
-                  : isIzinSakit
-                  ? (String(rawPresensi).toLowerCase().includes('izin') ? 'Izin' : 'Sakit')
-                  : isTerlambat
-                  ? (String(rawPresensi).toLowerCase().includes('alpha') ? 'Alpha' : 'Terlambat')
-                  : (String(rawPresensi).replace(/\s*\([^)]*\)/g, '').trim() || 'Hadir');
-                const presensiTextColor = isHadir ? '#DEF7EC' : isIzinSakit ? '#FEF08A' : isTerlambat ? '#FECACA' : '#E2E8F0';
-                const presensiDotColor = isHadir ? '#10B981' : isIzinSakit ? '#F59E0B' : isTerlambat ? '#EF4444' : '#94A3B8';
-
-                const cardContent = (
-                  <LinearGradient
-                    colors={isCardActive ? ['#0D6B42', '#18A165', '#2BD988'] : ['#064E3B', '#0D6B42', '#10B981']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[
-                      styles.studentMainCard,
-                      { width: studentCardWidth },
-                      !isCardActive && { opacity: 0.9 },
-                    ]}
-                  >
-                    {/* Decorative Blob Like Header */}
-                    <View pointerEvents="none" style={styles.cardDecorCircle} />
-
-                    {/* Konten Kartu: hanya merespons sentuhan jika kartu aktif, sehingga kartu non-aktif dapat diketuk di mana saja untuk memilih anak */}
-                    <View pointerEvents={isCardActive ? 'auto' : 'none'}>
-                      {/* 1. Baris Paling Atas: Lencana Unit Pendidikan (Kiri) & 3 Tombol Aksi Bel, Laporan, QR (Kanan) */}
-                      <View style={styles.studentCardTopBar}>
-                      <View style={styles.studentUnitBadgeTop}>
-                        <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text numberOfLines={1} style={styles.studentUnitText}>
-                          {sUnit}
-                        </Text>
-                      </View>
-
-                      {/* 3 Tombol Aksi Siswa (Dipindahkan ke Baris Atas) */}
-                      <View style={styles.studentCardHeaderActions}>
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => void handleOpenStudentNotifications(student)}
-                          style={[styles.studentQrBtn, { position: 'relative' }]}
-                          accessibilityLabel="Pengingat & Notifikasi Siswa"
-                        >
-                          <MaterialCommunityIcons name="bell-ring-outline" size={17} color="#059669" />
-                          {(Boolean(student?.unread_notifications_count > 0 || student?.unread_count > 0) ||
-                            (unreadNotificationCount > 0 && String(student?.id || student?.student_id) === String(activeStudent?.id || activeStudent?.student_id))) && (
-                            <View
-                              style={{
-                                position: 'absolute',
-                                top: -2,
-                                right: -2,
-                                width: 9,
-                                height: 9,
-                                borderRadius: 4.5,
-                                backgroundColor: '#EF4444',
-                                borderWidth: 1.5,
-                                borderColor: '#FFFFFF',
-                              }}
-                            />
-                          )}
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => handleOpenWeeklyReport(student)}
-                          style={styles.studentQrBtn}
-                          accessibilityLabel="Laporan Perkembangan Pekanan Siswa"
-                        >
-                          <MaterialCommunityIcons name="clipboard-text-outline" size={17} color="#059669" />
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => setSelectedQrStudent(student)}
-                          style={styles.studentQrBtn}
-                          accessibilityLabel="Tampilkan QR Code Siswa"
-                        >
-                          <MaterialCommunityIcons name="qrcode-scan" size={17} color="#059669" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {/* 2. Baris Profil Tengah: Avatar + Nama Siswa Penuh (Sangat Lega, Tanpa Terpotong/Terhimpit) */}
-                    <View style={styles.studentCardProfileRow}>
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => setSelectedIdCardStudent(student)}
-                        style={styles.studentAvatarBox}
-                      >
-                        {getProfileImageUrl(student) ? (
-                          <Image
-                            source={{ uri: getProfileImageUrl(student)! }}
-                            style={styles.studentAvatarImg}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <Image
-                            source={
-                              student?.gender === 'female' ||
-                              student?.jenis_kelamin === 'P' ||
-                              student?.jenis_kelamin === 'female' ||
-                              student?.gender === 'P'
-                                ? DEFAULT_STUDENT_GIRL_AVATAR
-                                : DEFAULT_STUDENT_BOY_AVATAR
-                            }
-                            style={styles.studentAvatarImg}
-                            resizeMode="cover"
-                          />
-                        )}
-                      </TouchableOpacity>
-
-                      <View style={styles.studentInfoCol}>
-                        <Text numberOfLines={2} style={styles.studentFullName}>
-                          {sName}
-                        </Text>
-                        <Text numberOfLines={1} style={styles.studentNisText}>
-                          NIS: {sNis} {sNisn !== '-' ? '· NISN: ' + sNisn : ''}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Card Middle: Key Student Attributes (Glassmorphism Box with Icons) */}
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="school" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Kelas</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{sKelas}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="domain" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Jenjang</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{sJenjang}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <View style={styles.studentAttrLabelRow}>
-                          <MaterialCommunityIcons name="account-group" size={13} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        </View>
-                        <View style={styles.studentPresensiValueRow}>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: presensiTextColor }]}>{displayPresensi}</Text>
-                          <View style={[styles.presensiGreenDot, { backgroundColor: presensiDotColor }]} />
-                        </View>
-                      </View>
-                    </View>
-
-                    {/* Card Bottom: Quick Actions (Kartu Siswa, Kalender, Portal) */}
-                    <View style={styles.studentCardActionsRow}>
-                      <TouchableOpacity
-                        activeOpacity={0.82}
-                        onPress={() => {
-                          setIdCardSide('front');
-                          setSelectedIdCardStudent(student);
-                        }}
-                        style={styles.studentActionBtnCard}
-                      >
-                        <MaterialCommunityIcons name="card-account-details" size={15} color="#059669" style={{ marginRight: 4 }} />
-                        <Text style={styles.studentActionBtnCardText}>Kartu Siswa</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        activeOpacity={0.82}
-                        onPress={() => navigation.navigate('Kalender', { child_id: String(student.id), student_id: String(student.id) })}
-                        style={styles.studentActionBtnSecondary}
-                      >
-                        <MaterialCommunityIcons name="calendar-month" size={15} color="#2563EB" style={{ marginRight: 4 }} />
-                        <Text style={styles.studentActionBtnSecondaryText}>Kalender</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={() => {
-                          setActiveChildIndex(realIdx);
-                          setSelectedPortalChild(student);
-                          const sid = student?.id || student?.student_id;
-                          if (sid) {
-                            useActiveChildStore.getState().setActiveChildId(sid);
-                          }
-                          setShowChildPortalModal(true);
-                        }}
-                        style={styles.studentActionBtnPrimary}
-                      >
-                        <MaterialCommunityIcons
-                          name="view-grid"
-                          size={15}
-                          color="#7C3AED"
-                          style={{ marginRight: 4 }}
-                        />
-                        <Text style={styles.studentActionBtnPrimaryText}>
-                          Menu
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </LinearGradient>
-              );
-
-              if (!isCardActive) {
+              {loopWindow.list.map((student: any, sIdx: number) => {
+                const realIdx = loopWindow.realIdx[sIdx] ?? 0;
+                const isCardActive = realIdx === safeCenter;
                 return (
-                  <TouchableOpacity
-                    key={`child-card-${realIdx}-${String(student?.id ?? realIdx)}`}
-                    activeOpacity={0.85}
-                    onPress={() => goToLoopChild(realIdx, true)}
-                    style={{ width: studentCardWidth }}
-                  >
-                    {cardContent}
-                  </TouchableOpacity>
+                  <StudentHeroCard
+                    key={`win-${sIdx}-${String(student?.id ?? realIdx)}`}
+                    child={student}
+                    isSelected={isCardActive}
+                    isSingleChild={parentChildren.length === 1}
+                    showActionButtons={true}
+                    cardWidth={studentCardWidth}
+                    cardLabel="Kartu Siswa"
+                    calendarLabel="Kalender"
+                    calendarIcon="calendar-month"
+                    portalLabel="Menu"
+                    portalIcon="view-grid"
+                    onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx, true)}
+                    onPressCard={() => {
+                      setIdCardSide('front');
+                      setSelectedIdCardStudent(student);
+                    }}
+                    onPressCalendar={() => navigation.navigate('Kalender', { child_id: String(student.id), student_id: String(student.id) })}
+                    onPressPortal={() => {
+                      setActiveChildIndex(realIdx);
+                      setSelectedPortalChild(student);
+                      const sid = student?.id || student?.student_id;
+                      if (sid) {
+                        useActiveChildStore.getState().setActiveChildId(sid);
+                      }
+                      setShowChildPortalModal(true);
+                    }}
+                    onPressWeeklyReport={() => handleOpenWeeklyReport(student)}
+                    onPressNotifications={() => void handleOpenStudentNotifications(student)}
+                    onPressQr={() => setSelectedQrStudent(student)}
+                  />
                 );
-              }
-
-              return (
-                <View
-                  key={`child-card-${realIdx}-${String(student?.id ?? realIdx)}`}
-                  style={{ width: studentCardWidth }}
-                >
-                  {cardContent}
-                </View>
-              );
-            })}
-          </ScrollView>
+              })}
+            </ScrollView>
 
             {/* Pagination Dots for Multiple Children */}
             {parentChildren.length > 1 && (
@@ -2757,15 +2737,19 @@ export default function HomeScreen({ navigation, route }: any) {
                   <TouchableOpacity
                     key={dotIdx}
                     activeOpacity={0.7}
-                    hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+                    hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
                     onPress={() => {
                       goToLoopChild(dotIdx, true);
                     }}
-                    style={[
-                      styles.studentDot,
-                      activeChildIndex === dotIdx ? styles.studentDotActiveInHeader : styles.studentDotInactiveInHeader,
-                    ]}
-                  />
+                    style={styles.studentDotTouchable}
+                  >
+                    <View
+                      style={[
+                        styles.studentDot,
+                        safeCenter === dotIdx ? styles.studentDotActiveInHeader : styles.studentDotInactiveInHeader,
+                      ]}
+                    />
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
@@ -6890,9 +6874,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     marginTop: 6,
     zIndex: 1,
+  },
+  studentDotTouchable: {
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   studentDotActiveInHeader: {
     width: 18,

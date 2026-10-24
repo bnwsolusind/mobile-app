@@ -442,8 +442,10 @@ export default function AcademicCalendarScreen({ route, navigation }: any) {
               const foundIdx = arr.findIndex((c: any) => String(c.id || c.student_id) === String(targetChildId));
               if (foundIdx >= 0) setActiveChildIndex(foundIdx);
             } else if (!selectedChildId) {
-              setSelectedChildId(String(arr[0]?.id || arr[0]?.student_id));
-              setActiveChildIndex(0);
+              const fallbackId = globalActiveChildId || String(arr[0]?.id || arr[0]?.student_id);
+              setSelectedChildId(fallbackId);
+              const fIdx = arr.findIndex((c: any) => String(c.id || c.student_id) === fallbackId);
+              setActiveChildIndex(fIdx >= 0 ? fIdx : 0);
             }
             void offlineCache.set(childCacheKey, arr);
           }

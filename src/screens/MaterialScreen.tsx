@@ -1530,11 +1530,18 @@ export default function MaterialScreen({ route, navigation }: any) {
   };
 
   const handleBack = () => {
-    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    const currentActiveChildId = selectedChildId || useActiveChildStore.getState().activeChildId || route?.params?.child_id || route?.params?.student_id;
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, {
+      ...route?.params,
+      child_id: currentActiveChildId,
+      student_id: currentActiveChildId,
+    });
     if (handled) return;
-    const childId = route?.params?.child_id || route?.params?.student_id;
-    if (route?.params?.from_child_portal && childId) {
-      navigation?.navigate('Beranda');
+    if (currentActiveChildId) {
+      navigation?.navigate('Beranda', {
+        reopen_child_portal_id: String(currentActiveChildId),
+        reopen_timestamp: Date.now(),
+      });
       return;
     }
     if (navigation?.canGoBack?.()) {
@@ -3226,67 +3233,143 @@ export default function MaterialScreen({ route, navigation }: any) {
             ) : (
               <>
                 {/* 1. CONTAINER DATA ANANDA & UNIT PENDIDIKAN */}
-                {children.length > 0 || studentInfo || activeChildFromStore ? (
+                {children && children.length > 0 ? (
                   <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                    {children.length > 1 && (
-                      <View style={styles.childChipsTrack}>
+                    {children.length === 1 ? (
+                      <View style={styles.singleHeroCardContainer}>
+                        <StudentHeroCard
+                          child={children[0]}
+                          isSelected={true}
+                          isSingleChild={true}
+                          showActionButtons={true}
+                          cardLabel="Kartu Siswa"
+                          calendarLabel="Jadwal"
+                          portalLabel="Menu"
+                          onPressCard={() => openIdCard(children[0])}
+                          onPressQr={() => openQrCard(children[0])}
+                          onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
+                          onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                          onPressCalendar={() => openScheduleForStudent(children[0])}
+                          onPressPortal={() => setSelectedMenuStudent(children[0])}
+                        />
+                      </View>
+                    ) : (
+                      <>
                         <ScrollView
+                          ref={studentScrollRef}
                           horizontal
+                          nestedScrollEnabled={true}
                           showsHorizontalScrollIndicator={false}
-                          contentContainerStyle={styles.childChipsContent}
+                          contentOffset={{ x: centerLoopOffset, y: 0 }}
+                          contentContainerStyle={[
+                            styles.studentCardsTrack,
+                            { paddingHorizontal: studentTrackPad },
+                          ]}
+                          decelerationRate="fast"
+                          snapToInterval={studentSnapInterval}
+                          snapToAlignment="start"
+                          disableIntervalMomentum
+                          onMomentumScrollEnd={(e) => {
+                            if (studentLoopCount === 0) return;
+                            const offsetX = e.nativeEvent.contentOffset.x;
+                            const slot = Math.round(offsetX / studentSnapInterval);
+                            const n = studentLoopCount;
+                            const cur = ((activeChildIndex % n) + n) % n;
+                            let realIdx = cur;
+                            if (slot === 2) realIdx = (cur + 1) % n;
+                            else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                            if (realIdx !== cur) {
+                              setActiveChildIndex(realIdx);
+                              syncLoopChildId(realIdx);
+                              requestAnimationFrame(() => {
+                                recenterLoop();
+                              });
+                            } else {
+                              recenterLoop();
+                            }
+                          }}
+                          onScrollEndDrag={(e) => {
+                            if (studentLoopCount === 0) return;
+                            const offsetX = e.nativeEvent.contentOffset.x;
+                            const slot = Math.round(offsetX / studentSnapInterval);
+                            const n = studentLoopCount;
+                            const cur = ((activeChildIndex % n) + n) % n;
+                            let realIdx = cur;
+                            if (slot === 2) realIdx = (cur + 1) % n;
+                            else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                            if (realIdx !== cur) {
+                              setActiveChildIndex(realIdx);
+                              syncLoopChildId(realIdx);
+                            }
+                          }}
+                          scrollEventThrottle={16}
+                          style={styles.heroCardScrollContainer}
                         >
-                          {children.map((child, cIdx) => {
-                            const cid = String(child.id || child.student_id);
-                            const isCurrent = cid === String(selectedChildId);
-                            const cName = resolveStudentDisplay(child, user).firstName;
+                          {loopWindow.list.map((child: any, sIdx: number) => {
+                            const realIdx = loopWindow.realIdx[sIdx] ?? 0;
+                            const isCardActive = realIdx === safeCenter;
                             return (
-                              <TouchableOpacity
-                                key={cid || cIdx}
-                                onPress={() => {
-                                  setSelectedChildId(cid);
-                                  useActiveChildStore.getState().setActiveChildId(cid);
-                                  setActiveChildIndex(cIdx);
-                                }}
-                                style={[
-                                  styles.childChip,
-                                  isCurrent && styles.childChipActive,
-                                ]}
-                                activeOpacity={0.75}
-                              >
-                                <MaterialCommunityIcons
-                                  name="account-child-circle"
-                                  size={16}
-                                  color={isCurrent ? '#FFFFFF' : '#059669'}
-                                />
-                                <Text
-                                  style={[
-                                    styles.childChipText,
-                                    isCurrent && styles.childChipTextActive,
-                                  ]}
-                                >
-                                  {cName}
-                                </Text>
-                              </TouchableOpacity>
+                              <StudentHeroCard
+                                key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
+                                child={child}
+                                isSelected={isCardActive}
+                                isSingleChild={false}
+                                showActionButtons={true}
+                                cardWidth={studentCardWidth}
+                                cardLabel="Kartu Siswa"
+                                calendarLabel="Jadwal"
+                                portalLabel="Menu"
+                                onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
+                                onPressCard={() => openIdCard(child)}
+                                onPressQr={() => openQrCard(child)}
+                                onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
+                                onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                                onPressCalendar={() => openScheduleForStudent(child)}
+                                onPressPortal={() => setSelectedMenuStudent(child)}
+                              />
                             );
                           })}
                         </ScrollView>
-                      </View>
+
+                        {/* DOT INDIKATOR SCROLL SISWA */}
+                        <View style={styles.paginationDotsRow}>
+                          {children.map((_, dotIdx) => {
+                            const isDotActive = dotIdx === safeCenter;
+                            return (
+                              <TouchableOpacity
+                                key={dotIdx}
+                                activeOpacity={0.7}
+                                onPress={() => goToLoopChild(dotIdx)}
+                                style={[
+                                  styles.paginationDot,
+                                  isDotActive && styles.paginationDotActive,
+                                ]}
+                                accessibilityLabel={`Pilih Siswa ke-${dotIdx + 1}`}
+                                accessibilityRole="button"
+                              />
+                            );
+                          })}
+                        </View>
+                      </>
                     )}
+                  </View>
+                ) : (activeStudent || studentInfo || activeChildFromStore) ? (
+                  <View style={[styles.containerBlock, styles.studentContainerBlock]}>
                     <View style={styles.singleHeroCardContainer}>
                       <StudentHeroCard
-                        child={activeStudent || studentInfo || activeChildFromStore || children[0]}
+                        child={activeStudent || studentInfo || activeChildFromStore}
                         isSelected={true}
                         isSingleChild={true}
                         showActionButtons={true}
                         cardLabel="Kartu Siswa"
                         calendarLabel="Jadwal"
                         portalLabel="Menu"
-                        onPressCard={() => openIdCard(activeStudent || studentInfo || activeChildFromStore || children[0])}
-                        onPressQr={() => openQrCard(activeStudent || studentInfo || activeChildFromStore || children[0])}
-                        onPressWeeklyReport={() => setSelectedWeeklyStudent(activeStudent || studentInfo || activeChildFromStore || children[0])}
+                        onPressCard={() => openIdCard(activeStudent || studentInfo || activeChildFromStore)}
+                        onPressQr={() => openQrCard(activeStudent || studentInfo || activeChildFromStore)}
+                        onPressWeeklyReport={() => setSelectedWeeklyStudent(activeStudent || studentInfo || activeChildFromStore)}
                         onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                        onPressCalendar={() => openScheduleForStudent(activeStudent || studentInfo || activeChildFromStore || children[0])}
-                        onPressPortal={() => setSelectedMenuStudent(activeStudent || studentInfo || activeChildFromStore || children[0])}
+                        onPressCalendar={() => openScheduleForStudent(activeStudent || studentInfo || activeChildFromStore)}
+                        onPressPortal={() => setSelectedMenuStudent(activeStudent || studentInfo || activeChildFromStore)}
                       />
                     </View>
                   </View>
@@ -3294,7 +3377,12 @@ export default function MaterialScreen({ route, navigation }: any) {
 
                 {/* 2. RINGKASAN MATERI PEMBELAJARAN (4 KARTU KPI INTERAKTIF) */}
                 <View style={styles.emeraldSummaryContainer}>
-                  <View style={styles.summaryHeaderContainer}>
+                  <LinearGradient
+                    colors={['#ECFDF5', '#F0FDF4']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.summaryHeaderContainerBanner}
+                  >
                     <View style={styles.summaryTitleRow}>
                       <LinearGradient
                         colors={['#059669', '#047857']}
@@ -3310,8 +3398,11 @@ export default function MaterialScreen({ route, navigation }: any) {
                             : 'Kumpulan materi ajar, modul & panduan belajar santri'}
                         </Text>
                       </View>
+                      <View style={styles.summaryCountPill}>
+                        <Text style={styles.summaryCountPillText}>4 Kategori</Text>
+                      </View>
                     </View>
-                  </View>
+                  </LinearGradient>
 
                   {/* 4 KPI Cards (2 Baris x 2 Kolom) */}
                   <View style={styles.kpiContainer}>
@@ -3393,135 +3484,159 @@ export default function MaterialScreen({ route, navigation }: any) {
                   </View>
                 </View>
 
-                {/* 3. FILTER MAPEL & PENCARIAN */}
-                <View style={styles.filterSectionBlockClean}>
-                  {/* Search Bar */}
-                  <View style={styles.searchBarContainerModern}>
-                    <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
-                    <TextInput
-                      placeholder="Cari materi pembelajaran..."
-                      placeholderTextColor="#94A3B8"
-                      value={searchQuery}
-                      onChangeText={setSearchQuery}
-                      style={styles.searchInputFieldModern}
-                    />
-                    {searchQuery.length > 0 && (
-                      <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  {/* Filter Pills Scrollable (Semua Mapel + Mapel List + Reset) */}
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.filterPillsScrollContent}
-                    style={styles.filterPillsScrollView}
+                {/* 3. CARD DAFTAR MATERI TERPADU (DENGAN FILTER & SCROLL CONTENT) */}
+                <View style={styles.materialDatatableContainer}>
+                  {/* Header Card Banner */}
+                  <LinearGradient
+                    colors={['#ECFDF5', '#F0FDF4']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.materialDatatableHeader}
                   >
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => setSelectedSubjectId('all')}
-                      style={[
-                        styles.subjectFilterChip,
-                        selectedSubjectId === 'all' && styles.subjectFilterChipActive,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name="book-open-outline"
-                        size={13}
-                        color={selectedSubjectId === 'all' ? '#FFFFFF' : '#059669'}
-                        style={{ marginRight: 4 }}
-                      />
-                      <Text
-                        style={[
-                          styles.subjectFilterChipText,
-                          selectedSubjectId === 'all' && styles.subjectFilterChipTextActive,
-                        ]}
-                      >
-                        Semua Mapel
-                      </Text>
-                    </TouchableOpacity>
-
-                    {subjectsList.map((sub) => {
-                      const isActive = selectedSubjectId === sub.id;
-                      return (
-                        <TouchableOpacity
-                          key={sub.id}
-                          activeOpacity={0.8}
-                          onPress={() => setSelectedSubjectId(sub.id)}
-                          style={[
-                            styles.subjectFilterChip,
-                            isActive && styles.subjectFilterChipActive,
-                          ]}
+                    <View style={[styles.sectionHeaderBetweenModern, { marginBottom: 0 }]}>
+                      <View style={styles.sectionHeaderLeftModern}>
+                        <LinearGradient
+                          colors={['#059669', '#047857']}
+                          style={styles.sectionIconBadgeModern}
                         >
-                          <Text
-                            style={[
-                              styles.subjectFilterChipText,
-                              isActive && styles.subjectFilterChipTextActive,
-                            ]}
-                          >
-                            {sub.name}
+                          <MaterialCommunityIcons name="book-open-page-variant-outline" size={18} color="#FFFFFF" />
+                        </LinearGradient>
+                        <View style={{ flex: 1 }}>
+                          <Text numberOfLines={1} style={styles.emeraldDatatableTitle}>
+                            {activeStudentName ? `Materi ${activeStudentName}` : 'Daftar Materi Belajar'}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.emeraldDatatableSubtitle}>
+                            {sortedMaterials.length} materi siap dipelajari
+                            {selectedMediaTypeFilter !== 'all' ? ` • ${selectedMediaTypeFilter.toUpperCase()}` : ''}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.materialHeaderRightActions}>
+                        <View style={styles.emeraldDatatableCountBadge}>
+                          <Text style={styles.emeraldDatatableCountText}>
+                            {sortedMaterials.length} dari {materials.length}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => setMaterialSortOrder((prev) => (prev === 'latest' ? 'title' : 'latest'))}
+                          style={styles.materialSortPillBtn}
+                        >
+                          <MaterialCommunityIcons name="swap-vertical" size={14} color="#047857" style={{ marginRight: 2 }} />
+                          <Text style={styles.materialSortPillText}>
+                            {materialSortOrder === 'latest' ? 'Terbaru' : 'A–Z'}
                           </Text>
                         </TouchableOpacity>
-                      );
-                    })}
-
-                    {/* Reset Button if any filter active */}
-                    {(selectedSubjectId !== 'all' || selectedMediaTypeFilter !== 'all' || searchQuery.trim().length > 0) && (
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => {
-                          setSelectedSubjectId('all');
-                          setSelectedMediaTypeFilter('all');
-                          setSearchQuery('');
-                        }}
-                        style={styles.resetFilterChip}
-                      >
-                        <MaterialCommunityIcons name="filter-remove-outline" size={13} color="#E11D48" style={{ marginRight: 4 }} />
-                        <Text style={styles.resetFilterChipText}>Reset Filter</Text>
-                      </TouchableOpacity>
-                    )}
-                  </ScrollView>
-                </View>
-
-                {/* 4. DAFTAR MATERI */}
-                <View style={styles.materialsContainerBlock}>
-                  <View style={styles.sectionHeaderBetweenModern}>
-                    <View style={styles.sectionHeaderLeftModern}>
-                      <View style={styles.sectionHeaderIconSquircle}>
-                        <MaterialCommunityIcons name="book-open-page-variant-outline" size={18} color="#059669" />
-                      </View>
-                      <View>
-                        <Text style={styles.sectionTitleBoldModern}>
-                          Daftar Materi {activeStudentName ? `"${activeStudentName}"` : ''}
-                        </Text>
-                        <Text style={styles.sectionSubtitleModern}>
-                          {sortedMaterials.length} materi siap dipelajari
-                          {selectedMediaTypeFilter !== 'all' ? ` (Filter: ${selectedMediaTypeFilter.toUpperCase()})` : ''}
-                        </Text>
                       </View>
                     </View>
+                  </LinearGradient>
 
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => setMaterialSortOrder((prev) => (prev === 'latest' ? 'title' : 'latest'))}
-                      style={styles.sortPillButtonModern}
+                  {/* Filter Toolbar Terpadu (Search Bar + Mapel Chips + Reset) */}
+                  <View style={styles.materialDatatableFilterWrapper}>
+                    {/* Search Bar */}
+                    <View style={styles.searchBarContainerModern}>
+                      <MaterialCommunityIcons
+                        name="magnify"
+                        size={20}
+                        color={searchQuery.length > 0 ? '#059669' : '#94A3B8'}
+                        style={{ marginRight: 8 }}
+                      />
+                      <TextInput
+                        placeholder="Cari materi pembelajaran, topik, atau guru..."
+                        placeholderTextColor="#94A3B8"
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        style={styles.searchInputFieldModern}
+                      />
+                      {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                          <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {/* Filter Pills Scrollable (Semua Mapel + Mapel List + Reset) */}
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.filterPillsScrollContent}
+                      style={styles.filterPillsScrollView}
                     >
-                      <MaterialCommunityIcons name="swap-vertical" size={15} color="#047857" style={{ marginRight: 4 }} />
-                      <Text style={styles.sortPillTextModern}>
-                        {materialSortOrder === 'latest' ? 'Terbaru' : 'Judul A–Z'}
-                      </Text>
-                    </TouchableOpacity>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedSubjectId('all')}
+                        style={[
+                          styles.subjectFilterChip,
+                          selectedSubjectId === 'all' && styles.subjectFilterChipActive,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name="book-open-outline"
+                          size={13}
+                          color={selectedSubjectId === 'all' ? '#FFFFFF' : '#059669'}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text
+                          style={[
+                            styles.subjectFilterChipText,
+                            selectedSubjectId === 'all' && styles.subjectFilterChipTextActive,
+                          ]}
+                        >
+                          Semua Mapel
+                        </Text>
+                      </TouchableOpacity>
+
+                      {subjectsList.map((sub) => {
+                        const isActive = selectedSubjectId === sub.id;
+                        return (
+                          <TouchableOpacity
+                            key={sub.id}
+                            activeOpacity={0.8}
+                            onPress={() => setSelectedSubjectId(sub.id)}
+                            style={[
+                              styles.subjectFilterChip,
+                              isActive && styles.subjectFilterChipActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.subjectFilterChipText,
+                                isActive && styles.subjectFilterChipTextActive,
+                              ]}
+                            >
+                              {sub.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+
+                      {/* Reset Button if any filter active */}
+                      {(selectedSubjectId !== 'all' || selectedMediaTypeFilter !== 'all' || searchQuery.trim().length > 0) && (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            setSelectedSubjectId('all');
+                            setSelectedMediaTypeFilter('all');
+                            setSearchQuery('');
+                          }}
+                          style={styles.resetFilterChip}
+                        >
+                          <MaterialCommunityIcons name="filter-remove-outline" size={13} color="#E11D48" style={{ marginRight: 4 }} />
+                          <Text style={styles.resetFilterChipText}>Reset Filter</Text>
+                        </TouchableOpacity>
+                      )}
+                    </ScrollView>
                   </View>
 
+                  {/* Konten Scrollable Kartu Materi */}
                   {loading && !refreshing ? (
                     <View style={styles.loadingBoxModern}>
                       <ActivityIndicator size="large" color="#059669" />
                       <Text style={styles.loadingTextModern}>Memuat materi pembelajaran...</Text>
                     </View>
                   ) : sortedMaterials.length === 0 ? (
-                    <View style={styles.emptyCardModern}>
+                    <View style={[styles.emptyCardModern, { margin: 12 }]}>
                       <View style={styles.emptyIconCircle}>
                         <MaterialCommunityIcons name="book-open-outline" size={38} color="#94A3B8" />
                       </View>
@@ -3546,127 +3661,134 @@ export default function MaterialScreen({ route, navigation }: any) {
                       )}
                     </View>
                   ) : (
-                    sortedMaterials.map((item, idx) => {
-                      const subjectName = item.subject?.name || item.subject?.nama_mapel || 'Pelajaran';
-                      const subjectStyle = getSubjectStyle(subjectName, item.media);
-                      const dateStr = formatDate(item.created_at || item.tanggal);
-                      const teacherName = item.guru?.nama_lengkap || item.guru?.nama || item.teacher?.name || item.author || '';
-                      const cat = getMaterialTypeCategory(item);
-                      const title = item.judul || item.title || 'Materi Pembelajaran';
-                      const previewDesc = item.deskripsi || item.isi || item.konten || '';
-                      const mediaList = Array.isArray(item.media) ? item.media : [];
-                      const mediaCount = mediaList.length;
+                    <ScrollView
+                      nestedScrollEnabled={true}
+                      showsVerticalScrollIndicator={true}
+                      style={styles.materialCardsScrollContainer}
+                      contentContainerStyle={styles.materialCardsScrollContent}
+                    >
+                      {sortedMaterials.map((item, idx) => {
+                        const subjectName = item.subject?.name || item.subject?.nama_mapel || 'Pelajaran';
+                        const subjectStyle = getSubjectStyle(subjectName, item.media);
+                        const dateStr = formatDate(item.created_at || item.tanggal);
+                        const teacherName = item.guru?.nama_lengkap || item.guru?.nama || item.teacher?.name || item.author || '';
+                        const cat = getMaterialTypeCategory(item);
+                        const title = item.judul || item.title || 'Materi Pembelajaran';
+                        const previewDesc = item.deskripsi || item.isi || item.konten || '';
+                        const mediaList = Array.isArray(item.media) ? item.media : [];
+                        const mediaCount = mediaList.length;
 
-                      const catBadge = cat === 'pdf'
-                        ? { label: 'Dokumen PDF', icon: 'file-pdf-box', bg: '#FFE4E6', color: '#E11D48', border: '#FECDD3' }
-                        : cat === 'video'
-                        ? { label: 'Video Belajar', icon: 'play-circle-outline', bg: '#FEF3C7', color: '#D97706', border: '#FDE68A' }
-                        : cat === 'audio'
-                        ? { label: 'Audio / Kajian', icon: 'headphones', bg: '#F3E8FF', color: '#7C3AED', border: '#E9D5FF' }
-                        : { label: 'Modul Belajar', icon: 'book-open-outline', bg: '#DCFCE7', color: '#16A34A', border: '#BBF7D0' };
+                        const catBadge = cat === 'pdf'
+                          ? { label: 'Dokumen PDF', icon: 'file-pdf-box', bg: '#FFE4E6', color: '#E11D48', border: '#FECDD3' }
+                          : cat === 'video'
+                          ? { label: 'Video Belajar', icon: 'play-circle-outline', bg: '#FEF3C7', color: '#D97706', border: '#FDE68A' }
+                          : cat === 'audio'
+                          ? { label: 'Audio / Kajian', icon: 'headphones', bg: '#F3E8FF', color: '#7C3AED', border: '#E9D5FF' }
+                          : { label: 'Modul Belajar', icon: 'book-open-outline', bg: '#DCFCE7', color: '#16A34A', border: '#BBF7D0' };
 
-                      return (
-                        <View
-                          key={item.id || idx}
-                          style={[
-                            styles.materialCardModern,
-                            {
-                              borderLeftWidth: 4,
-                              borderLeftColor: subjectStyle.color,
-                              borderColor: '#E2E8F0',
-                            },
-                          ]}
-                        >
-                          <LinearGradient
-                            colors={[subjectStyle.bg, '#FFFFFF', '#FFFFFF']}
-                            locations={[0, 0.45, 1]}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0.8 }}
-                            style={styles.materialCardGradient}
+                        return (
+                          <View
+                            key={item.id || idx}
+                            style={[
+                              styles.materialCardModern,
+                              {
+                                borderLeftWidth: 4,
+                                borderLeftColor: subjectStyle.color,
+                                borderColor: '#E2E8F0',
+                              },
+                            ]}
                           >
-                            {/* Header Badges: Mapel, Tipe Media, Tanggal */}
-                            <View style={styles.materialCardHeaderRow}>
-                              <View style={[styles.subjectPillBadgeModern, { backgroundColor: '#FFFFFF', borderColor: `${subjectStyle.color}40` }]}>
-                                <MaterialCommunityIcons
-                                  name={subjectStyle.icon as any}
-                                  size={12}
-                                  color={subjectStyle.color}
-                                  style={{ marginRight: 4 }}
-                                />
-                                <Text numberOfLines={1} style={[styles.subjectPillTextModern, { color: subjectStyle.color }]}>
-                                  {subjectName}
-                                </Text>
-                              </View>
-
-                              <View style={[styles.mediaTypePillBadge, { backgroundColor: catBadge.bg, borderColor: catBadge.border }]}>
-                                <MaterialCommunityIcons name={catBadge.icon as any} size={11} color={catBadge.color} style={{ marginRight: 3 }} />
-                                <Text style={[styles.mediaTypePillText, { color: catBadge.color }]}>{catBadge.label}</Text>
-                              </View>
-
-                              <View style={{ flex: 1 }} />
-
-                              <View style={styles.materialDateBadge}>
-                                <MaterialCommunityIcons name="calendar-clock-outline" size={11} color="#64748B" style={{ marginRight: 3 }} />
-                                <Text style={styles.materialDateText}>{dateStr}</Text>
-                              </View>
-                            </View>
-
-                            {/* Judul & Cuplikan Deskripsi */}
-                            <View style={styles.materialCardBody}>
-                              <Text numberOfLines={2} style={styles.materialTitleText}>
-                                {title}
-                              </Text>
-                              {previewDesc ? (
-                                <Text numberOfLines={2} style={styles.materialDescText}>
-                                  {previewDesc}
-                                </Text>
-                              ) : null}
-                            </View>
-
-                            {/* Kotak Metadata 2 Kolom (Guru & Lampiran) */}
-                            <View style={styles.materialMetaBox}>
-                              <View style={styles.materialMetaCol}>
-                                <MaterialCommunityIcons name="account-tie-outline" size={15} color={subjectStyle.color} style={{ marginRight: 6 }} />
-                                <View style={{ flex: 1 }}>
-                                  <Text style={styles.materialMetaLabel}>Guru Pengampu</Text>
-                                  <Text numberOfLines={1} style={styles.materialMetaValue}>{teacherName || 'Dewan Guru'}</Text>
-                                </View>
-                              </View>
-
-                              <View style={styles.materialMetaDivider} />
-
-                              <View style={styles.materialMetaCol}>
-                                <MaterialCommunityIcons
-                                  name={mediaCount > 0 ? 'paperclip' : 'book-open-outline'}
-                                  size={15}
-                                  color="#0284C7"
-                                  style={{ marginRight: 6 }}
-                                />
-                                <View style={{ flex: 1 }}>
-                                  <Text style={styles.materialMetaLabel}>Materi & Lampiran</Text>
-                                  <Text numberOfLines={1} style={styles.materialMetaValue}>
-                                    {mediaCount > 0 ? `${mediaCount} Berkas Media` : formatMetaText(item)}
+                            <LinearGradient
+                              colors={[subjectStyle.bg, '#FFFFFF', '#FFFFFF']}
+                              locations={[0, 0.45, 1]}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 0.8 }}
+                              style={styles.materialCardGradient}
+                            >
+                              {/* Header Badges: Mapel, Tipe Media, Tanggal */}
+                              <View style={styles.materialCardHeaderRow}>
+                                <View style={[styles.subjectPillBadgeModern, { backgroundColor: '#FFFFFF', borderColor: `${subjectStyle.color}40` }]}>
+                                  <MaterialCommunityIcons
+                                    name={subjectStyle.icon as any}
+                                    size={12}
+                                    color={subjectStyle.color}
+                                    style={{ marginRight: 4 }}
+                                  />
+                                  <Text numberOfLines={1} style={[styles.subjectPillTextModern, { color: subjectStyle.color }]}>
+                                    {subjectName}
                                   </Text>
                                 </View>
-                              </View>
-                            </View>
 
-                            {/* Footer Action Button: Buka Materi */}
-                            <View style={styles.materialCardFooter}>
-                              <TouchableOpacity
-                                activeOpacity={0.85}
-                                onPress={() => setSelectedMaterial(item)}
-                                style={styles.openMaterialBtn}
-                              >
-                                <MaterialCommunityIcons name="book-open-page-variant-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-                                <Text style={styles.openMaterialBtnText}>Buka Materi</Text>
-                                <MaterialCommunityIcons name="chevron-right" size={16} color="#FFFFFF" style={{ marginLeft: 2 }} />
-                              </TouchableOpacity>
-                            </View>
-                          </LinearGradient>
-                        </View>
-                      );
-                    })
+                                <View style={[styles.mediaTypePillBadge, { backgroundColor: catBadge.bg, borderColor: catBadge.border }]}>
+                                  <MaterialCommunityIcons name={catBadge.icon as any} size={11} color={catBadge.color} style={{ marginRight: 3 }} />
+                                  <Text style={[styles.mediaTypePillText, { color: catBadge.color }]}>{catBadge.label}</Text>
+                                </View>
+
+                                <View style={{ flex: 1 }} />
+
+                                <View style={styles.materialDateBadge}>
+                                  <MaterialCommunityIcons name="calendar-clock-outline" size={11} color="#64748B" style={{ marginRight: 3 }} />
+                                  <Text style={styles.materialDateText}>{dateStr}</Text>
+                                </View>
+                              </View>
+
+                              {/* Judul & Cuplikan Deskripsi */}
+                              <View style={styles.materialCardBody}>
+                                <Text numberOfLines={2} style={styles.materialTitleText}>
+                                  {title}
+                                </Text>
+                                {previewDesc ? (
+                                  <Text numberOfLines={2} style={styles.materialDescText}>
+                                    {previewDesc}
+                                  </Text>
+                                ) : null}
+                              </View>
+
+                              {/* Kotak Metadata 2 Kolom (Guru & Lampiran) */}
+                              <View style={styles.materialMetaBox}>
+                                <View style={styles.materialMetaCol}>
+                                  <MaterialCommunityIcons name="account-tie-outline" size={15} color={subjectStyle.color} style={{ marginRight: 6 }} />
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.materialMetaLabel}>Guru Pengampu</Text>
+                                    <Text numberOfLines={1} style={styles.materialMetaValue}>{teacherName || 'Dewan Guru'}</Text>
+                                  </View>
+                                </View>
+
+                                <View style={styles.materialMetaDivider} />
+
+                                <View style={styles.materialMetaCol}>
+                                  <MaterialCommunityIcons
+                                    name={mediaCount > 0 ? 'paperclip' : 'book-open-outline'}
+                                    size={15}
+                                    color="#0284C7"
+                                    style={{ marginRight: 6 }}
+                                  />
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.materialMetaLabel}>Materi & Lampiran</Text>
+                                    <Text numberOfLines={1} style={styles.materialMetaValue}>
+                                      {mediaCount > 0 ? `${mediaCount} Berkas Media` : formatMetaText(item)}
+                                    </Text>
+                                  </View>
+                                </View>
+                              </View>
+
+                              {/* Footer Action Button: Buka Materi */}
+                              <View style={styles.materialCardFooter}>
+                                <TouchableOpacity
+                                  activeOpacity={0.85}
+                                  onPress={() => setSelectedMaterial(item)}
+                                  style={styles.openMaterialBtn}
+                                >
+                                  <MaterialCommunityIcons name="book-open-page-variant-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                                  <Text style={styles.openMaterialBtnText}>Buka Materi</Text>
+                                  <MaterialCommunityIcons name="chevron-right" size={16} color="#FFFFFF" style={{ marginLeft: 2 }} />
+                                </TouchableOpacity>
+                              </View>
+                            </LinearGradient>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
                   )}
                 </View>
               </>
@@ -9708,6 +9830,28 @@ const styles = StyleSheet.create({
   summaryHeaderContainer: {
     marginBottom: 12,
   },
+  summaryHeaderContainerBanner: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  summaryCountPill: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  summaryCountPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
   summaryTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -9864,6 +10008,89 @@ const styles = StyleSheet.create({
   },
 
   // ── Modern Material List & Cards ──
+  materialDatatableContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  materialDatatableHeader: {
+    backgroundColor: '#F0FDF4',
+    borderBottomWidth: 1.2,
+    borderBottomColor: '#D1FAE5',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  emeraldDatatableTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  emeraldDatatableSubtitle: {
+    fontSize: 10.5,
+    color: '#059669',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  emeraldDatatableCountBadge: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignSelf: 'center',
+  },
+  emeraldDatatableCountText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  materialHeaderRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  materialSortPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  materialSortPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  materialDatatableFilterWrapper: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 10,
+  },
+  materialCardsScrollContainer: {
+    maxHeight: 520,
+  },
+  materialCardsScrollContent: {
+    padding: 12,
+    paddingBottom: 16,
+    backgroundColor: '#F9FBF9',
+  },
   materialsContainerBlock: {
     marginBottom: 24,
   },

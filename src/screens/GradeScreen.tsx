@@ -94,7 +94,7 @@ const emptyPayload: GradePayload = {
 const scoreText = (value: unknown) => {
   if (value === null || value === undefined || value === '') return '-';
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? String(Number(parsed.toFixed(2))) : '-';
+  return Number.isFinite(parsed) ? String(Math.round(parsed)) : '-';
 };
 
 const getTahfizhPredicate = (score: unknown): string => {
@@ -315,11 +315,18 @@ export default function GradeScreen({ route }: any) {
       setAcademicViewMode('overview');
       return;
     }
-    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    const currentActiveChildId = selectedChildId || useActiveChildStore.getState().activeChildId || route?.params?.child_id || route?.params?.student_id;
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, {
+      ...route?.params,
+      child_id: currentActiveChildId,
+      student_id: currentActiveChildId,
+    });
     if (handled) return;
-    const childId = route?.params?.child_id || route?.params?.student_id;
-    if (route?.params?.from_child_portal && childId) {
-      navigation?.navigate('Beranda');
+    if (currentActiveChildId) {
+      navigation?.navigate('Beranda', {
+        reopen_child_portal_id: String(currentActiveChildId),
+        reopen_timestamp: Date.now(),
+      });
       return;
     }
     if (navigation?.canGoBack?.()) {
@@ -560,7 +567,8 @@ export default function GradeScreen({ route }: any) {
     setError('');
 
     // Baca cache dulu
-    const cacheKey = offlineCache.buildKey('grades_v6', user?.id, selectedChildId);
+    const extraKey = `${selectedChildId || ''}_${selectedSemester?.year || ''}_${selectedSemester?.semester || ''}`;
+    const cacheKey = offlineCache.buildKey('grades_v7', user?.id, extraKey);
     const cached = await offlineCache.get<{
       payload: GradePayload;
       tahfizh: any;
@@ -607,7 +615,12 @@ export default function GradeScreen({ route }: any) {
         worshipContextRes,
         prayerAssessmentRes,
       ] = await Promise.all([
-        mobileApiService.getPortalGrades(selectedChildId).catch(() => null),
+        mobileApiService
+          .getPortalGrades(selectedChildId, {
+            semester: selectedSemester?.semester,
+            academic_year: selectedSemester?.year,
+          })
+          .catch(() => null),
         selectedChildId ? mobileApiService.getPortalTahfizhAchievement(selectedChildId).catch(() => null) : Promise.resolve(null),
         selectedChildId ? mobileApiService.getPortalTahfizh({ child_id: selectedChildId, student_id: selectedChildId, per_page: 50 }).catch(() => null) : Promise.resolve(null),
         mobileApiService.getPortalMutabaah(selectedChildId).catch(() => null),
@@ -680,7 +693,7 @@ export default function GradeScreen({ route }: any) {
     } catch (requestError: any) {
       setError(requestError?.response?.data?.message || 'Data nilai belum berhasil dimuat.');
     }
-  }, [isParent, selectedChildId, user?.id]);
+  }, [isParent, selectedChildId, user?.id, selectedSemester?.year, selectedSemester?.semester]);
 
   useEffect(() => {
     loadChildren().catch(() => setChildren([]));
@@ -1344,11 +1357,12 @@ export default function GradeScreen({ route }: any) {
     if (Array.isArray(payload.items) && payload.items.length > 0) {
       return payload.items.map((it: any, idx: number) => {
         const name = it.subject?.name || it.subject_name || it.mata_pelajaran || 'Mata Pelajaran';
-        const score = Number(it.final_score ?? it.score ?? 0);
+        const score = Math.round(Number(it.final_score ?? it.score ?? 0));
         const predicate = it.grade_letter || it.predicate || getPredicate(score);
-        const harian = it.score_assignment != null ? Number(it.score_assignment) : (it.nilai_tugas != null ? Number(it.nilai_tugas) : null);
-        const uts = it.score_mid != null ? Number(it.score_mid) : (it.nilai_uts != null ? Number(it.nilai_uts) : null);
-        const uas = it.score_final != null ? Number(it.score_final) : (it.nilai_uas != null ? Number(it.nilai_uas) : null);
+        const harian = it.score_assignment != null ? Math.round(Number(it.score_assignment)) : (it.nilai_tugas != null ? Math.round(Number(it.nilai_tugas)) : null);
+        const uts = it.score_mid != null ? Math.round(Number(it.score_mid)) : (it.nilai_uts != null ? Math.round(Number(it.nilai_uts)) : null);
+        const uas = it.score_final != null ? Math.round(Number(it.score_final)) : (it.nilai_uas != null ? Math.round(Number(it.nilai_uas)) : null);
+        const kkm = it.kkm != null ? Math.round(Number(it.kkm)) : null;
         const theme = getSubjectTheme(name);
         return {
           id: String(it.id || idx),
@@ -1356,7 +1370,7 @@ export default function GradeScreen({ route }: any) {
           teacher: it.teacher_name || it.teacher?.name || it.guru?.nama_lengkap || '-',
           score,
           predicate,
-          kkm: it.kkm ?? null,
+          kkm,
           score_assignment: harian,
           score_mid: uts,
           score_final: uas,
@@ -1392,18 +1406,41 @@ export default function GradeScreen({ route }: any) {
     return getPredicate(academicAverage);
   }, [academicAverage, getPredicate]);
 
-  // Dynamic Trend Progression (5 Bulan: Jul - Nov)
+  // Dynamic Trend Progression (Tugas, PTS, PAS, Akhir) dari data evaluasi belajar riil
   const trendData = useMemo(() => {
-    if (academicAverage == null) return [];
-    const baseAvg = academicAverage;
-    return [
-      { month: 'Jul', score: Math.max(0, baseAvg - 12) },
-      { month: 'Agu', score: Math.max(0, baseAvg - 10) },
-      { month: 'Sep', score: Math.max(0, baseAvg - 6) },
-      { month: 'Okt', score: Math.max(0, baseAvg - 3) },
-      { month: 'Nov', score: baseAvg },
-    ];
-  }, [academicAverage]);
+    if (academicAverage == null || academicSubjects.length === 0) return [];
+
+    const validAssignments = academicSubjects
+      .map((s) => s.score_assignment)
+      .filter((v): v is number => typeof v === 'number' && v > 0);
+    const validMid = academicSubjects
+      .map((s) => s.score_mid)
+      .filter((v): v is number => typeof v === 'number' && v > 0);
+    const validFinal = academicSubjects
+      .map((s) => s.score_final)
+      .filter((v): v is number => typeof v === 'number' && v > 0);
+
+    const avgAssignment =
+      validAssignments.length > 0
+        ? Math.round(validAssignments.reduce((a, b) => a + b, 0) / validAssignments.length)
+        : null;
+    const avgMid =
+      validMid.length > 0
+        ? Math.round(validMid.reduce((a, b) => a + b, 0) / validMid.length)
+        : null;
+    const avgFinal =
+      validFinal.length > 0
+        ? Math.round(validFinal.reduce((a, b) => a + b, 0) / validFinal.length)
+        : null;
+
+    const items: { semester: string; score: number }[] = [];
+    if (avgAssignment != null) items.push({ semester: 'Tugas', score: avgAssignment });
+    if (avgMid != null) items.push({ semester: 'PTS', score: avgMid });
+    if (avgFinal != null) items.push({ semester: 'PAS', score: avgFinal });
+    items.push({ semester: 'Akhir', score: Math.round(academicAverage) });
+
+    return items;
+  }, [academicAverage, academicSubjects]);
 
   // 2. Dynamic Tahfizh List & Stats (Tergantung Siswa Aktif)
   const dynamicTahfizhList = useMemo(() => {
@@ -1604,7 +1641,7 @@ export default function GradeScreen({ route }: any) {
                 accessibilityRole="button"
                 accessibilityLabel="Kembali"
               >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#FFFFFF" />
               </TouchableOpacity>
 
               <View style={styles.heroTitleCenterCol}>
@@ -1623,7 +1660,7 @@ export default function GradeScreen({ route }: any) {
                 accessibilityRole="button"
                 accessibilityLabel="Notifikasi"
               >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#FFFFFF" />
                 {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
               </TouchableOpacity>
             </View>
@@ -1631,268 +1668,442 @@ export default function GradeScreen({ route }: any) {
 
           {/* Badan Halaman Konten */}
           <View style={styles.bodyContentWrapper}>
-          {/* 1. DATA ANANDA HERO CARD SECTION */}
-          <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={styles.sectionHeaderTitleWrap}>
-                <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                <Text style={styles.sectionTitle}>Data Ananda</Text>
-              </View>
-              {children.length > 1 && (
-                <View style={styles.studentCardCountBadge}>
-                  <Text style={styles.studentCardCountBadgeText}>
-                    {safeCenter + 1} dari {children.length} Ananda
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {children.length === 1 ? (
-              <View style={styles.singleHeroCardContainer}>
-                <StudentHeroCard
-                  child={children[0]}
-                  isSelected={true}
-                  isSingleChild={true}
-                  showActionButtons={true}
-                  cardLabel="Kartu Siswa"
-                  calendarLabel="Jadwal"
-                  portalLabel="Menu"
-                  onPressCard={() => openIdCard(children[0])}
-                  onPressQr={() => openQrCard(children[0])}
-                  onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                  onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                  onPressCalendar={() => openScheduleForStudent(children[0])}
-                  onPressPortal={() => setSelectedMenuStudent(children[0])}
-                />
-              </View>
-            ) : children.length > 1 ? (
-              <>
-                <ScrollView
-                  ref={studentScrollRef}
-                  horizontal
-                  nestedScrollEnabled={true}
-                  showsHorizontalScrollIndicator={false}
-                  contentOffset={{ x: centerLoopOffset, y: 0 }}
-                  contentContainerStyle={[
-                    styles.studentCardsTrack,
-                    { paddingHorizontal: studentTrackPad },
-                  ]}
-                  decelerationRate="fast"
-                  snapToInterval={studentSnapInterval}
-                  snapToAlignment="start"
-                  disableIntervalMomentum
-                  onMomentumScrollEnd={(e) => {
-                    if (studentLoopCount === 0) return;
-                    const offsetX = e.nativeEvent.contentOffset.x;
-                    const slot = Math.round(offsetX / studentSnapInterval);
-                    const n = studentLoopCount;
-                    const cur = ((activeChildIndex % n) + n) % n;
-                    let realIdx = cur;
-                    if (slot === 2) realIdx = (cur + 1) % n;
-                    else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                    if (realIdx !== cur) {
-                      setActiveChildIndex(realIdx);
-                      syncLoopChildId(realIdx);
-                      requestAnimationFrame(() => {
-                        recenterLoop();
-                      });
-                    } else {
-                      recenterLoop();
-                    }
-                  }}
-                  onScrollEndDrag={(e) => {
-                    if (studentLoopCount === 0) return;
-                    const offsetX = e.nativeEvent.contentOffset.x;
-                    const slot = Math.round(offsetX / studentSnapInterval);
-                    const n = studentLoopCount;
-                    const cur = ((activeChildIndex % n) + n) % n;
-                    let realIdx = cur;
-                    if (slot === 2) realIdx = (cur + 1) % n;
-                    else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                    if (realIdx !== cur) {
-                      setActiveChildIndex(realIdx);
-                      syncLoopChildId(realIdx);
-                    }
-                  }}
-                  scrollEventThrottle={16}
-                  style={styles.heroCardScrollContainer}
-                >
-                  {loopWindow.list.map((child: any, sIdx: number) => {
-                    const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                    const isCardActive = realIdx === safeCenter;
-                    return (
-                      <StudentHeroCard
-                        key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                        child={child}
-                        isSelected={isCardActive}
-                        isSingleChild={false}
-                        showActionButtons={true}
-                        cardWidth={studentCardWidth}
-                        cardLabel="Kartu Siswa"
-                        calendarLabel="Jadwal"
-                        portalLabel="Menu"
-                        onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                        onPressCard={() => openIdCard(child)}
-                        onPressQr={() => openQrCard(child)}
-                        onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                        onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                        onPressCalendar={() => openScheduleForStudent(child)}
-                        onPressPortal={() => setSelectedMenuStudent(child)}
-                      />
-                    );
-                  })}
-                </ScrollView>
-
-                {/* DOT INDIKATOR SCROLL SISWA */}
-                <View style={styles.paginationDotsRow}>
-                  {children.map((_, dotIdx) => {
-                    const isDotActive = dotIdx === safeCenter;
-                    return (
-                      <TouchableOpacity
-                        key={dotIdx}
-                        activeOpacity={0.7}
-                        onPress={() => goToLoopChild(dotIdx)}
-                        style={[
-                          styles.paginationDot,
-                          isDotActive && styles.paginationDotActive,
-                        ]}
-                        accessibilityLabel={`Pilih Siswa ke-${dotIdx + 1}`}
-                        accessibilityRole="button"
-                      />
-                    );
-                  })}
-                </View>
-              </>
-            ) : student ? (
-              <View style={styles.singleHeroCardContainer}>
-                <StudentHeroCard
-                  child={student}
-                  isSelected={true}
-                  isSingleChild={true}
-                  showActionButtons={true}
-                  cardLabel="Kartu Siswa"
-                  calendarLabel="Jadwal"
-                  portalLabel="Menu"
-                  onPressCard={() => openIdCard(student)}
-                  onPressQr={() => openQrCard(student)}
-                  onPressWeeklyReport={() => setSelectedWeeklyStudent(student)}
-                  onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                  onPressCalendar={() => openScheduleForStudent(student)}
-                  onPressPortal={() => setSelectedMenuStudent(student)}
-                />
-              </View>
-            ) : null}
-          </View>
-
-          {/* 1. SEMESTER SELECTOR BAR (Mockup 10 Trigger) */}
-          <GradeSemesterSelector
-            selectedSemester={selectedSemester}
-            onPress={() => setShowSemesterModal(true)}
-          />
-
-          {/* HERO SUMMARY CARD (Mockup 1, 4, 6) */}
-          <GradeHeroSummary
-            activeTab={activeTab}
-            average={activeTab === 'academic' ? academicAverage : activeTab === 'tahfizh' ? tahfizhAverage : mutabaahAverage}
-            predicate={activeTab === 'academic' ? academicPredicate : activeTab === 'tahfizh' ? tahfizhPredicate : mutabaahPredicate}
-            totalCount={activeTab === 'academic' ? academicTotalCount : activeTab === 'tahfizh' ? tahfizhCount : mutabaahAspects.length}
-            studentName={studentName}
-            onPressAction={() => {
-              if (activeTab === 'academic') {
-                setShowSemesterReportModal(true);
-              } else if (activeTab === 'tahfizh') {
-                setWeeklyReportType('tahfizh');
-                setShowWeeklyEvaluationModal(true);
-              } else {
-                setWeeklyReportType('mutabaah');
-                setShowWeeklyEvaluationModal(true);
-              }
-            }}
-          />
-
-          {/* 2. ROUND CUBE TAB BAR ([ 📖 Akademik ] [ 📖 Tahfizh ] [ 📋 Mutabaah ]) */}
-          <View style={styles.pillTabsContainer}>
-            {tabs.map((tab) => {
-              const isActive = activeTab === tab.key;
-              return (
-                <TouchableOpacity
-                  key={tab.key}
-                  activeOpacity={0.85}
-                  onPress={() => setActiveTab(tab.key)}
-                  style={[styles.pillTabBtn, isActive && styles.pillTabBtnActive]}
-                >
-                  <View style={[styles.tabIconSquircle, isActive && styles.tabIconSquircleActive]}>
-                    <MaterialCommunityIcons
-                      name={tab.icon as any}
-                      size={15}
-                      color={isActive ? '#FFFFFF' : '#059669'}
+            {/* 1. DATA ANANDA HERO CARD SECTION */}
+            {children && children.length > 0 ? (
+              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+                {children.length === 1 ? (
+                  <View style={styles.singleHeroCardContainer}>
+                    <StudentHeroCard
+                      child={children[0]}
+                      isSelected={true}
+                      isSingleChild={true}
+                      showActionButtons={true}
+                      cardLabel="Kartu Siswa"
+                      calendarLabel="Jadwal"
+                      portalLabel="Menu"
+                      onPressCard={() => openIdCard(children[0])}
+                      onPressQr={() => openQrCard(children[0])}
+                      onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
+                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                      onPressCalendar={() => openScheduleForStudent(children[0])}
+                      onPressPortal={() => setSelectedMenuStudent(children[0])}
                     />
                   </View>
-                  <Text style={[styles.pillTabText, isActive && styles.pillTabTextActive]}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+                ) : (
+                  <>
+                    <ScrollView
+                      ref={studentScrollRef}
+                      horizontal
+                      nestedScrollEnabled={true}
+                      showsHorizontalScrollIndicator={false}
+                      contentOffset={{ x: centerLoopOffset, y: 0 }}
+                      contentContainerStyle={[
+                        styles.studentCardsTrack,
+                        { paddingHorizontal: studentTrackPad },
+                      ]}
+                      decelerationRate="fast"
+                      snapToInterval={studentSnapInterval}
+                      snapToAlignment="start"
+                      disableIntervalMomentum
+                      onMomentumScrollEnd={(e) => {
+                        if (studentLoopCount === 0) return;
+                        const offsetX = e.nativeEvent.contentOffset.x;
+                        const slot = Math.round(offsetX / studentSnapInterval);
+                        const n = studentLoopCount;
+                        const cur = ((activeChildIndex % n) + n) % n;
+                        let realIdx = cur;
+                        if (slot === 2) realIdx = (cur + 1) % n;
+                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                        if (realIdx !== cur) {
+                          setActiveChildIndex(realIdx);
+                          syncLoopChildId(realIdx);
+                          requestAnimationFrame(() => {
+                            recenterLoop();
+                          });
+                        } else {
+                          recenterLoop();
+                        }
+                      }}
+                      onScrollEndDrag={(e) => {
+                        if (studentLoopCount === 0) return;
+                        const offsetX = e.nativeEvent.contentOffset.x;
+                        const slot = Math.round(offsetX / studentSnapInterval);
+                        const n = studentLoopCount;
+                        const cur = ((activeChildIndex % n) + n) % n;
+                        let realIdx = cur;
+                        if (slot === 2) realIdx = (cur + 1) % n;
+                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
+                        if (realIdx !== cur) {
+                          setActiveChildIndex(realIdx);
+                          syncLoopChildId(realIdx);
+                        }
+                      }}
+                      scrollEventThrottle={16}
+                      style={styles.heroCardScrollContainer}
+                    >
+                      {loopWindow.list.map((child: any, sIdx: number) => {
+                        const realIdx = loopWindow.realIdx[sIdx] ?? 0;
+                        const isCardActive = realIdx === safeCenter;
+                        return (
+                          <StudentHeroCard
+                            key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
+                            child={child}
+                            isSelected={isCardActive}
+                            isSingleChild={false}
+                            showActionButtons={true}
+                            cardWidth={studentCardWidth}
+                            cardLabel="Kartu Siswa"
+                            calendarLabel="Jadwal"
+                            portalLabel="Menu"
+                            onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
+                            onPressCard={() => openIdCard(child)}
+                            onPressQr={() => openQrCard(child)}
+                            onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
+                            onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                            onPressCalendar={() => openScheduleForStudent(child)}
+                            onPressPortal={() => setSelectedMenuStudent(child)}
+                          />
+                        );
+                      })}
+                    </ScrollView>
+
+                    {/* DOT INDIKATOR SCROLL SISWA */}
+                    <View style={styles.paginationDotsRow}>
+                      {children.map((_, dotIdx) => {
+                        const isDotActive = dotIdx === safeCenter;
+                        return (
+                          <TouchableOpacity
+                            key={dotIdx}
+                            activeOpacity={0.7}
+                            onPress={() => goToLoopChild(dotIdx)}
+                            style={[
+                              styles.paginationDot,
+                              isDotActive && styles.paginationDotActive,
+                            ]}
+                            accessibilityLabel={`Pilih Siswa ke-${dotIdx + 1}`}
+                            accessibilityRole="button"
+                          />
+                        );
+                      })}
+                    </View>
+                  </>
+                )}
+              </View>
+            ) : (activeChild || student) ? (
+              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
+                <View style={styles.singleHeroCardContainer}>
+                  <StudentHeroCard
+                    child={activeChild || student}
+                    isSelected={true}
+                    isSingleChild={true}
+                    showActionButtons={true}
+                    cardLabel="Kartu Siswa"
+                    calendarLabel="Jadwal"
+                    portalLabel="Menu"
+                    onPressCard={() => openIdCard(activeChild || student)}
+                    onPressQr={() => openQrCard(activeChild || student)}
+                    onPressWeeklyReport={() => setSelectedWeeklyStudent(activeChild || student)}
+                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
+                    onPressCalendar={() => openScheduleForStudent(activeChild || student)}
+                    onPressPortal={() => setSelectedMenuStudent(activeChild || student)}
+                  />
+                </View>
+              </View>
+            ) : null}
+
+            {/* 2. RINGKASAN HASIL BELAJAR (4 KARTU KPI INTERAKTIF - Identik MaterialScreen) */}
+            <View style={styles.emeraldSummaryContainer}>
+              <LinearGradient
+                colors={['#ECFDF5', '#F0FDF4']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.summaryHeaderContainerBanner}
+              >
+                <View style={styles.summaryTitleRow}>
+                  <LinearGradient
+                    colors={['#059669', '#047857']}
+                    style={styles.sectionIconBadgeModern}
+                  >
+                    <MaterialCommunityIcons name="school-outline" size={18} color="#FFFFFF" />
+                  </LinearGradient>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sectionTitleBold}>Ringkasan Hasil Belajar</Text>
+                    <Text style={styles.summarySubtitleText}>
+                      {activeStudentName
+                        ? `Capaian kompetensi Ananda ${activeStudentName}`
+                        : 'Rangkuman nilai & capaian kompetensi santri'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowSemesterModal(true)}
+                    style={styles.summaryCountPill}
+                  >
+                    <Text style={styles.summaryCountPillText}>
+                      {selectedSemester ? `${selectedSemester.semester} ${selectedSemester.year}` : 'Ganjil 2026/2027'} ▾
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </LinearGradient>
+
+              {/* 4 KPI Cards (2 Baris x 2 Kolom) */}
+              <View style={styles.kpiContainer}>
+                <View style={styles.kpiRow}>
+                  {/* CARD 1: RATA-RATA NILAI (EMERALD) */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setActiveTab('academic');
+                      setAcademicFilter('all');
+                    }}
+                    style={[
+                      styles.kpiCard,
+                      styles.kpiCardEmerald,
+                      academicFilter === 'all' && styles.kpiCardActiveRing,
+                    ]}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#047857' }]}>Rata-Rata</Text>
+                      <MaterialCommunityIcons name="chart-line" size={16} color="#059669" />
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#065F46' }]}>
+                      {academicAverage != null ? academicAverage : (scoreText(payload.summary?.average_score) || '-')}
+                    </Text>
+                    <Text style={[styles.kpiSub, { color: '#047857' }]}>
+                      Predikat: {academicPredicate}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* CARD 2: NILAI TERTINGGI (AMBER) */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setActiveTab('academic');
+                      setAcademicFilter('high');
+                    }}
+                    style={[
+                      styles.kpiCard,
+                      styles.kpiCardAmber,
+                      academicFilter === 'high' && styles.kpiCardActiveRing,
+                    ]}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#D97706' }]}>Tertinggi</Text>
+                      <MaterialCommunityIcons name="trophy-outline" size={16} color="#D97706" />
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#92400E' }]}>
+                      {payload.summary?.highest_score != null
+                        ? scoreText(payload.summary.highest_score)
+                        : (academicSubjects.length > 0 ? Math.max(...academicSubjects.map(s => s.score)) : '-')}
+                    </Text>
+                    <Text style={[styles.kpiSub, { color: '#B45309' }]}>Skor Maksimal</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.kpiRow}>
+                  {/* CARD 3: MAPEL TUNTAS (SKY) */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setActiveTab('academic');
+                      setAcademicFilter('high');
+                    }}
+                    style={[
+                      styles.kpiCard,
+                      styles.kpiCardSky,
+                    ]}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#0284C7' }]}>Tuntas</Text>
+                      <MaterialCommunityIcons name="check-decagram-outline" size={16} color="#0284C7" />
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#0369A1' }]}>
+                      {payload.summary?.passed_subjects != null
+                        ? payload.summary.passed_subjects
+                        : academicSubjects.filter(s => s.score >= (s.kkm || 75)).length} Mapel
+                    </Text>
+                    <Text style={[styles.kpiSub, { color: '#0284C7' }]}>Di Atas KKM</Text>
+                  </TouchableOpacity>
+
+                  {/* CARD 4: PERLU REMEDIAL (ROSE) */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setActiveTab('academic');
+                      setAcademicFilter('remedial');
+                    }}
+                    style={[
+                      styles.kpiCard,
+                      styles.kpiCardRose,
+                      academicFilter === 'remedial' && styles.kpiCardActiveRing,
+                    ]}
+                  >
+                    <View style={styles.kpiTop}>
+                      <Text style={[styles.kpiLabel, { color: '#E11D48' }]}>Remedial</Text>
+                      <MaterialCommunityIcons name="book-refresh-outline" size={16} color="#E11D48" />
+                    </View>
+                    <Text style={[styles.kpiValue, { color: '#9F1239' }]}>
+                      {payload.summary?.remedial_subjects != null
+                        ? payload.summary.remedial_subjects
+                        : academicSubjects.filter(s => s.score < (s.kkm || 75)).length} Mapel
+                    </Text>
+                    <Text style={[styles.kpiSub, { color: '#BE123C' }]}>Perlu Bimbingan</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {/* 3. SUB-TAB SWITCHER ([ 📖 Akademik ] [ 📖 Tahfizh ] [ 📋 Mutabaah ]) */}
+            <View style={styles.pillTabsContainer}>
+              {tabs.map((tab) => {
+                const isActive = activeTab === tab.key;
+                return (
+                  <TouchableOpacity
+                    key={tab.key}
+                    activeOpacity={0.85}
+                    onPress={() => setActiveTab(tab.key)}
+                    style={[styles.pillTabBtn, isActive && styles.pillTabBtnActive]}
+                  >
+                    <View style={[styles.tabIconSquircle, isActive && styles.tabIconSquircleActive]}>
+                      <MaterialCommunityIcons
+                        name={tab.icon as any}
+                        size={15}
+                        color={isActive ? '#FFFFFF' : '#059669'}
+                      />
+                    </View>
+                    <Text style={[styles.pillTabText, isActive && styles.pillTabTextActive]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* 4. EMERALD DATATABLE OUTER CONTAINER */}
+            <View style={styles.materialDatatableContainer}>
+              {/* Header Card Banner */}
+              <LinearGradient
+                colors={['#ECFDF5', '#F0FDF4']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.materialDatatableHeader}
+              >
+                <View style={styles.sectionHeaderBetweenModern}>
+                  <View style={styles.sectionHeaderLeftModern}>
+                    <LinearGradient
+                      colors={['#059669', '#047857']}
+                      style={styles.sectionIconBadgeModern}
+                    >
+                      <MaterialCommunityIcons
+                        name={(activeTab === 'academic' ? 'notebook-outline' : activeTab === 'tahfizh' ? 'book-open-page-variant' : 'format-list-checks') as any}
+                        size={18}
+                        color="#FFFFFF"
+                      />
+                    </LinearGradient>
+                    <View style={{ flex: 1 }}>
+                      <Text numberOfLines={1} style={styles.emeraldDatatableTitle}>
+                        {activeTab === 'academic'
+                          ? 'Rincian Nilai Akademik'
+                          : activeTab === 'tahfizh'
+                          ? 'Capaian Hafalan & Tahfizh'
+                          : 'Mutabaah Yaumiyyah'}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.emeraldDatatableSubtitle}>
+                        {activeTab === 'academic'
+                          ? `${filteredAcademicSubjects.length} mata pelajaran terdaftar`
+                          : activeTab === 'tahfizh'
+                          ? `${dynamicTahfizhList.length} riwayat setoran hafalan`
+                          : `${mutabaahAspects.length} aspek pembiasaan santri`}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.materialHeaderRightActions}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        if (activeTab === 'academic') {
+                          setShowSemesterReportModal(true);
+                        } else if (activeTab === 'tahfizh') {
+                          setWeeklyReportType('tahfizh');
+                          setShowWeeklyEvaluationModal(true);
+                        } else {
+                          setWeeklyReportType('mutabaah');
+                          setShowWeeklyEvaluationModal(true);
+                        }
+                      }}
+                      style={styles.actionRaporBtn}
+                    >
+                      <MaterialCommunityIcons name="file-document-outline" size={14} color="#047857" style={{ marginRight: 3 }} />
+                      <Text style={styles.actionRaporBtnText}>
+                        {activeTab === 'academic' ? 'Rapor' : 'Evaluasi'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </LinearGradient>
+
+              {/* Inner Datatable Content */}
+              <View style={styles.datatableInnerPadding}>
+                {/* ==================== TAB 1: AKADEMIK ==================== */}
+                {activeTab === 'academic' && (
+                  <GradeAkademikTab
+                    searchQuery={search}
+                    setSearchQuery={setSearch}
+                    academicFilter={academicFilter}
+                    setAcademicFilter={setAcademicFilter}
+                    subjects={filteredAcademicSubjects}
+                    trendData={trendData}
+                    studentName={studentName}
+                    onSelectSubject={(subject) => setSelectedSubjectDetail(subject)}
+                  />
+                )}
+
+                {/* ==================== TAB 2: TAHFIZH ==================== */}
+                {activeTab === 'tahfizh' && (
+                  <GradeTahfizhTab
+                    tahfizhList={dynamicTahfizhList}
+                    tahfizhAchievement={tahfizh}
+                    averageScore={tahfizhAverage ?? undefined}
+                    predicate={tahfizhPredicate}
+                    studentName={studentName}
+                    className={className}
+                    academicYear={selectedSemester?.year || defaultAcademicYear}
+                    semester={selectedSemester?.semester || (tahfizhSemester?.includes('2') ? 'Genap' : 'Ganjil')}
+                    kkm={typeof tahfizh?.kkm === 'number' && tahfizh.kkm > 0 ? tahfizh.kkm : undefined}
+                    evaluationNote={tahfizh?.notes || tahfizh?.catatan_ustadz}
+                    tasmiStatus={tahfizh?.tasmi_status || tahfizh?.exam_status}
+                    targetDescription={tahfizh?.target_description || (tahfizh?.target_juz ? `Juz ${tahfizh.target_juz}` : undefined)}
+                    onSelectTahfizh={(item) => setSelectedTahfizhDetail(item)}
+                    onOpenWeeklyReport={() => {
+                      setWeeklyReportType('tahfizh');
+                      setShowWeeklyEvaluationModal(true);
+                    }}
+                    onNavigateToTahfizh={() => {
+                      const sid = activeChild?.id || activeChild?.student_id || selectedChildId;
+                      if (sid) {
+                        navigation?.navigate('Tahfizh', { child_id: String(sid), student_id: String(sid) });
+                      } else {
+                        navigation?.navigate('Tahfizh');
+                      }
+                    }}
+                  />
+                )}
+
+                {/* ==================== TAB 3: MUTABAAH ==================== */}
+                {activeTab === 'mutabaah' && (
+                  <GradeMutabaahTab
+                    aspects={mutabaahAspects}
+                    onSelectAspect={(aspect) => setSelectedMutabaahAspect(aspect)}
+                    onOpenWeeklyReport={() => {
+                      setWeeklyReportType('mutabaah');
+                      setShowWeeklyEvaluationModal(true);
+                    }}
+                  />
+                )}
+              </View>
+            </View>
           </View>
-
-          {/* ==================== TAB 1: AKADEMIK (MOCKUP 1 & 2) ==================== */}
-          {activeTab === "academic" && (
-            <GradeAkademikTab
-              searchQuery={search}
-              setSearchQuery={setSearch}
-              academicFilter={academicFilter}
-              setAcademicFilter={setAcademicFilter}
-              subjects={filteredAcademicSubjects}
-              trendData={trendData}
-              studentName={studentName}
-              onSelectSubject={(subject) => setSelectedSubjectDetail(subject)}
-            />
-          )}
-
-          {/* ==================== TAB 2: TAHFIZH (MOCKUP 4) ==================== */}
-          {activeTab === "tahfizh" && (
-            <GradeTahfizhTab
-              tahfizhList={dynamicTahfizhList}
-              tahfizhAchievement={tahfizh}
-              averageScore={tahfizhAverage ?? undefined}
-              predicate={tahfizhPredicate}
-              studentName={studentName}
-              className={className}
-              academicYear={selectedSemester?.year || defaultAcademicYear}
-              semester={selectedSemester?.semester || (tahfizhSemester?.includes('2') ? 'Genap' : 'Ganjil')}
-              kkm={typeof tahfizh?.kkm === 'number' && tahfizh.kkm > 0 ? tahfizh.kkm : undefined}
-              evaluationNote={tahfizh?.notes || tahfizh?.catatan_ustadz}
-              tasmiStatus={tahfizh?.tasmi_status || tahfizh?.exam_status}
-              targetDescription={tahfizh?.target_description || (tahfizh?.target_juz ? `Juz ${tahfizh.target_juz}` : undefined)}
-              onSelectTahfizh={(item) => setSelectedTahfizhDetail(item)}
-              onOpenWeeklyReport={() => {
-                setWeeklyReportType('tahfizh');
-                setShowWeeklyEvaluationModal(true);
-              }}
-              onNavigateToTahfizh={() => {
-                const sid = activeChild?.id || activeChild?.student_id || selectedChildId;
-                if (sid) {
-                  navigation?.navigate('Tahfizh', { child_id: String(sid), student_id: String(sid) });
-                } else {
-                  navigation?.navigate('Tahfizh');
-                }
-              }}
-            />
-          )}
-
-          {/* ==================== TAB 3: MUTABAAH (MOCKUP 6) ==================== */}
-          {activeTab === "mutabaah" && (
-            <GradeMutabaahTab
-              aspects={mutabaahAspects}
-              onSelectAspect={(aspect) => setSelectedMutabaahAspect(aspect)}
-              onOpenWeeklyReport={() => {
-                setWeeklyReportType('mutabaah');
-                setShowWeeklyEvaluationModal(true);
-              }}
-            />
-          )}
-        </View>
       </Animated.ScrollView>
 
         {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
@@ -2085,12 +2296,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     position: 'relative',
   },
   heroTitleCenterCol: {
@@ -2381,6 +2587,210 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669',
   },
 
+  // ── Emerald Summary Container (Identik MaterialScreen) ──
+  emeraldSummaryContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 14,
+    shadowColor: '#059669',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+    marginBottom: 16,
+  },
+  summaryHeaderContainerBanner: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  summaryTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sectionIconBadgeModern: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  sectionTitleBold: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  summarySubtitleText: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  summaryCountPill: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  summaryCountPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  kpiContainer: {
+    marginBottom: 2,
+    gap: 8,
+  },
+  kpiRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  kpiCard: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1.2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  kpiCardActiveRing: {
+    borderWidth: 2,
+    borderColor: '#047857',
+  },
+  kpiCardEmerald: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    shadowColor: '#059669',
+  },
+  kpiCardAmber: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+  },
+  kpiCardSky: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+    shadowColor: '#0284C7',
+  },
+  kpiCardRose: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+    shadowColor: '#E11D48',
+  },
+  kpiTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
+  },
+  kpiValue: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  kpiSub: {
+    fontSize: 9.5,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+
+  // ── Datatable Outer Container (Identik MaterialScreen) ──
+  materialDatatableContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  materialDatatableHeader: {
+    backgroundColor: '#F0FDF4',
+    borderBottomWidth: 1.2,
+    borderBottomColor: '#D1FAE5',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  sectionHeaderBetweenModern: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sectionHeaderLeftModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  emeraldDatatableTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  emeraldDatatableSubtitle: {
+    fontSize: 10.5,
+    color: '#059669',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  materialHeaderRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  actionRaporBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  actionRaporBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  datatableInnerPadding: {
+    padding: 14,
+  },
+
   // Round Cube Tabs ([ 📖 Akademik ] [ 📖 Tahfizh ] [ 📋 Mutabaah ])
   pillTabsContainer: {
     flexDirection: 'row',
@@ -2389,8 +2799,8 @@ const styles = StyleSheet.create({
   },
   pillTabBtn: {
     flex: 1,
-    height: 42,
-    borderRadius: 10,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
@@ -2884,13 +3294,13 @@ const styles = StyleSheet.create({
     borderColor: '#DDEBE4',
   },
 
-  // Rapor KPI & Subject Cards
-  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  kpiCard: { width: '48.5%', backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0' },
-  kpiIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  kpiValue: { fontSize: 20, fontWeight: '900', color: '#0F172A' },
-  kpiLabel: { fontSize: 11, fontWeight: '800', color: '#334155', marginTop: 3 },
-  kpiSub: { fontSize: 9.5, color: '#94A3B8', marginTop: 2 },
+  // Rapor KPI & Subject Cards Legacy
+  kpiGridLegacy: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  kpiCardLegacy: { width: '48.5%', backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  kpiIconLegacy: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  kpiValueLegacy: { fontSize: 20, fontWeight: '900', color: '#0F172A' },
+  kpiLabelLegacy: { fontSize: 11, fontWeight: '800', color: '#334155', marginTop: 3 },
+  kpiSubLegacy: { fontSize: 9.5, color: '#94A3B8', marginTop: 2 },
   // Isi kartu nilai (bingkai memakai portalBodyStyles.modernCard)
   gradeCardInner: { padding: 14 },
   gradeTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },

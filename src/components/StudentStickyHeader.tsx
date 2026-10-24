@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { useActiveChildStore } from '../stores/activeChildStore';
 import {
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
@@ -245,11 +246,18 @@ export const StudentStickyHeader: React.FC<StudentStickyHeaderProps> = ({
   );
 
   const handleBack = () => {
-    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+    const currentActiveChildId = (student as any)?.id || (student as any)?.student_id || selectedChildId || useActiveChildStore.getState().activeChildId || route?.params?.child_id || route?.params?.student_id;
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, {
+      ...route?.params,
+      child_id: currentActiveChildId,
+      student_id: currentActiveChildId,
+    });
     if (handled) return;
-    const childId = route?.params?.child_id || route?.params?.student_id;
-    if (route?.params?.from_child_portal && childId) {
-      navigation?.navigate('Beranda');
+    if (currentActiveChildId) {
+      navigation?.navigate('Beranda', {
+        reopen_child_portal_id: String(currentActiveChildId),
+        reopen_timestamp: Date.now(),
+      });
       return;
     }
     if (navigation?.canGoBack?.()) {

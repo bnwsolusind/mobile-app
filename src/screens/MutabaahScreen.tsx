@@ -49,6 +49,10 @@ import { getApiErrorMessage } from '../services/api';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STUDENT_CARD_GAP = 12;
 const STUDENT_PEEK_WIDTH = 26;
+const studentCardWidth = SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP;
+const studentSnapInterval = studentCardWidth + STUDENT_CARD_GAP;
+const studentTrackPad = STUDENT_PEEK_WIDTH;
+const centerLoopOffset = studentSnapInterval;
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: string }> = {
   good: { label: 'Baik', color: '#059669', bg: '#D1FAE5', icon: 'check-circle' },
@@ -58,43 +62,61 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
   unfilled: { label: 'Belum Diisi', color: '#D97706', bg: '#FEF3C7', icon: 'clock-alert-outline' },
 };
 
-const getCategoryIconInfo = (category: string, name: string, categoryCode?: string) => {
+const getCategoryIconInfo = (category: string, name: string, categoryCode?: string, categoryColor?: string, categoryIcon?: string) => {
   const code = (categoryCode || '').toUpperCase();
+
+  // 1. Prioritize icon from database if provided
+  let iconName = 'checkbox-marked-circle-outline';
+  if (categoryIcon) {
+    const iconLower = categoryIcon.toLowerCase();
+    if (iconLower.includes('moon') || iconLower.includes('star')) iconName = 'weather-night';
+    else if (iconLower.includes('book') || iconLower.includes('quran')) iconName = 'book-open-page-variant';
+    else if (iconLower.includes('heart') || iconLower.includes('hand')) iconName = 'hand-heart-outline';
+    else if (iconLower.includes('sparkle')) iconName = 'sparkles';
+    else if (iconLower.includes('clock') || iconLower.includes('time')) iconName = 'clock-outline';
+    else if (iconLower.includes('shield')) iconName = 'shield-check-outline';
+  }
+
+  // 2. Prioritize color from database if provided
+  if (categoryColor) {
+    const color = categoryColor;
+    const bg = color.startsWith('#') ? `${color}18` : '#ECFDF5';
+    if (iconName !== 'checkbox-marked-circle-outline') {
+      return { icon: iconName, color, bg };
+    }
+  }
+
+  // 3. Category code mapping based strictly on relational category code
   if (code === 'SHALAT' || code === 'SHOLAT') {
-    return { icon: 'mosque', color: '#0284C7', bg: '#E0F2FE' };
+    return { icon: 'mosque', color: categoryColor || '#0284C7', bg: '#E0F2FE' };
   }
   if (code === 'TILAWAH' || code === 'TAHFIZH' || code === 'QURAN') {
-    return { icon: 'book-open-page-variant', color: '#059669', bg: '#D1FAE5' };
+    return { icon: 'book-open-page-variant', color: categoryColor || '#059669', bg: '#D1FAE5' };
   }
-  if (code === 'IBADAH-HARIAN' || code === 'DZIKIR' || code === 'DOA') {
-    return { icon: 'hands-pray', color: '#D97706', bg: '#FEF3C7' };
+  if (code === 'IBADAH-HARIAN' || code === 'MUTABAAH-YAUMIYYAH' || code === 'DZIKIR' || code === 'DOA') {
+    return { icon: 'hands-pray', color: categoryColor || '#D97706', bg: '#FEF3C7' };
   }
   if (code === 'ADAB' || code === 'KEBERSIHAN' || code === 'KEDISIPLINAN') {
-    return { icon: 'shield-heart-outline', color: '#7C3AED', bg: '#EDE9FE' };
+    return { icon: 'shield-heart-outline', color: categoryColor || '#7C3AED', bg: '#EDE9FE' };
   }
-  const cat = (category || '').toLowerCase();
-  const n = (name || '').toLowerCase();
 
-  if (cat.includes('shalat') || cat.includes('sholat') || n.includes('shalat') || n.includes('sholat') || n.includes('subuh') || n.includes('dzuhur') || n.includes('ashar') || n.includes('maghrib') || n.includes('isya') || n.includes('dhuha') || n.includes('tahajud') || n.includes('witir')) {
-    return { icon: 'mosque', color: '#0284C7', bg: '#E0F2FE' };
-  }
-  if (cat.includes('quran') || cat.includes('tahfizh') || cat.includes('tilawah') || n.includes('qur') || n.includes('hafalan') || n.includes('juz')) {
-    return { icon: 'book-open-page-variant', color: '#059669', bg: '#D1FAE5' };
-  }
-  if (cat.includes('dzikir') || cat.includes('doa') || n.includes('dzikir') || n.includes('doa') || n.includes('alma\'tsurat') || n.includes('petang') || n.includes('pagi')) {
-    return { icon: 'hands-pray', color: '#D97706', bg: '#FEF3C7' };
-  }
-  if (cat.includes('adab') || cat.includes('akhlak') || cat.includes('karakter') || n.includes('adab') || n.includes('sopan') || n.includes('kebersihan')) {
-    return { icon: 'shield-heart-outline', color: '#7C3AED', bg: '#EDE9FE' };
-  }
-  if (cat.includes('kosa kata') || cat.includes('bahasa') || cat.includes('belajar') || n.includes('buku') || n.includes('belajar')) {
-    return { icon: 'translate', color: '#4F46E5', bg: '#EEF2FF' };
-  }
-  return { icon: 'checkbox-marked-circle-outline', color: '#059669', bg: '#ECFDF5' };
+  return { icon: iconName, color: categoryColor || '#059669', bg: '#ECFDF5' };
 };
 
 const formatDateIndo = (dateStr: string) => {
   try {
+    if (!dateStr) return '';
+    const cleanStr = String(dateStr).split('T')[0];
+    const parts = cleanStr.split('-').map(Number);
+    if (parts.length === 3 && parts[0] && parts[1] && parts[2]) {
+      const dObj = new Date(parts[0], parts[1] - 1, parts[2]);
+      return new Intl.DateTimeFormat('id-ID', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      }).format(dObj);
+    }
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return new Intl.DateTimeFormat('id-ID', {
@@ -115,40 +137,9 @@ const getLocalDateString = (d: Date = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
-const isSholatItem = (item: any) => {
-  const code = (item?.category_code || '').toUpperCase();
-  if (code === 'SHALAT' || code === 'SHOLAT') return true;
-  const cat = (item?.category || '').toLowerCase();
-  const name = (item?.name || '').toLowerCase();
-  return (
-    cat.includes('shalat') ||
-    cat.includes('sholat') ||
-    name.includes('shalat') ||
-    name.includes('sholat') ||
-    name.includes('subuh') ||
-    name.includes('dzuhur') ||
-    name.includes('ashar') ||
-    name.includes('maghrib') ||
-    name.includes('isya') ||
-    name.includes('dhuha') ||
-    name.includes('tahajud') ||
-    name.includes('witir')
-  );
-};
-
 const isQuranItem = (item: any) => {
   const code = (item?.category_code || '').toUpperCase();
-  if (code === 'TILAWAH' || code === 'TAHFIZH' || code === 'QURAN') return true;
-  const cat = (item?.category || '').toLowerCase();
-  const name = (item?.name || '').toLowerCase();
-  return (
-    cat.includes('quran') ||
-    cat.includes('tahfizh') ||
-    cat.includes('tilawah') ||
-    name.includes('qur') ||
-    name.includes('hafalan') ||
-    name.includes('juz')
-  );
+  return code === 'TILAWAH' || code === 'TAHFIZH' || code === 'QURAN';
 };
 
 const RadarExclamation = React.memo(() => {
@@ -263,6 +254,66 @@ export default function MutabaahScreen({ route, navigation }: any) {
   const childrenRef = useRef(children);
   childrenRef.current = children;
 
+  const studentLoopCount = children.length;
+  const safeCenter = studentLoopCount > 0 ? ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount : 0;
+
+  const loopWindow = useMemo(() => {
+    const n = studentLoopCount;
+    if (n <= 1) return { list: children, realIdx: [0] };
+    const cur = ((activeChildIndex % n) + n) % n;
+    const prev = (cur - 1 + n) % n;
+    const next = (cur + 1) % n;
+    return {
+      list: [children[prev], children[cur], children[next]],
+      realIdx: [prev, cur, next],
+    };
+  }, [children, activeChildIndex, studentLoopCount]);
+
+  const syncLoopChildId = useCallback((newIdx: number) => {
+    if (!children || children.length === 0) return;
+    const n = children.length;
+    const norm = ((newIdx % n) + n) % n;
+    const targetChild = children[norm];
+    if (targetChild) {
+      const targetId = String(targetChild.id || targetChild.student_id);
+      setSelectedChildId(targetId);
+      useActiveChildStore.getState().setActiveChildId(targetId);
+    }
+  }, [children]);
+
+  const recenterLoop = useCallback(() => {
+    if (studentLoopCount > 1) {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
+    }
+  }, [studentLoopCount]);
+
+  const goToLoopChild = useCallback((targetRealIdx: number) => {
+    if (studentLoopCount <= 1) {
+      setActiveChildIndex(0);
+      syncLoopChildId(0);
+      return;
+    }
+    const n = studentLoopCount;
+    const cur = safeCenter;
+    const target = ((targetRealIdx % n) + n) % n;
+    if (target === cur) {
+      recenterLoop();
+      return;
+    }
+    setActiveChildIndex(target);
+    syncLoopChildId(target);
+    const forwardStep = (target - cur + n) % n;
+    const backwardStep = (cur - target + n) % n;
+    if (forwardStep <= backwardStep) {
+      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
+    } else {
+      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
+    }
+    setTimeout(() => {
+      recenterLoop();
+    }, 280);
+  }, [studentLoopCount, safeCenter, syncLoopChildId, recenterLoop]);
+
   // Hanya tangani perubahan parameter rute yang benar-benar baru dari luar halaman (bukan saat swipe internal)
   useEffect(() => {
     const incomingParamId = route?.params?.child_id || route?.params?.student_id;
@@ -340,6 +391,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
   } | null>(null);
 
   const [historyRows, setHistoryRows] = useState<any[]>([]);
+  const [historyPeriods, setHistoryPeriods] = useState<any>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -381,7 +433,11 @@ export default function MutabaahScreen({ route, navigation }: any) {
   // Helper menghasilkan 7 hari berurutan di sekitar selectedDate untuk date strip (Screen 1 & 3)
   const dateStripDays = useMemo(() => {
     try {
-      const base = new Date(selectedDate);
+      const cleanStr = String(selectedDate).split('T')[0];
+      const parts = cleanStr.split('-').map(Number);
+      const base = parts.length === 3 && parts[0] && parts[1] && parts[2]
+        ? new Date(parts[0], parts[1] - 1, parts[2])
+        : new Date(selectedDate);
       if (isNaN(base.getTime())) return [];
       const dayOfWeek = base.getDay();
       const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
@@ -482,88 +538,6 @@ export default function MutabaahScreen({ route, navigation }: any) {
     };
   }, [isParent, user?.id]);
 
-  const studentCardWidth = useMemo(() => {
-    return children.length > 1
-      ? SCREEN_WIDTH - 16 - STUDENT_CARD_GAP - STUDENT_PEEK_WIDTH
-      : SCREEN_WIDTH - 32;
-  }, [children.length]);
-
-  const studentSnapInterval = useMemo(() => {
-    return studentCardWidth + STUDENT_CARD_GAP;
-  }, [studentCardWidth]);
-
-  // Padding kiri-kanan track = setengah sisa layar -> potongan (peek) kiri & kanan
-  // SEIMBANG (masing-masing (sisa/2 - gap)). Single: 16 | multi: 27.
-  const studentTrackPad = useMemo(() => {
-    return (SCREEN_WIDTH - studentCardWidth) / 2;
-  }, [studentCardWidth]);
-
-  // Carousel INFINITE seimbang & ringan: hanya 3 card yang dirender
-  // ([sebelumnya, aktif, berikutnya]), anak aktif selalu di TENGAH sehingga
-  // kiri-kanan seimbang (1 vs 1). Geser ke ujung mana pun lanjut memutar.
-  const studentLoopCount = children.length > 1 ? children.length : 0;
-  const safeCenter = studentLoopCount === 0
-    ? 0
-    : ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount;
-
-  const loopWindow = useMemo(() => {
-    if (studentLoopCount === 0) return { list: children, realIdx: [0] };
-    const n = studentLoopCount;
-    const prev = (safeCenter - 1 + n) % n;
-    const next = (safeCenter + 1) % n;
-    return {
-      list: [children[prev], children[safeCenter], children[next]],
-      realIdx: [prev, safeCenter, next],
-    };
-  }, [children, studentLoopCount, safeCenter]);
-
-  const centerLoopOffset = studentSnapInterval;
-
-  // Kembali ke tengah (tanpa animasi) — tak terlihat karena card yang tampil sama
-  const recenterLoop = (): void => {
-    if (studentLoopCount === 0) return;
-    studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
-  };
-
-  const syncLoopChildId = (realIdx: number): void => {
-    const selChild = children[realIdx];
-    const sid = selChild?.id || selChild?.student_id;
-    if (sid) {
-      const strSid = String(sid);
-      setSelectedChildId(strSid);
-      useActiveChildStore.getState().setActiveChildId(strSid);
-    }
-  };
-
-  // Pindah ke anak target: tetangga digeser animasi, lompatan jauh instan
-  const goToLoopChild = useCallback((target: number): void => {
-    if (studentLoopCount === 0) return;
-    const n = studentLoopCount;
-    const cur = ((activeChildIndex % n) + n) % n;
-    const tgt = ((target % n) + n) % n;
-    if (tgt === cur) {
-      recenterLoop();
-      return;
-    }
-    const fwd = (tgt - cur + n) % n;
-    if (fwd === 1) {
-      setActiveChildIndex(tgt);
-      syncLoopChildId(tgt);
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
-      return;
-    }
-    if (fwd === n - 1) {
-      setActiveChildIndex(tgt);
-      syncLoopChildId(tgt);
-      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
-      return;
-    }
-    setActiveChildIndex(tgt);
-    syncLoopChildId(tgt);
-    recenterLoop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studentLoopCount, activeChildIndex, centerLoopOffset, children]);
-
   // Sinkronkan activeChildIndex jika selectedChildId berubah dari luar (route params / store)
   useEffect(() => {
     if (children.length > 0 && selectedChildId) {
@@ -574,15 +548,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
         setActiveChildIndex(idx);
       }
     }
-  }, [selectedChildId, children]);
-
-  // Posisikan ke tengah setiap kali jumlah anak / lebar card berubah
-  useEffect(() => {
-    if (studentLoopCount === 0) return;
-    requestAnimationFrame(() => {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
-    });
-  }, [studentLoopCount, studentSnapInterval, centerLoopOffset]);
+  }, [selectedChildId, children, activeChildIndex]);
 
   // 2. Load Mutabaah Overview with L1 in-memory + L2 disk cache (0ms instant response)
   const loadMutabaah = useCallback(async () => {
@@ -682,6 +648,14 @@ export default function MutabaahScreen({ route, navigation }: any) {
       const list = Array.isArray(rows) ? rows : [];
       setHistoryRows(list);
       void offlineCache.set(histKey, list);
+      if (payload?.weekly || payload?.monthly || payload?.semester) {
+        setHistoryPeriods({
+          weekly: payload?.weekly,
+          monthly: payload?.monthly,
+          semester: payload?.semester,
+          summary: payload?.summary,
+        });
+      }
     } catch {
       if (!cachedHist) {
         setHistoryRows([]);
@@ -885,7 +859,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
         visible: true,
         type: 'success',
         title: 'Amalan Berhasil Dikirim! 🎉',
-        message: 'Catatan amalan harian ananda telah berhasil disimpah.',
+        message: 'Catatan amalan harian ananda telah berhasil disimpan.',
         itemName: savedName,
         statusLabel: statusObj.label,
         statusColor: statusObj.color,
@@ -998,18 +972,70 @@ export default function MutabaahScreen({ route, navigation }: any) {
   const details = useMemo(() => {
     return overview?.today?.details || [];
   }, [overview]);
+  const studentData = overview?.student;
 
-  // Program & Care Location
-  const programType = overview?.program || 'fullday';
-  const isBoarding = programType === 'boarding' || overview?.care_location === 'boarding';
+  // Siswa aktif untuk sticky header & hero (anak terpilih -> data mutabaah -> profil -> user)
+  const headerStudent = useMemo(() => {
+    if (children && children.length > 0) {
+      const found = children.find(
+        (c) => String(c.id || c.student_id) === String(selectedChildId)
+      );
+      if (found) return found;
+      return children[0];
+    }
+    if (studentData) return studentData;
+    return (user as any)?.student || user || null;
+  }, [children, selectedChildId, studentData, user]);
+
+  // Deteksi Tipe Program Siswa: Boarding (Asrama 24 Jam) vs Fullday School (Jam Sekolah)
+  const isBoarding = useMemo(() => {
+    const prog = String(
+      overview?.program ||
+      overview?.data?.program ||
+      overview?.care_location ||
+      headerStudent?.program ||
+      headerStudent?.program_type ||
+      headerStudent?.care_location ||
+      ''
+    ).toLowerCase();
+    if (prog === 'boarding' || prog === 'pesantren' || prog === 'asrama') return true;
+    if (prog === 'fullday' || prog === 'regular') return false;
+
+    const unitLower = String(
+      headerStudent?.education_unit?.name ||
+      headerStudent?.unit_pendidikan?.nama ||
+      headerStudent?.unit_name ||
+      headerStudent?.unit ||
+      headerStudent?.kelas?.nama_kelas ||
+      headerStudent?.class_name ||
+      headerStudent?.rombel_name ||
+      ''
+    ).toLowerCase();
+
+    return (
+      unitLower.includes('boarding') ||
+      unitLower.includes('pesantren') ||
+      unitLower.includes('asrama') ||
+      unitLower.includes('mahad') ||
+      unitLower.includes('pondok')
+    );
+  }, [overview, headerStudent]);
+
   const careLocation = overview?.care_location || (isBoarding ? 'boarding' : 'home');
+
+  // Jika siswa bertipe boarding, fallback scopeTab dari 'home' ke 'all'
+  useEffect(() => {
+    if (isBoarding && scopeTab === 'home') {
+      setScopeTab('all');
+    }
+  }, [isBoarding, scopeTab]);
 
   const homeDetails = useMemo(() => {
     return details.filter((d: any) => d.scope === 'home' || d.input_location === 'home' || d.is_parent_item);
   }, [details]);
 
   const schoolDetails = useMemo(() => {
-    return details.filter((d: any) => d.scope === 'school' || d.input_location === 'school');
+    return details.filter((d: any) => d.scope === 'school' || d.input_location === 'school' || d.scope === 'boarding' || d.input_location === 'boarding');
   }, [details]);
 
   const categories = useMemo(() => {
@@ -1031,83 +1057,140 @@ export default function MutabaahScreen({ route, navigation }: any) {
     });
   };
 
+  // Kategori Dinamis 100% dari data agenda aktual database PostgreSQL (memperhitungkan filter boarding)
+  const dynamicCategories = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; code?: string; color?: string; icon?: string; count: number; goodCount: number; items: any[] }>();
+    const baseList = isBoarding
+      ? details.filter((d: any) => d.scope !== 'home' && !d.is_parent_item)
+      : details;
+
+    baseList.forEach((item: any) => {
+      const catName = item.category || 'Amalan';
+      const catId = item.category_id || catName;
+      const catCode = item.category_code || '';
+      const catColor = item.category_color || '';
+      const catIcon = item.category_icon || '';
+      if (!map.has(catId)) {
+        map.set(catId, {
+          id: catId,
+          name: catName,
+          code: catCode,
+          color: catColor,
+          icon: catIcon,
+          count: 0,
+          goodCount: 0,
+          items: [],
+        });
+      }
+      const entry = map.get(catId)!;
+      entry.count += 1;
+      if (item.status_value === 'good') entry.goodCount += 1;
+      entry.items.push(item);
+    });
+    return Array.from(map.values());
+  }, [details, isBoarding]);
+
+  const categoryFilterOptions = useMemo(() => {
+    const totalCount = dynamicCategories.reduce((acc, c) => acc + c.count, 0);
+    return [
+      { key: 'all', label: 'Semua', count: totalCount },
+      ...dynamicCategories.map((c) => ({
+        key: c.name,
+        label: c.name,
+        count: c.count,
+      })),
+    ];
+  }, [dynamicCategories]);
+
+  // Filter butir agenda berdasarkan scope (semua/rumah/sekolah/asrama) dan kategori dinamis
   const filteredDetails = useMemo(() => {
     let list = details;
-    if (!isBoarding) {
+    if (isBoarding) {
+      // Jika santri asrama/boarding: sembunyikan amalan rumah
+      list = details.filter((d: any) => d.scope !== 'home' && !d.is_parent_item);
+      if (scopeTab === 'school') {
+        list = list.filter((d: any) => d.scope === 'school' || d.scope === 'boarding' || d.input_location === 'boarding' || d.input_location === 'school');
+      }
+    } else {
+      // Jika siswa fullday:
       if (scopeTab === 'home') list = homeDetails;
       else if (scopeTab === 'school') list = schoolDetails;
     }
-    let res = list;
+
     if (selectedCategory === 'all') {
-      res = list;
-    } else if (selectedCategory === 'sholat' || selectedCategory === 'Sholat' || selectedCategory === 'Shalat') {
-      res = list.filter((d: any) => isSholatItem(d));
-    } else if (selectedCategory === 'quran' || selectedCategory === "Al-Qur'an") {
-      res = list.filter((d: any) => isQuranItem(d));
-    } else if (selectedCategory === 'yaumiyyah' || selectedCategory === 'Mutaba’ah' || selectedCategory === 'Mutabaah') {
-      res = list.filter((d: any) => !isSholatItem(d) && !isQuranItem(d));
-    } else {
-      res = list.filter((d: any) => d.category === selectedCategory);
+      return isBoarding ? list : sortHomeFirst(list);
     }
-    return sortHomeFirst(res);
+    const filtered = list.filter((d: any) => {
+      const cat = d.category || '';
+      return (
+        cat.toLowerCase() === selectedCategory.toLowerCase() ||
+        cat === selectedCategory ||
+        d.category_id === selectedCategory ||
+        d.category_code === selectedCategory
+      );
+    });
+    return isBoarding ? filtered : sortHomeFirst(filtered);
   }, [details, isBoarding, scopeTab, homeDetails, schoolDetails, selectedCategory]);
 
-  // Program counts untuk 3 kartu di Screen 1 (Sholat, Mutaba'ah Yaumiyyah, Al-Qur'an)
-  const programCounts = useMemo(() => {
-    let shalat = 0;
-    let yaumiyyah = 0;
-    let quran = 0;
+  const isSelectedCategoryQuran = useMemo(() => {
+    if (selectedCategory === 'all') return false;
+    const found = dynamicCategories.find(c => c.name === selectedCategory || c.id === selectedCategory || c.code === selectedCategory);
+    if (!found) return false;
+    const code = (found.code || '').toUpperCase();
+    return code === 'TILAWAH' || code === 'TAHFIZH' || code === 'QURAN' || found.name.toLowerCase().includes('quran') || found.name.toLowerCase().includes('tahfizh') || found.name.toLowerCase().includes('tilawah');
+  }, [selectedCategory, dynamicCategories]);
 
-    details.forEach((item: any) => {
-      if (isSholatItem(item)) {
-        shalat++;
-      } else if (isQuranItem(item)) {
-        quran++;
-      } else {
-        yaumiyyah++;
-      }
-    });
+  // Ringkasan KPI Harian Terpadu (100% Real Time dari Data Backend)
+  const totalAgendaCount = details.length;
+  const todayGoodCount = useMemo(() => {
+    if (overview?.today?.good_count != null) return Number(overview.today.good_count);
+    return details.filter((d: any) => d.status_value === 'good').length;
+  }, [overview?.today?.good_count, details]);
 
-    return {
-      shalat: shalat,
-      yaumiyyah: yaumiyyah,
-      quran: quran,
-    };
-  }, [details]);
+  const todayLessCount = useMemo(() => {
+    if (overview?.today?.less_count != null) return Number(overview.today.less_count);
+    return details.filter((d: any) => d.status_value === 'less').length;
+  }, [overview?.today?.less_count, details]);
 
-  // Breakdown progress per kategori untuk Pengesahan & Paraf Orang Tua (Screen 7)
+  const todayNotDoneCount = useMemo(() => {
+    if (overview?.today?.not_done_count != null) return Number(overview.today.not_done_count);
+    return details.filter((d: any) => d.status_value === 'not_done').length;
+  }, [overview?.today?.not_done_count, details]);
+
+  const todayNaCount = useMemo(() => {
+    if (overview?.today?.na_count != null) return Number(overview.today.na_count);
+    return details.filter((d: any) => d.status_value === 'na').length;
+  }, [overview?.today?.na_count, details]);
+
+  const todayScore = useMemo(() => {
+    if (overview?.today?.score != null) return Math.round(Number(overview.today.score));
+    if (totalAgendaCount > 0) return Math.round((todayGoodCount / totalAgendaCount) * 100);
+    return 0;
+  }, [overview?.today?.score, todayGoodCount, totalAgendaCount]);
+
+  const todayStatusLabel = useMemo(() => {
+    if (todayScore >= 85) return 'Sangat Tertib';
+    if (todayScore >= 70) return 'Tertib Terjaga';
+    if (todayScore > 0) return 'Perlu Pendampingan';
+    return 'Belum Diisi';
+  }, [todayScore]);
+
+  // Breakdown progress per kategori untuk Pengesahan & Paraf Orang Tua (Screen 7) - 100% Dinamis dari Database
   const categoryProgressBreakdown = useMemo(() => {
-    const groups: Record<string, { total: number; good: number; label: string; icon: string; color: string; bg: string }> = {
-      shalat: { total: 0, good: 0, label: 'Sholat Wajib & Sunnah', icon: 'mosque', color: '#0284C7', bg: '#E0F2FE' },
-      yaumiyyah: { total: 0, good: 0, label: 'Mutaba’ah Yaumiyyah', icon: 'hands-pray', color: '#D97706', bg: '#FEF3C7' },
-      quran: { total: 0, good: 0, label: 'Al-Qur’an & Tahfizh', icon: 'book-open-page-variant', color: '#059669', bg: '#D1FAE5' },
-      adab: { total: 0, good: 0, label: 'Adab & Karakter', icon: 'shield-heart-outline', color: '#7C3AED', bg: '#EDE9FE' },
-    };
-
-    details.forEach((item: any) => {
-      const code = (item.category_code || '').toUpperCase();
-      const cat = (item.category || '').toLowerCase();
-      const name = (item.name || '').toLowerCase();
-      const isGood = item.status_value === 'good';
-
-      if (code === 'SHALAT' || code === 'SHOLAT' || cat.includes('shalat') || cat.includes('sholat') || name.includes('shalat') || name.includes('sholat') || name.includes('subuh') || name.includes('dzuhur') || name.includes('ashar') || name.includes('maghrib') || name.includes('isya')) {
-        groups.shalat.total++;
-        if (isGood) groups.shalat.good++;
-      } else if (code === 'TILAWAH' || code === 'TAHFIZH' || code === 'QURAN' || cat.includes('quran') || cat.includes('tahfizh') || cat.includes('tilawah') || name.includes('qur') || name.includes('hafalan')) {
-        groups.quran.total++;
-        if (isGood) groups.quran.good++;
-      } else if (code === 'ADAB' || code === 'KEBERSIHAN' || code === 'KEDISIPLINAN' || cat.includes('adab') || cat.includes('akhlak') || cat.includes('karakter') || name.includes('adab') || name.includes('sopan')) {
-        groups.adab.total++;
-        if (isGood) groups.adab.good++;
-      } else {
-        groups.yaumiyyah.total++;
-        if (isGood) groups.yaumiyyah.good++;
-      }
+    return dynamicCategories.map((cat) => {
+      const iconInfo = getCategoryIconInfo(cat.name, '', cat.code, cat.color, cat.icon);
+      return {
+        id: cat.id,
+        label: cat.name,
+        code: cat.code,
+        total: cat.count,
+        good: cat.goodCount,
+        icon: iconInfo.icon,
+        color: iconInfo.color,
+        bg: iconInfo.bg,
+      };
     });
-
-    const activeGroups = Object.values(groups).filter(g => g.total > 0);
-    return activeGroups.length > 0 ? activeGroups : Object.values(groups);
-  }, [details]);
+  }, [dynamicCategories]);
 
   // Amalan pada modal ibadah disortir agar amalan yang di-klik berada paling atas
   const sortedWorshipItems = useMemo(() => {
@@ -1138,20 +1221,6 @@ export default function MutabaahScreen({ route, navigation }: any) {
     setSelectedDate(getLocalDateString(d));
   };
 
-  const studentData = overview?.student;
-
-  // Siswa aktif untuk sticky header & hero (anak terpilih -> data mutabaah -> profil -> user)
-  const headerStudent = useMemo(() => {
-    if (children && children.length > 0) {
-      const found = children.find(
-        (c) => String(c.id || c.student_id) === String(selectedChildId)
-      );
-      if (found) return found;
-      return children[0];
-    }
-    if (studentData) return studentData;
-    return (user as any)?.student || user || null;
-  }, [children, selectedChildId, studentData, user]);
 
   // Nama depan + fallback tahun ajaran untuk subtitle hero statis
   const heroFirstName = useMemo(
@@ -1163,10 +1232,12 @@ export default function MutabaahScreen({ route, navigation }: any) {
   }, [headerStudent, user]);
 
   const heroSubtitleFallback = useMemo(() => {
+    if (overview?.academic_year) return `Tahun Ajaran ${overview.academic_year}`;
+    if (headerStudent?.academic_year) return `Tahun Ajaran ${headerStudent.academic_year}`;
     const now = new Date();
     const y = now.getFullYear();
     return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
-  }, []);
+  }, [overview?.academic_year, headerStudent?.academic_year]);
 
   const monthlyStats = useMemo(() => {
     if (overview?.monthly && typeof overview.monthly.score !== 'undefined') {
@@ -1278,293 +1349,258 @@ export default function MutabaahScreen({ route, navigation }: any) {
     );
   }
 
-  // Agregasi Data Multi-Periode Pemantauan Terpadu (Harian, Mingguan, Bulanan, Semester)
-  const periods = monitoringData?.periods || {};
-  const weeklyPeriodData = periods.mingguan || periods.weekly || {
-    score: overview?.weekly?.score != null ? Math.round(Number(overview.weekly.score)) : 90,
-    date_range: '7 Hari Terakhir',
-    days_active: 7,
-    category_stats: {
-      fardhu: { rate: 100, good: 5, total: 5, label: 'Sangat Tertib' },
-      sunnah: { rate: 90, good: 5, total: 6, label: 'Rutin Terjaga' },
-      tilawah: { rate: 92, good: 5, total: 5, label: 'Aktif Istiqamah' },
-      adab: { rate: 95, good: 12, total: 13, label: 'Karakter Unggul' },
-    },
-    shalat_fardhu: [
-      { code: 'SUBUH', name: 'Subuh', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'ZUHUR', name: 'Zuhur', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'ASHAR', name: 'Ashar', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'MAGHRIB', name: 'Maghrib', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'ISYA', name: 'Isya', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-    ],
-    shalat_sunnah: [
-      { code: 'TAHAJUD-WITIR', name: 'Tahajud / Witir', good_count: 6, total_days: 7, rate: 86, status_label: 'Rutin' },
-      { code: 'SHOLAT-SUNNAH-FAJAR', name: 'Sholat Sunnah Fajar', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'DHUHA', name: 'Sholat Dhuha', good_count: 6, total_days: 7, rate: 86, status_label: 'Rutin' },
-      { code: 'RAWATIB-ZUHUR', name: 'Qobliyah/Bakdiyah Zuhur', good_count: 6, total_days: 7, rate: 86, status_label: 'Rutin' },
-      { code: 'QOBLIYAH-ASHAR', name: 'Qobliyah Ashar', good_count: 5, total_days: 7, rate: 71, status_label: 'Cukup' },
-      { code: 'BAKDIYAH-MAGRIB', name: 'Bakdiyah Maghrib', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-    ],
-    tilawah_dzikir: [
-      { code: 'ZIKIR-PAGI', name: 'Zikir Pagi', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'ZIKIR-PETANG', name: 'Zikir Petang / Sore', good_count: 6, total_days: 7, rate: 86, status_label: 'Rutin' },
-      { code: 'MURAJAAH-DENGAN-ORTU', name: 'Muraja’ah dengan Ortu', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'BACA-SURAT-ALKAHFI', name: 'Membaca Surat Al-Kahfi', good_count: 1, total_days: 1, rate: 100, status_label: 'Istiqamah' },
-      { code: 'PUASA-SUNNAH', name: 'Puasa Sunnah Senin & Kamis', good_count: 2, total_days: 2, rate: 100, status_label: 'Istiqamah' },
-    ],
-    adab_karakter: [
-      { code: 'WUDHU-SEBELUM-TIDUR', name: 'Wudhu Sebelum Tidur', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'DOA-ZIKIR-SEBELUM-TIDUR', name: 'Doa & Zikir Sebelum Tidur', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'DOA-BANGUN-TIDUR', name: 'Doa Bangun Tidur', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'SALAM-ORANG-TUA', name: 'Mengucap Salam ke Ortu', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'DOA-KELUAR-RUMAH', name: 'Doa Keluar Rumah', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'DOA-NAIK-KENDARAAN', name: 'Doa Naik Kendaraan', good_count: 6, total_days: 7, rate: 86, status_label: 'Rutin' },
-      { code: 'SEDEKAH', name: 'Sedekah Subuh / Harian', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'MENEBAR-SALAM', name: 'Menebar Salam', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'MENDOAKAN-ORTU', name: 'Mendoakan Ortu & Guru', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'KAJIAN', name: 'Mengikuti Majelis / Kajian', good_count: 5, total_days: 7, rate: 71, status_label: 'Cukup' },
-      { code: 'HAFALAN-DOA', name: 'Menghafal Doa Harian', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'HAFALAN-HADIST', name: 'Menghafal Hadits Pilihan', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'KOSA-KATA-BAHASA', name: 'Menghafal Kosa Kata Bahasa', good_count: 6, total_days: 7, rate: 86, status_label: 'Rutin' },
-      { code: 'BANTU-ORANG-TUA', name: 'Membantu Orang Tua', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'JAGA-KEBERSIHAN', name: 'Menjaga Kebersihan Diri', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-      { code: 'TEPAT-WAKTU', name: 'Disiplin Tepat Waktu', good_count: 7, total_days: 7, rate: 100, status_label: 'Istiqamah' },
-    ],
-    tahfizh_logs: [],
+  // Agregasi Data Multi-Periode Pemantauan Terpadu (100% Dinamis dari Data Backend PostgreSQL)
+  const periods = useMemo(() => {
+    return {
+      ...(monitoringData?.periods || {}),
+      ...(historyPeriods || {}),
+    };
+  }, [monitoringData?.periods, historyPeriods]);
+
+  const weeklyPeriodData = useMemo(() => {
+    const raw = periods.mingguan || periods.weekly || overview?.weekly;
+    const filledDays = Number(raw?.filled_days ?? raw?.days ?? 0);
+    const totalDays = Number(raw?.total_days ?? 7);
+    const completionRate = Number(raw?.completion_rate ?? (totalDays > 0 ? Math.round((filledDays / totalDays) * 100) : 0));
+    const scoreVal = filledDays > 0 && raw?.score != null ? Math.round(Number(raw.score)) : 0;
+    const dateRangeStr = raw?.from && raw?.until
+      ? `${formatDateIndo(raw.from)} - ${formatDateIndo(raw.until)}`
+      : '7 Hari Terakhir';
+    const statusLabel = raw?.status_label || (
+      filledDays === 0
+        ? 'Belum Ada Evaluasi'
+        : scoreVal > 0
+        ? `${scoreVal}%`
+        : 'Evaluasi Sedang Berjalan'
+    );
+    const statusDesc = raw?.status_desc || (
+      filledDays === 0
+        ? 'Belum ada catatan mutaba\'ah yang diisi sepanjang pekan ini.'
+        : `Ananda tertib menjalankan amalan (${filledDays} dari ${totalDays} hari terisi, rata-rata ${scoreVal}%).`
+    );
+    return {
+      score: scoreVal,
+      date_range: dateRangeStr,
+      days_active: filledDays,
+      filled_days: filledDays,
+      total_days: totalDays,
+      completion_rate: completionRate,
+      status_label: statusLabel,
+      status_desc: statusDesc,
+      good: Number(raw?.good ?? 0),
+      less: Number(raw?.less ?? 0),
+      not_done: Number(raw?.not_done ?? 0),
+      na: Number(raw?.na ?? 0),
+      tahfizh_logs: raw?.tahfizh_logs || [],
+    };
+  }, [periods, overview?.weekly]);
+
+  const monthlyPeriodData = useMemo(() => {
+    const raw = periods.bulanan || periods.monthly || overview?.monthly;
+    const filledDays = Number(raw?.filled_days ?? raw?.days ?? monthlyStats.days ?? 0);
+    const totalDays = Number(raw?.total_days ?? 30);
+    const completionRate = Number(raw?.completion_rate ?? (totalDays > 0 ? Math.round((filledDays / totalDays) * 100) : 0));
+    const scoreVal = filledDays > 0 && (raw?.score != null || monthlyStats.score > 0)
+      ? Math.round(Number(raw?.score ?? monthlyStats.score))
+      : 0;
+    const dateRangeStr = raw?.from && raw?.until
+      ? `${formatDateIndo(raw.from)} - ${formatDateIndo(raw.until)}`
+      : '30 Hari Terakhir';
+    const statusLabel = raw?.status_label || (
+      filledDays === 0
+        ? 'Belum Ada Evaluasi'
+        : scoreVal > 0
+        ? `${scoreVal}%`
+        : 'Evaluasi Sedang Berjalan'
+    );
+    const statusDesc = raw?.status_desc || (
+      filledDays === 0
+        ? 'Belum ada catatan mutaba\'ah yang diisi pada bulan ini.'
+        : `Ananda rutin menjalankan amalan (${filledDays} dari ${totalDays} hari aktif, capaian ${scoreVal}%).`
+    );
+    return {
+      score: scoreVal,
+      date_range: dateRangeStr,
+      days_active: filledDays,
+      filled_days: filledDays,
+      total_days: totalDays,
+      completion_rate: completionRate,
+      status_label: statusLabel,
+      status_desc: statusDesc,
+      good: Number(raw?.good ?? monthlyStats.good ?? 0),
+      less: Number(raw?.less ?? monthlyStats.less ?? 0),
+      not_done: Number(raw?.not_done ?? monthlyStats.not_done ?? 0),
+      na: Number(raw?.na ?? monthlyStats.na ?? 0),
+      tahfizh_logs: raw?.tahfizh_logs || [],
+    };
+  }, [periods, overview?.monthly, monthlyStats]);
+
+  const semesterPeriodData = useMemo(() => {
+    const raw = periods.semester || overview?.semester;
+    const filledDays = Number(raw?.filled_days ?? raw?.days ?? 0);
+    const totalDays = Number(raw?.total_days || 0);
+    const completionRate = Number(raw?.completion_rate ?? (totalDays > 0 ? Math.round((filledDays / totalDays) * 100) : 0));
+    const scoreVal = filledDays > 0 && raw?.score != null ? Math.round(Number(raw.score)) : 0;
+    const semesterName = raw?.semester_name || raw?.name || raw?.badge || overview?.semester?.name || overview?.semester_name || 'Semester Aktif';
+    const dateRangeStr = raw?.from && raw?.until
+      ? `${formatDateIndo(raw.from)} - ${formatDateIndo(raw.until)}`
+      : raw?.date_range || semesterName;
+    const statusLabel = raw?.status_label || (
+      filledDays === 0
+        ? 'Belum Ada Evaluasi'
+        : scoreVal > 0
+        ? `${scoreVal}%`
+        : 'Evaluasi Sedang Berjalan'
+    );
+    const statusDesc = raw?.status_desc || (
+      filledDays > 0
+        ? `${dateRangeStr} · ${filledDays} Hari Aktif Pembiasaan Ibadah & Adab Karakter.`
+        : 'Belum ada data evaluasi semester yang tercatat.'
+    );
+    return {
+      score: scoreVal,
+      semester_name: semesterName,
+      date_range: dateRangeStr,
+      days_active: filledDays,
+      filled_days: filledDays,
+      total_days: totalDays,
+      completion_rate: completionRate,
+      status_label: statusLabel,
+      status_desc: statusDesc,
+      good: Number(raw?.good ?? 0),
+      less: Number(raw?.less ?? 0),
+      not_done: Number(raw?.not_done ?? 0),
+      na: Number(raw?.na ?? 0),
+      tahfizh_logs: raw?.tahfizh_logs || [],
+    };
+  }, [periods, overview?.semester]);
+
+  // Helper Renderer: Kartu Kategori KPI Dinamis (100% dari Kategori Database)
+  const renderKpiCategoryCards = () => {
+    if (dynamicCategories.length === 0) return null;
+    return (
+      <View style={styles.kpiCategoriesGrid}>
+        {dynamicCategories.map((cat, idx) => {
+          const rate = cat.count > 0 ? Math.round((cat.goodCount / cat.count) * 100) : 0;
+          const statusLabel = rate >= 85 ? 'Tertib' : rate >= 70 ? 'Rutin' : 'Didampingi';
+          const iconInfo = getCategoryIconInfo(cat.name, '', cat.code, cat.color, cat.icon);
+          return (
+            <View key={cat.id || idx} style={[styles.kpiCategoryCard, { borderColor: iconInfo.color + '40', backgroundColor: iconInfo.bg }]}>
+              <View style={styles.kpiCategoryHeader}>
+                <Text style={[styles.kpiCategoryTitle, { color: iconInfo.color }]} numberOfLines={2}>
+                  {idx + 1}. {cat.name}
+                </Text>
+                <View style={[styles.kpiCategoryTagBadge, { backgroundColor: iconInfo.color + '15', borderColor: iconInfo.color + '30' }]}>
+                  <Text style={[styles.kpiCategoryTag, { color: iconInfo.color }]} numberOfLines={1}>
+                    {statusLabel}
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.kpiCategoryRate, { color: iconInfo.color }]}>{rate}%</Text>
+              <Text style={styles.kpiCategoryCount}>{cat.goodCount}/{cat.count} Amalan</Text>
+              <View style={styles.kpiCategoryBarBg}>
+                <View style={[styles.kpiCategoryBarFill, { width: `${rate}%`, backgroundColor: iconInfo.color }]} />
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
   };
 
-  const monthlyPeriodData = periods.bulanan || periods.monthly || {
-    ...weeklyPeriodData,
-    score: monthlyStats.score > 0 ? monthlyStats.score : 90,
-    date_range: '30 Hari Terakhir',
-    days_active: monthlyStats.days > 0 ? monthlyStats.days : 30,
-  };
-
-  const semesterPeriodData = periods.semester || {
-    ...weeklyPeriodData,
-    score: monthlyStats.score > 0 ? monthlyStats.score : 90,
-    date_range: 'Semester 1 (Ganjil) 2026/2027',
-    days_active: 73,
-  };
-
-  // Helper Renderer: 4 Kartu Kategori KPI (Fardhu, Sunnah, Tilawah, Adab)
-  const renderKpiCategoryCards = (catStats: any) => (
-    <View style={styles.kpiCategoriesGrid}>
-      {/* 1. Fardhu */}
-      <View style={[styles.kpiCategoryCard, { borderColor: '#A7F3D0', backgroundColor: '#F0FDF4' }]}>
-        <View style={styles.kpiCategoryHeader}>
-          <Text style={[styles.kpiCategoryTitle, { color: '#065F46' }]}>1. Fardhu</Text>
-          <Text style={[styles.kpiCategoryTag, { color: '#047857' }]}>{catStats?.fardhu?.label || 'Tertib'}</Text>
-        </View>
-        <Text style={[styles.kpiCategoryRate, { color: '#059669' }]}>{catStats?.fardhu?.rate ?? 100}%</Text>
-        <Text style={styles.kpiCategoryCount}>{catStats?.fardhu?.good ?? 5}/{catStats?.fardhu?.total ?? 5} Waktu</Text>
-        <View style={styles.kpiCategoryBarBg}>
-          <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.fardhu?.rate ?? 100}%`, backgroundColor: '#059669' }]} />
-        </View>
-      </View>
-
-      {/* 2. Sunnah */}
-      <View style={[styles.kpiCategoryCard, { borderColor: '#DDD6FE', backgroundColor: '#FAF5FF' }]}>
-        <View style={styles.kpiCategoryHeader}>
-          <Text style={[styles.kpiCategoryTitle, { color: '#5B21B6' }]}>2. Sunnah</Text>
-          <Text style={[styles.kpiCategoryTag, { color: '#6D28D9' }]}>{catStats?.sunnah?.label || 'Rutin'}</Text>
-        </View>
-        <Text style={[styles.kpiCategoryRate, { color: '#7C3AED' }]}>{catStats?.sunnah?.rate ?? 90}%</Text>
-        <Text style={styles.kpiCategoryCount}>{catStats?.sunnah?.good ?? 5}/{catStats?.sunnah?.total ?? 6} Amalan</Text>
-        <View style={[styles.kpiCategoryBarBg, { backgroundColor: '#EDE9FE' }]}>
-          <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.sunnah?.rate ?? 90}%`, backgroundColor: '#7C3AED' }]} />
-        </View>
-      </View>
-
-      {/* 3. Tilawah */}
-      <View style={[styles.kpiCategoryCard, { borderColor: '#BAE6FD', backgroundColor: '#F0F9FF' }]}>
-        <View style={styles.kpiCategoryHeader}>
-          <Text style={[styles.kpiCategoryTitle, { color: '#075985' }]}>3. Tilawah</Text>
-          <Text style={[styles.kpiCategoryTag, { color: '#0284C7' }]}>{catStats?.tilawah?.label || 'Aktif'}</Text>
-        </View>
-        <Text style={[styles.kpiCategoryRate, { color: '#0284C7' }]}>{catStats?.tilawah?.rate ?? 92}%</Text>
-        <Text style={styles.kpiCategoryCount}>{catStats?.tilawah?.good ?? 5}/{catStats?.tilawah?.total ?? 5} Kegiatan</Text>
-        <View style={[styles.kpiCategoryBarBg, { backgroundColor: '#E0F2FE' }]}>
-          <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.tilawah?.rate ?? 92}%`, backgroundColor: '#0284C7' }]} />
-        </View>
-      </View>
-
-      {/* 4. Adab */}
-      <View style={[styles.kpiCategoryCard, { borderColor: '#FDE68A', backgroundColor: '#FFFBEB' }]}>
-        <View style={styles.kpiCategoryHeader}>
-          <Text style={[styles.kpiCategoryTitle, { color: '#92400E' }]}>4. Adab</Text>
-          <Text style={[styles.kpiCategoryTag, { color: '#D97706' }]}>{catStats?.adab?.label || 'Baik'}</Text>
-        </View>
-        <Text style={[styles.kpiCategoryRate, { color: '#D97706' }]}>{catStats?.adab?.rate ?? 95}%</Text>
-        <Text style={styles.kpiCategoryCount}>{catStats?.adab?.good ?? 12}/{catStats?.adab?.total ?? 13} Adab</Text>
-        <View style={[styles.kpiCategoryBarBg, { backgroundColor: '#FEF3C7' }]}>
-          <View style={[styles.kpiCategoryBarFill, { width: `${catStats?.adab?.rate ?? 95}%`, backgroundColor: '#D97706' }]} />
-        </View>
-      </View>
-    </View>
-  );
-
-  // Helper Renderer: 4 Pilar Rincian Amalan (29 Agenda)
-  const renderPillarsBreakdown = (periodData: any, periodTitle: string) => {
-    const fardhuItems = periodData?.shalat_fardhu || [];
-    const sunnahItems = periodData?.shalat_sunnah || [];
-    const tilawahItems = periodData?.tilawah_dzikir || [];
-    const adabItems = periodData?.adab_karakter || [];
-
+  // Helper Renderer: Rincian Amalan Dinamis (100% dari Item Database Aktual Template Tata Usaha)
+  const renderPillarsBreakdown = (periodTitle: string, isPeriodSummary: boolean = false) => {
+    if (dynamicCategories.length === 0) return null;
+    const totalItems = details.length;
     return (
       <View style={styles.breakdownContainer}>
         <View style={styles.breakdownHeaderRow}>
           <MaterialCommunityIcons name="star-four-points-outline" size={16} color="#059669" />
           <Text style={styles.breakdownHeaderTitle}>
-            Rincian Amalan ({periodTitle})
+            {isPeriodSummary ? `Target Pembiasaan Karakter (${periodTitle})` : `Rincian Amalan (${periodTitle})`}
           </Text>
-          <Text style={styles.breakdownHeaderSub}>29 Agenda Kegiatan</Text>
+          <Text style={styles.breakdownHeaderSub}>{totalItems} Agenda Kegiatan</Text>
         </View>
 
-        {/* 1. Shalat 5 Waktu */}
-        <View style={[styles.pillarCard, { borderColor: '#A7F3D0' }]}>
-          <View style={styles.pillarHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <View style={[styles.pillarNum, { backgroundColor: '#ECFDF5' }]}>
-                <Text style={[styles.pillarNumText, { color: '#059669' }]}>1</Text>
-              </View>
-              <Text style={styles.pillarTitle}>Shalat 5 Waktu (Fardhu)</Text>
-            </View>
-            <Text style={styles.pillarCount}>{fardhuItems.length || 5} Waktu</Text>
-          </View>
-          <View style={styles.pillarGrid}>
-            {fardhuItems.map((it: any, idx: number) => (
-              <View key={it.code || idx} style={styles.pillarItem}>
-                <View style={{ flex: 1, marginRight: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <View style={[styles.pillarItemDot, { backgroundColor: '#10B981' }]} />
-                    <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
+        {dynamicCategories.map((cat, catIdx) => {
+          const iconInfo = getCategoryIconInfo(cat.name, '', cat.code, cat.color, cat.icon);
+          return (
+            <View key={cat.id || catIdx} style={[styles.pillarCard, { borderColor: iconInfo.color + '40' }]}>
+              <View style={styles.pillarHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                  <View style={[styles.pillarNum, { backgroundColor: iconInfo.bg }]}>
+                    <Text style={[styles.pillarNumText, { color: iconInfo.color }]}>{catIdx + 1}</Text>
                   </View>
-                  {it.good_count != null && (
-                    <Text style={styles.pillarItemSub}>
-                      {it.good_count}/{it.total_days} Hari ({it.rate}%)
-                    </Text>
-                  )}
+                  <Text style={styles.pillarTitle} numberOfLines={1}>{cat.name}</Text>
                 </View>
-                <View style={[styles.pillarItemBadge, { backgroundColor: '#ECFDF5' }]}>
-                  <Text style={[styles.pillarItemBadgeText, { color: '#065F46' }]}>
-                    {it.status_label || 'Istiqamah'}
-                  </Text>
-                </View>
+                <Text style={[styles.pillarCount, { color: iconInfo.color }]}>{cat.items.length} Amalan</Text>
               </View>
-            ))}
-          </View>
-        </View>
+              <View style={styles.pillarGrid}>
+                {cat.items.map((it: any, itIdx: number) => {
+                  const isGood = it.status_value === 'good';
+                  const isLess = it.status_value === 'less';
+                  const isNotDone = it.status_value === 'not_done';
+                  const isNa = it.status_value === 'na';
+                  const statusLabel = isPeriodSummary
+                    ? (it.scope === 'home' ? '🏠 Rumah' : isBoarding ? '🕌 Asrama' : '🏫 Sekolah')
+                    : isGood
+                    ? 'Terlaksana'
+                    : isLess
+                    ? 'Kurang'
+                    : isNotDone
+                    ? 'Belum'
+                    : isNa
+                    ? 'Uzur'
+                    : 'Belum Diisi';
+                  const badgeBg = isPeriodSummary
+                    ? '#F0FDF4'
+                    : isGood
+                    ? '#ECFDF5'
+                    : isLess
+                    ? '#FEF3C7'
+                    : isNotDone
+                    ? '#FFE4E6'
+                    : '#F1F5F9';
+                  const badgeText = isPeriodSummary
+                    ? '#166534'
+                    : isGood
+                    ? '#065F46'
+                    : isLess
+                    ? '#D97706'
+                    : isNotDone
+                    ? '#E11D48'
+                    : '#64748B';
 
-        {/* 2. Shalat Sunnah & Qiyamul Lail */}
-        <View style={[styles.pillarCard, { borderColor: '#DDD6FE' }]}>
-          <View style={styles.pillarHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <View style={[styles.pillarNum, { backgroundColor: '#F3E8FF' }]}>
-                <Text style={[styles.pillarNumText, { color: '#7C3AED' }]}>2</Text>
+                  return (
+                    <View key={it.id || it.agenda_item_id || itIdx} style={styles.pillarItem}>
+                      <View style={{ flex: 1, marginRight: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={[styles.pillarItemDot, { backgroundColor: iconInfo.color }]} />
+                          <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
+                        </View>
+                        {it.scope && (
+                          <Text style={styles.pillarItemSub}>
+                            {it.scope === 'home' ? '🏠 Pembiasaan Rumah' : it.scope === 'boarding' ? '🕌 Pengawasan Asrama' : '🏫 Lingkungan Sekolah'}
+                          </Text>
+                        )}
+                      </View>
+                      <View style={[styles.pillarItemBadge, { backgroundColor: badgeBg }]}>
+                        <Text style={[styles.pillarItemBadgeText, { color: badgeText }]}>
+                          {statusLabel}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
               </View>
-              <Text style={styles.pillarTitle}>Shalat Sunnah & Qiyamul Lail</Text>
             </View>
-            <Text style={[styles.pillarCount, { color: '#7C3AED' }]}>{sunnahItems.length || 6} Amalan</Text>
-          </View>
-          <View style={styles.pillarGrid}>
-            {sunnahItems.map((it: any, idx: number) => (
-              <View key={it.code || idx} style={styles.pillarItem}>
-                <View style={{ flex: 1, marginRight: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <View style={[styles.pillarItemDot, { backgroundColor: '#8B5CF6' }]} />
-                    <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
-                  </View>
-                  {it.good_count != null && (
-                    <Text style={styles.pillarItemSub}>
-                      {it.good_count}/{it.total_days} Hari ({it.rate}%)
-                    </Text>
-                  )}
-                </View>
-                <View style={[styles.pillarItemBadge, { backgroundColor: '#F3E8FF' }]}>
-                  <Text style={[styles.pillarItemBadgeText, { color: '#5B21B6' }]}>
-                    {it.status_label || 'Rutin'}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* 3. Tilawah, Zikir & Penguatan */}
-        <View style={[styles.pillarCard, { borderColor: '#BAE6FD' }]}>
-          <View style={styles.pillarHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <View style={[styles.pillarNum, { backgroundColor: '#E0F2FE' }]}>
-                <Text style={[styles.pillarNumText, { color: '#0284C7' }]}>3</Text>
-              </View>
-              <Text style={styles.pillarTitle}>Tilawah, Zikir & Penguatan</Text>
-            </View>
-            <Text style={[styles.pillarCount, { color: '#0284C7' }]}>{tilawahItems.length || 5} Kegiatan</Text>
-          </View>
-          <View style={styles.pillarGrid}>
-            {tilawahItems.map((it: any, idx: number) => (
-              <View key={it.code || idx} style={styles.pillarItem}>
-                <View style={{ flex: 1, marginRight: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <View style={[styles.pillarItemDot, { backgroundColor: '#0284C7' }]} />
-                    <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
-                  </View>
-                  {it.good_count != null && (
-                    <Text style={styles.pillarItemSub}>
-                      {it.good_count}/{it.total_days} Hari ({it.rate}%)
-                    </Text>
-                  )}
-                </View>
-                <View style={[styles.pillarItemBadge, { backgroundColor: '#E0F2FE' }]}>
-                  <Text style={[styles.pillarItemBadgeText, { color: '#0369A1' }]}>
-                    {it.status_label || 'Aktif'}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* 4. Adab & Karakter Terpuji */}
-        <View style={[styles.pillarCard, { borderColor: '#FDE68A' }]}>
-          <View style={styles.pillarHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <View style={[styles.pillarNum, { backgroundColor: '#FEF3C7' }]}>
-                <Text style={[styles.pillarNumText, { color: '#D97706' }]}>4</Text>
-              </View>
-              <Text style={styles.pillarTitle}>Adab & Karakter Terpuji</Text>
-            </View>
-            <Text style={[styles.pillarCount, { color: '#D97706' }]}>{adabItems.length || 13} Pembiasaan</Text>
-          </View>
-          <View style={styles.pillarGrid}>
-            {adabItems.map((it: any, idx: number) => (
-              <View key={it.code || idx} style={styles.pillarItem}>
-                <View style={{ flex: 1, marginRight: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <View style={[styles.pillarItemDot, { backgroundColor: '#D97706' }]} />
-                    <Text numberOfLines={1} style={styles.pillarItemName}>{it.name}</Text>
-                  </View>
-                  {it.good_count != null && (
-                    <Text style={styles.pillarItemSub}>
-                      {it.good_count}/{it.total_days} Hari ({it.rate}%)
-                    </Text>
-                  )}
-                </View>
-                <View style={[styles.pillarItemBadge, { backgroundColor: '#FEF3C7' }]}>
-                  <Text style={[styles.pillarItemBadgeText, { color: '#92400E' }]}>
-                    {it.status_label || 'Baik'}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        </View>
+          );
+        })}
       </View>
     );
   };
 
-  // Helper Renderer: Riwayat Setoran Tahfizh
+  // Helper Renderer: Riwayat Setoran Tahfizh Dinamis
   const renderTahfizhLogs = (tahfizhLogs: any[], periodTitle: string) => {
     if (!Array.isArray(tahfizhLogs) || tahfizhLogs.length === 0) return null;
 
@@ -1584,20 +1620,24 @@ export default function MutabaahScreen({ route, navigation }: any) {
             <View style={{ flex: 1, marginRight: 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={styles.tahfizhLogSurah}>{log.surah}</Text>
-                <View style={styles.tahfizhLogAyahBadge}>
-                  <Text style={styles.tahfizhLogAyahText}>{log.ayah_range}</Text>
-                </View>
+                {log.ayah_range && (
+                  <View style={styles.tahfizhLogAyahBadge}>
+                    <Text style={styles.tahfizhLogAyahText}>{log.ayah_range}</Text>
+                  </View>
+                )}
               </View>
-              <Text style={styles.tahfizhLogNotes}>{log.notes}</Text>
+              {log.notes ? <Text style={styles.tahfizhLogNotes}>{log.notes}</Text> : null}
               <Text style={styles.tahfizhLogMeta}>
-                {log.date} · Oleh {log.teacher_name}
+                {log.date ? formatDateIndo(log.date) : ''} {log.teacher_name ? `· Oleh ${log.teacher_name}` : ''}
               </Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <View style={styles.tahfizhLogScoreBadge}>
-                <Text style={styles.tahfizhLogScoreText}>{log.score || 90}</Text>
-              </View>
-              <Text style={styles.tahfizhLogQuality}>{log.quality || 'Mumtaz'}</Text>
+              {log.score != null && (
+                <View style={styles.tahfizhLogScoreBadge}>
+                  <Text style={styles.tahfizhLogScoreText}>{log.score}</Text>
+                </View>
+              )}
+              {log.quality ? <Text style={styles.tahfizhLogQuality}>{log.quality}</Text> : null}
             </View>
           </View>
         ))}
@@ -1618,8 +1658,10 @@ export default function MutabaahScreen({ route, navigation }: any) {
         user={user}
         childrenList={children}
         selectedChildId={selectedChildId}
-        onSelectChild={(_cid, idx) => {
-          goToLoopChild(idx);
+        onSelectChild={(cid) => {
+          const strId = String(cid);
+          setSelectedChildId(strId);
+          useActiveChildStore.getState().setActiveChildId(strId);
         }}
         middleAction={{
           label: 'Jadwal',
@@ -1662,7 +1704,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
           {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
           <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
             <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
+              colors={['#064E3B', '#047857', '#059669', '#10B981']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={StyleSheet.absoluteFill}
@@ -1678,16 +1720,19 @@ export default function MutabaahScreen({ route, navigation }: any) {
                 accessibilityRole="button"
                 accessibilityLabel="Kembali"
               >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#047857" />
               </TouchableOpacity>
 
               <View style={styles.heroTitleCenterCol}>
                 <Text numberOfLines={1} style={styles.heroModuleTitle}>
                   Mutaba’ah Yaumiyyah
                 </Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                  {heroFirstName ? `Ananda ${heroFirstName}` : heroSubtitleFallback}
-                </Text>
+                <View style={styles.heroSubtitleBadge}>
+                  <MaterialCommunityIcons name="clipboard-check-outline" size={11} color="#D1FAE5" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
+                    {heroFirstName ? `Ananda ${heroFirstName}` : heroSubtitleFallback}
+                  </Text>
+                </View>
               </View>
 
               <TouchableOpacity
@@ -1697,7 +1742,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
                 accessibilityRole="button"
                 accessibilityLabel="Notifikasi"
               >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
+                <MaterialCommunityIcons name="bell-outline" size={20} color="#047857" />
                 {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
               </TouchableOpacity>
             </View>
@@ -1706,23 +1751,10 @@ export default function MutabaahScreen({ route, navigation }: any) {
           {/* Badan Halaman Konten */}
           <View style={styles.bodyContentWrapper}>
             {/* ============================================================ */}
-            {/* SECTION 1: DATA SISWA & UNIT PENDIDIKAN (HERO CARD STANDAR) */}
+            {/* SECTION 1: DATA SISWA & UNIT PENDIDIKAN (HERO CARD ANANDA TERPILIH) */}
             {/* ============================================================ */}
-            {children.length > 0 ? (
+            {children && children.length > 0 ? (
               <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                    <Text style={styles.sectionTitle}>Data Ananda</Text>
-                  </View>
-                  {children.length > 1 && (
-                    <View style={styles.studentCardCountBadge}>
-                      <Text style={styles.studentCardCountBadgeText}>
-                        {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
-                      </Text>
-                    </View>
-                  )}
-                </View>
                 {children.length === 1 ? (
                   <View style={styles.singleHeroCardContainer}>
                     <StudentHeroCard
@@ -1839,146 +1871,152 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </>
                 )}
               </View>
-            ) : studentData ? (
+            ) : headerStudent ? (
               <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                    <Text style={styles.sectionTitle}>Data Ananda</Text>
-                  </View>
-                </View>
-
                 <View style={styles.singleHeroCardContainer}>
                   <StudentHeroCard
-                    child={studentData}
+                    child={headerStudent}
                     isSelected={true}
                     isSingleChild={true}
                     showActionButtons={true}
                     cardLabel="Kartu Siswa"
                     calendarLabel="Jadwal"
                     portalLabel="Menu"
-                    onPressCard={() => openIdCard(studentData)}
-                    onPressQr={() => openQrCard(studentData)}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(studentData)}
+                    onPressCard={() => openIdCard(headerStudent)}
+                    onPressQr={() => openQrCard(headerStudent)}
+                    onPressWeeklyReport={() => setSelectedWeeklyStudent(headerStudent)}
                     onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                    onPressCalendar={() => openScheduleForStudent(studentData)}
-                    onPressPortal={() => setSelectedMenuStudent(studentData)}
+                    onPressCalendar={() => openScheduleForStudent(headerStudent)}
+                    onPressPortal={() => setSelectedMenuStudent(headerStudent)}
                   />
                 </View>
               </View>
             ) : null}
 
             {/* ============================================================ */}
-            {/* SECTION 2: PILIH PERIODE & KALENDER STRIP (SCREEN 1 & 2) */}
+            {/* SECTION 2: RINGKASAN CAPAIAN MUTABA'AH (HERO KPI GROUP CARD - TAHFIZH STYLE) */}
+            {/* ============================================================ */}
+            <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald]}>
+              <View style={[styles.tahfizhGroupCardHeaderRow, styles.tahfizhGroupCardHeaderRowEmerald]}>
+                <View style={styles.tahfizhGroupCardHeaderLeft}>
+                  <View style={[styles.tahfizhGroupHeaderIconBox, styles.tahfizhGroupHeaderIconBoxEmerald]}>
+                    <MaterialCommunityIcons name="trophy-award" size={16} color="#FFFFFF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text numberOfLines={1} style={[styles.tahfizhGroupCardTitle, { color: '#064E3B' }]}>
+                      Ringkasan Capaian Mutaba’ah
+                    </Text>
+                    <Text numberOfLines={1} style={[styles.tahfizhGroupCardSub, { color: '#059669' }]}>
+                      Evaluasi pembiasaan ibadah & adab ananda
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.tahfizhGroupActionBadge, styles.tahfizhGroupActionBadgeEmerald]}>
+                  <Text style={[styles.tahfizhGroupActionBadgeText, { color: '#047857' }]}>
+                    {todayScore}% {todayStatusLabel}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.heroKpiRow}>
+                {/* Card 1: Progress Donut Ring */}
+                <View style={styles.heroKpiCard}>
+                  <View style={styles.progressCircleBox}>
+                    <View style={styles.progressCircleRing}>
+                      <Text style={styles.progressCircleText}>{todayScore}%</Text>
+                    </View>
+                  </View>
+                  <View style={styles.heroKpiContentCol}>
+                    <Text numberOfLines={1} style={styles.heroKpiTitle}>Progres Hari Ini</Text>
+                    <Text numberOfLines={1} style={styles.heroKpiSub}>
+                      {todayGoodCount}/{totalAgendaCount} Terlaksana
+                    </Text>
+                    <View style={styles.heroProgressBarTrack}>
+                      <View style={[styles.heroProgressBarFill, { width: `${Math.min(100, Math.max(5, todayScore))}%` }]} />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Card 2: Status Pembiasaan */}
+                <View style={styles.heroKpiCard}>
+                  <View style={styles.targetIconBox}>
+                    <MaterialCommunityIcons name="clipboard-check" size={22} color="#059669" />
+                  </View>
+                  <View style={styles.heroKpiContentCol}>
+                    <Text numberOfLines={1} style={styles.heroKpiTargetLabel}>Status Pembiasaan</Text>
+                    <Text numberOfLines={1} style={styles.heroKpiTargetValue}>
+                      {todayStatusLabel}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.heroKpiTargetSub}>
+                      {todayNotDoneCount > 0 ? `${todayNotDoneCount} Belum Diisi` : 'Semua Terisi'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {/* ============================================================ */}
+            {/* SECTION 3: SEGMENTED SWITCHER (LEMBAR HARI INI VS RIWAYAT & EVALUASI) */}
             {/* ============================================================ */}
             <View style={styles.containerBlock}>
-              <View style={styles.periodCardWrapper}>
-                <View style={styles.cardInternalHeader}>
-                  <View style={styles.cardInternalHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="calendar-clock-outline" size={17} color="#18A165" />
-                    <Text style={styles.cardInternalTitle}>Pilih Periode</Text>
-                  </View>
-                </View>
-                {/* 4 Capsule Tabs: Harian, Mingguan, Bulanan, Semester */}
-                <View style={styles.periodTabsCapsule}>
-                  <TouchableOpacity
-                    style={[styles.periodTabBtn, periodMode === 'daily' && styles.periodTabBtnActive]}
-                    onPress={() => {
-                      setPeriodMode('daily');
-                      setMainTab('today');
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.periodTabText, periodMode === 'daily' && styles.periodTabTextActive]}>
-                      Harian
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.periodTabBtn, periodMode === 'weekly' && styles.periodTabBtnActive]}
-                    onPress={() => {
-                      setPeriodMode('weekly');
-                      setMainTab('today');
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.periodTabText, periodMode === 'weekly' && styles.periodTabTextActive]}>
-                      Mingguan
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.periodTabBtn, periodMode === 'monthly' && styles.periodTabBtnActive]}
-                    onPress={() => {
-                      setPeriodMode('monthly');
-                      setMainTab('history');
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.periodTabText, periodMode === 'monthly' && styles.periodTabTextActive]}>
-                      Bulanan
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.periodTabBtn, periodMode === 'semester' && styles.periodTabBtnActive]}
-                    onPress={() => {
-                      setPeriodMode('semester');
-                      setMainTab('history');
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.periodTabText, periodMode === 'semester' && styles.periodTabTextActive]}>
-                      Semester
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Horizontal Date Strip (Sen 22, Sel 23, Rab 24...) + Tombol Kalender */}
-                {periodMode === 'daily' && (
-                  <View style={styles.dateStripContainer}>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.dateStripScrollContent}
+              <View style={styles.segmentedTabWrapper}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setMainTab('today');
+                    setPeriodMode('daily');
+                  }}
+                  style={[
+                    styles.segmentedTabItem,
+                    mainTab === 'today' && styles.segmentedTabItemActive,
+                  ]}
+                >
+                  <View style={styles.segmentedTabContentRow}>
+                    <MaterialCommunityIcons
+                      name="calendar-check"
+                      size={15}
+                      color={mainTab === 'today' ? '#FFFFFF' : '#059669'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentedTabText,
+                        mainTab === 'today' && styles.segmentedTabTextActive,
+                      ]}
                     >
-                      {dateStripDays.map((d) => (
-                        <TouchableOpacity
-                          key={d.dateStr}
-                          style={[styles.dateStripItem, d.isSelected && styles.dateStripItemActive]}
-                          onPress={() => setSelectedDate(d.dateStr)}
-                          activeOpacity={0.75}
-                        >
-                          <Text style={[styles.dateStripDayName, d.isSelected && styles.dateStripDayNameActive]}>
-                            {d.dayName}
-                          </Text>
-                          <View style={[styles.dateStripCircle, d.isSelected && styles.dateStripCircleActive]}>
-                            <Text style={[styles.dateStripDayNum, d.isSelected && styles.dateStripDayNumActive]}>
-                              {d.dayNum}
-                            </Text>
-                          </View>
-                          {d.isToday && !d.isSelected && <View style={styles.dateTodayDot} />}
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
+                      Lembar Hari Ini
+                    </Text>
+                  </View>
+                </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={styles.dateStripCalendarBtn}
-                      onPress={() => setIsCalendarPickerVisible(true)}
-                      activeOpacity={0.8}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setMainTab('history');
+                    if (periodMode === 'daily') setPeriodMode('weekly');
+                  }}
+                  style={[
+                    styles.segmentedTabItem,
+                    mainTab === 'history' && styles.segmentedTabItemActive,
+                  ]}
+                >
+                  <View style={styles.segmentedTabContentRow}>
+                    <MaterialCommunityIcons
+                      name="chart-timeline-variant-shimmer"
+                      size={15}
+                      color={mainTab === 'history' ? '#FFFFFF' : '#059669'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentedTabText,
+                        mainTab === 'history' && styles.segmentedTabTextActive,
+                      ]}
                     >
-                      <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#059669" />
-                    </TouchableOpacity>
+                      Riwayat & Evaluasi
+                    </Text>
                   </View>
-                )}
-
-                {/* Status sinkronisasi tanggal di background */}
-                {isFetchingDate && (
-                  <View style={styles.fetchingDatePill}>
-                    <ActivityIndicator size="small" color="#059669" style={{ transform: [{ scale: 0.75 }] }} />
-                    <Text style={styles.fetchingDatePillText}>Menyelaraskan data tanggal ini...</Text>
-                  </View>
-                )}
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -2010,37 +2048,71 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
-            ) : periodMode === 'semester' ? (
+            ) : mainTab === 'history' ? (
               /* ============================================================ */
-              /* MODE SEMESTER (INDEKS KUMULATIF SEMESTER) */
+              /* TAB 2: RIWAYAT & EVALUASI (MINGGUAN, BULANAN, SEMESTER)      */
               /* ============================================================ */
               <View style={styles.containerBlock}>
-                <View style={styles.sectionHeaderRow}>
-                  <MaterialCommunityIcons name="school-outline" size={18} color="#059669" />
-                  <Text style={styles.sectionTitle}>Evaluasi Terpadu Kumulatif (Semester)</Text>
+                {/* 3 Capsule Tabs: Mingguan, Bulanan, Semester */}
+                <View style={[styles.periodTabsCapsule, { marginBottom: 14 }]}>
+                  <TouchableOpacity
+                    style={[styles.periodTabBtn, (periodMode === 'weekly' || periodMode === 'daily') && styles.periodTabBtnActive]}
+                    onPress={() => setPeriodMode('weekly')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.periodTabText, (periodMode === 'weekly' || periodMode === 'daily') && styles.periodTabTextActive]}>
+                      Mingguan
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.periodTabBtn, periodMode === 'monthly' && styles.periodTabBtnActive]}
+                    onPress={() => setPeriodMode('monthly')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.periodTabText, periodMode === 'monthly' && styles.periodTabTextActive]}>
+                      Bulanan
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.periodTabBtn, periodMode === 'semester' && styles.periodTabBtnActive]}
+                    onPress={() => setPeriodMode('semester')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.periodTabText, periodMode === 'semester' && styles.periodTabTextActive]}>
+                      Semester
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+
+                {periodMode === 'semester' ? (
+                  /* ============================================================ */
+                  /* MODE SEMESTER (INDEKS KUMULATIF SEMESTER) */
+                  /* ============================================================ */
+                  <View style={{ marginBottom: 16 }}>
+                    <View style={styles.sectionHeaderRow}>
+                      <MaterialCommunityIcons name="school-outline" size={18} color="#059669" />
+                      <Text style={styles.sectionTitle}>Evaluasi Terpadu Kumulatif (Semester)</Text>
+                    </View>
 
                 {/* Kartu Rangkuman Capaian Semester */}
                 <View style={[styles.weeklySummaryCard, { marginBottom: 16 }]}>
                   <View style={styles.weeklyScoreRow}>
                     <View style={styles.weeklyScoreBadge}>
                       <Text style={styles.weeklyScoreVal}>
-                        {semesterPeriodData?.score != null
+                        {semesterPeriodData?.score != null && Number(semesterPeriodData.score) > 0
                           ? `${Math.round(Number(semesterPeriodData.score))}%`
-                          : '90%'}
+                          : '-'}
                       </Text>
                       <Text style={styles.weeklyScoreLabel}>Indeks Skor</Text>
                     </View>
                     <View style={{ flex: 1, marginLeft: 14 }}>
                       <Text style={styles.weeklyStatusTitle}>
-                        {Number(semesterPeriodData?.score || 90) >= 85
-                          ? 'Predikat Istiqamah Unggul'
-                          : Number(semesterPeriodData?.score || 90) >= 70
-                          ? 'Pencapaian Tertib Baik'
-                          : 'Perlu Pendampingan'}
+                        {semesterPeriodData.status_label}
                       </Text>
                       <Text style={styles.weeklyStatusDesc}>
-                        {semesterPeriodData?.date_range || 'Semester 1 (Ganjil) 2026/2027'} · {semesterPeriodData?.days_active || 73} Hari Aktif Pembiasaan Ibadah & Adab Karakter.
+                        {semesterPeriodData.status_desc}
                       </Text>
                     </View>
                   </View>
@@ -2067,45 +2139,41 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </TouchableOpacity>
                 </View>
 
-                {/* 4 Kartu KPI Kategori Semester */}
-                {renderKpiCategoryCards(semesterPeriodData?.category_stats)}
+                    {/* 4 Kartu KPI Kategori Semester */}
+                    {renderKpiCategoryCards()}
 
-                {/* Rincian Komprehensif 4 Pilar Amalan (29 Agenda) */}
-                {renderPillarsBreakdown(semesterPeriodData, 'Semester 1')}
+                    {/* Rincian Komprehensif Target Pembiasaan Karakter */}
+                    {renderPillarsBreakdown(semesterPeriodData.semester_name, true)}
 
-                {/* Riwayat Setoran Tahfizh Semester Ini */}
-                {renderTahfizhLogs(semesterPeriodData?.tahfizh_logs, 'Semester 1')}
-              </View>
-            ) : periodMode === 'monthly' ? (
-              /* ============================================================ */
-              /* MODE RIWAYAT MUTABAAH BULANAN (SCREEN 1 & 8) */
-              /* ============================================================ */
-              <View style={styles.containerBlock}>
+                    {/* Riwayat Setoran Tahfizh Semester Ini */}
+                    {renderTahfizhLogs(semesterPeriodData?.tahfizh_logs, semesterPeriodData.semester_name)}
+                  </View>
+                ) : periodMode === 'monthly' ? (
+                  /* ============================================================ */
+                  /* MODE RIWAYAT MUTABAAH BULANAN (SCREEN 1 & 8) */
+                  /* ============================================================ */
+                  <View style={{ marginBottom: 16 }}>
                 {/* 1. KARTU RANGKUMAN CAPAIAN BULANAN */}
                 <View style={[styles.weeklySummaryCard, { marginBottom: 16 }]}>
                   <View style={styles.weeklyScoreRow}>
                     <View style={styles.weeklyScoreBadge}>
                       <Text style={styles.weeklyScoreVal}>
-                        {monthlyPeriodData?.score != null
+                        {monthlyPeriodData?.score != null && Number(monthlyPeriodData.score) > 0
                           ? `${Math.round(Number(monthlyPeriodData.score))}%`
                           : monthlyStats.score > 0
                           ? `${monthlyStats.score}%`
-                          : overview?.today?.score != null
+                          : overview?.today?.score != null && Number(overview.today.score) > 0
                           ? `${Math.round(Number(overview.today.score))}%`
-                          : '90%'}
+                          : '-'}
                       </Text>
                       <Text style={styles.weeklyScoreLabel}>Rata-rata Skor</Text>
                     </View>
                     <View style={{ flex: 1, marginLeft: 14 }}>
                       <Text style={styles.weeklyStatusTitle}>
-                        {Number(monthlyPeriodData?.score || monthlyStats.score || 90) >= 85
-                          ? 'Pencapaian Sangat Baik'
-                          : Number(monthlyPeriodData?.score || monthlyStats.score || 90) >= 70
-                          ? 'Pencapaian Baik'
-                          : 'Perlu Pendampingan'}
+                        {monthlyPeriodData.status_label}
                       </Text>
                       <Text style={styles.weeklyStatusDesc}>
-                        {monthlyPeriodData?.date_range || '30 Hari Terakhir'} · {monthlyPeriodData?.days_active || monthlyStats.days || 30} Hari Aktif Pembiasaan Ibadah & Karakter Ananda.
+                        {monthlyPeriodData.status_desc}
                       </Text>
                     </View>
                   </View>
@@ -2156,11 +2224,11 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </TouchableOpacity>
                 </View>
 
-                {/* 4 Kartu KPI Kategori Bulanan */}
-                {renderKpiCategoryCards(monthlyPeriodData?.category_stats)}
+                    {/* 4 Kartu KPI Kategori Bulanan */}
+                    {renderKpiCategoryCards()}
 
-                {/* Rincian Komprehensif 4 Pilar Amalan (29 Agenda) */}
-                {renderPillarsBreakdown(monthlyPeriodData, 'Bulan Ini')}
+                    {/* Rincian Komprehensif Target Pembiasaan Karakter */}
+                    {renderPillarsBreakdown('Bulan Ini', true)}
 
                 {/* Riwayat Setoran Tahfizh 30 Hari Terakhir */}
                 {renderTahfizhLogs(monthlyPeriodData?.tahfizh_logs, 'Bulan Ini')}
@@ -2263,68 +2331,75 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   })
                 )}
               </View>
-            ) : periodMode === 'weekly' ? (
-              /* ============================================================ */
-              /* MODE MINGGUAN (SCREEN 5 & 6) */
-              /* ============================================================ */
-              <View style={styles.containerBlock}>
+            ) : (
+                  /* ============================================================ */
+                  /* MODE MINGGUAN (SCREEN 5 & 6) */
+                  /* ============================================================ */
+                  <View style={{ marginBottom: 16 }}>
                 <View style={styles.sectionHeaderRow}>
                   <MaterialCommunityIcons name="calendar-week" size={18} color="#059669" />
                   <Text style={styles.sectionTitle}>Evaluasi Mingguan (Pekan Ini)</Text>
                 </View>
 
-                <View style={styles.weeklySummaryCard}>
+                <View style={[styles.weeklySummaryCard, { marginBottom: 16 }]}>
                   <View style={styles.weeklyScoreRow}>
                     <View style={styles.weeklyScoreBadge}>
                       <Text style={styles.weeklyScoreVal}>
-                        {weeklyPeriodData?.score != null
+                        {weeklyPeriodData?.score != null && Number(weeklyPeriodData.score) > 0
                           ? `${Math.round(Number(weeklyPeriodData.score))}%`
-                          : overview?.weekly?.score != null
+                          : overview?.weekly?.score != null && Number(overview.weekly.score) > 0
                           ? `${Math.round(Number(overview.weekly.score))}%`
-                          : '90%'}
+                          : '-'}
                       </Text>
                       <Text style={styles.weeklyScoreLabel}>Rata-rata Skor</Text>
                     </View>
                     <View style={{ flex: 1, marginLeft: 14 }}>
-                      <Text style={styles.weeklyStatusTitle}>Pencapaian Sangat Baik</Text>
+                      <Text style={styles.weeklyStatusTitle}>
+                        {weeklyPeriodData.status_label}
+                      </Text>
                       <Text style={styles.weeklyStatusDesc}>
-                        Ananda konsisten menjalankan amalan wajib dan pembiasaan harian sepanjang pekan ini.
+                        {weeklyPeriodData.status_desc}
                       </Text>
                     </View>
                   </View>
 
                   {/* 7 Hari Mingguan */}
                   <View style={styles.weeklyDaysTrack}>
-                    {dateStripDays.map((d) => (
-                      <TouchableOpacity
-                        key={d.dateStr}
-                        style={[styles.weeklyDayCol, d.isSelected && styles.weeklyDayColActive]}
-                        onPress={() => {
-                          setSelectedDate(d.dateStr);
-                          setPeriodMode('daily');
-                          setMainTab('today');
-                          setIsTableModalVisible(true);
-                          mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
-                        }}
-                        activeOpacity={0.75}
-                      >
-                        <View style={styles.weeklyDayBarTrack}>
-                          <View
-                            style={[
-                              styles.weeklyDayBarFill,
-                              { height: d.isSelected ? '85%' : '75%' },
-                              d.isToday && { backgroundColor: '#059669' },
-                            ]}
-                          />
-                        </View>
-                        <Text style={[styles.weeklyDayText, d.isSelected && styles.weeklyDayTextActive]}>
-                          {d.dayName}
-                        </Text>
-                        <Text style={[styles.weeklyDayNumText, d.isSelected && styles.weeklyDayNumTextActive]}>
-                          {d.dayNum}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                    {dateStripDays.map((d) => {
+                      const dayRecord = historyRows.find((r: any) => r.activity_date === d.dateStr || r.date === d.dateStr);
+                      const dayScore = dayRecord?.score != null ? Math.round(Number(dayRecord.score)) : (d.dateStr === selectedDate ? todayScore : 0);
+                      const barHeight = dayScore > 0 ? `${Math.min(100, Math.max(12, dayScore))}%` : '4%';
+                      return (
+                        <TouchableOpacity
+                          key={d.dateStr}
+                          style={[styles.weeklyDayCol, d.isSelected && styles.weeklyDayColActive]}
+                          onPress={() => {
+                            setSelectedDate(d.dateStr);
+                            setPeriodMode('daily');
+                            setMainTab('today');
+                            setIsTableModalVisible(true);
+                            mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+                          }}
+                          activeOpacity={0.75}
+                        >
+                          <View style={styles.weeklyDayBarTrack}>
+                            <View
+                              style={[
+                                styles.weeklyDayBarFill,
+                                { height: barHeight as any },
+                                d.isToday && { backgroundColor: '#059669' },
+                              ]}
+                            />
+                          </View>
+                          <Text style={[styles.weeklyDayText, d.isSelected && styles.weeklyDayTextActive]}>
+                            {d.dayName}
+                          </Text>
+                          <Text style={[styles.weeklyDayNumText, d.isSelected && styles.weeklyDayNumTextActive]}>
+                            {d.dayNum}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
 
                   <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
@@ -2366,161 +2441,141 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </View>
                 </View>
 
-                {/* 4 Kartu KPI Kategori Mingguan */}
-                {renderKpiCategoryCards(weeklyPeriodData?.category_stats)}
+                    {/* 4 Kartu KPI Kategori Mingguan */}
+                    {renderKpiCategoryCards()}
 
-                {/* Rincian Komprehensif 4 Pilar Amalan (29 Agenda) */}
-                {renderPillarsBreakdown(weeklyPeriodData, 'Pekan Ini')}
+                    {/* Rincian Komprehensif Target Pembiasaan Karakter */}
+                    {renderPillarsBreakdown('Pekan Ini', true)}
 
-                {/* Riwayat Setoran Tahfizh Pekan Ini */}
-                {renderTahfizhLogs(weeklyPeriodData?.tahfizh_logs, 'Pekan Ini')}
+                    {/* Riwayat Setoran Tahfizh Pekan Ini */}
+                    {renderTahfizhLogs(weeklyPeriodData?.tahfizh_logs, 'Pekan Ini')}
+                  </View>
+                )}
               </View>
             ) : (
               /* ============================================================ */
-              /* MODE HARI INI */
+              /* TAB 1: LEMBAR HARI INI                                       */
               /* ============================================================ */
               <>
-                {/* SECTION 3: RINGKASAN HARI INI (SCREEN 1) */}
+                {/* Horizontal Date Strip (Sen 22, Sel 23, Rab 24...) + Tombol Kalender */}
                 <View style={styles.containerBlock}>
-                  <View style={styles.ringkasanMainCard}>
+                  <View style={styles.periodCardWrapper}>
                     <View style={styles.cardInternalHeader}>
                       <View style={styles.cardInternalHeaderTitleWrap}>
-                        <MaterialCommunityIcons name="chart-donut" size={17} color="#059669" />
-                        <Text style={styles.cardInternalTitle}>Ringkasan Hari Ini</Text>
+                        <MaterialCommunityIcons name="calendar-clock-outline" size={17} color="#18A165" />
+                        <Text style={styles.cardInternalTitle}>Pilih Tanggal Mutaba’ah</Text>
                       </View>
                     </View>
 
-                    <View style={styles.ringkasanTopRow}>
-                      {/* Donut Progress Gauge (24/29 Amalan) */}
-                      <View style={styles.donutGaugeBox}>
-                        <View style={styles.donutOuterRing}>
-                          <View style={styles.donutInnerHole}>
-                            <Text style={styles.donutValueText}>
-                              {overview?.today?.good_count ?? details.filter((d: any) => d.status_value === 'good').length}/{details.length || 29}
+                    <View style={styles.dateStripContainer}>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.dateStripScrollContent}
+                      >
+                        {dateStripDays.map((d) => (
+                          <TouchableOpacity
+                            key={d.dateStr}
+                            style={[styles.dateStripItem, d.isSelected && styles.dateStripItemActive]}
+                            onPress={() => setSelectedDate(d.dateStr)}
+                            activeOpacity={0.75}
+                          >
+                            <Text style={[styles.dateStripDayName, d.isSelected && styles.dateStripDayNameActive]}>
+                              {d.dayName}
                             </Text>
-                            <Text style={styles.donutLabelText}>Amalan</Text>
-                          </View>
-                        </View>
-                      </View>
+                            <View style={[styles.dateStripCircle, d.isSelected && styles.dateStripCircleActive]}>
+                              <Text style={[styles.dateStripDayNum, d.isSelected && styles.dateStripDayNumActive]}>
+                                {d.dayNum}
+                              </Text>
+                            </View>
+                            {d.isToday && !d.isSelected && <View style={styles.dateTodayDot} />}
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
 
-                      {/* Kolom Kanan: Persentase Terlaksana & 3 Mini Pills */}
-                      <View style={styles.ringkasanRightCol}>
-                        <View style={styles.terlaksanaBadge}>
-                          <MaterialCommunityIcons name="check-decagram" size={16} color="#059669" />
-                          <Text style={styles.terlaksanaBadgeText}>
-                            {overview?.today?.score != null
-                              ? `${Math.round(Number(overview.today.score))}% Terlaksana`
-                              : `${Math.round(((overview?.today?.good_count ?? 0) / (details.length || 1)) * 100)}% Terlaksana`}
-                          </Text>
-                        </View>
-
-                        <View style={styles.ringkasanPillsRow}>
-                          <View style={[styles.ringkasanMiniPill, { backgroundColor: '#FEF3C7' }]}>
-                            <Text style={[styles.ringkasanMiniPillVal, { color: '#D97706' }]}>
-                              {overview?.today?.less_count ?? details.filter((d: any) => d.status_value === 'less').length}
-                            </Text>
-                            <Text style={[styles.ringkasanMiniPillLbl, { color: '#D97706' }]}>Kurang</Text>
-                          </View>
-
-                          <View style={[styles.ringkasanMiniPill, { backgroundColor: '#FFE4E6' }]}>
-                            <Text style={[styles.ringkasanMiniPillVal, { color: '#E11D48' }]}>
-                              {overview?.today?.not_done_count ?? details.filter((d: any) => d.status_value === 'not_done').length}
-                            </Text>
-                            <Text style={[styles.ringkasanMiniPillLbl, { color: '#E11D48' }]}>Belum</Text>
-                          </View>
-
-                          <View style={[styles.ringkasanMiniPill, { backgroundColor: '#F1F5F9' }]}>
-                            <Text style={[styles.ringkasanMiniPillVal, { color: '#64748B' }]}>
-                              {overview?.today?.na_count ?? details.filter((d: any) => d.status_value === 'na').length}
-                            </Text>
-                            <Text style={[styles.ringkasanMiniPillLbl, { color: '#64748B' }]}>Uzur</Text>
-                          </View>
-                        </View>
-                      </View>
+                      <TouchableOpacity
+                        style={styles.dateStripCalendarBtn}
+                        onPress={() => setIsCalendarPickerVisible(true)}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#059669" />
+                      </TouchableOpacity>
                     </View>
 
-                    {/* Motivational Islamic Quote */}
-                    <View style={styles.quoteBox}>
-                      <Text style={styles.quoteText}>
-                        "Konsistensi dalam amalan kecil akan melahirkan perubahan besar."
+                    {/* Status sinkronisasi tanggal di background */}
+                    {isFetchingDate && (
+                      <View style={styles.fetchingDatePill}>
+                        <ActivityIndicator size="small" color="#059669" style={{ transform: [{ scale: 0.75 }] }} />
+                        <Text style={styles.fetchingDatePillText}>Menyelaraskan data tanggal ini...</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Scope & Dynamic Category Filter Chips */}
+                <View style={[styles.containerBlock, { marginBottom: 12 }]}>
+                  {/* Lingkup Tabs (Semua, Rumah, Sekolah/Asrama) */}
+                  <View style={[styles.periodTabsCapsule, { marginBottom: 10 }]}>
+                    <TouchableOpacity
+                      style={[styles.periodTabBtn, scopeTab === 'all' && styles.periodTabBtnActive]}
+                      onPress={() => setScopeTab('all')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.periodTabText, scopeTab === 'all' && styles.periodTabTextActive]}>
+                        Semua Lingkup
                       </Text>
-                    </View>
-                  </View>
-                </View>
+                    </TouchableOpacity>
 
-                {/* SECTION 4: PROGRAM MUTABA'AH (SCREEN 1 - FILTER OPSI 2) */}
-                <View style={styles.containerBlock}>
-                  <View style={styles.programSectionCard}>
-                    <View style={styles.cardInternalHeader}>
-                      <View style={styles.cardInternalHeaderTitleWrap}>
-                        <MaterialCommunityIcons name="view-grid-plus-outline" size={17} color="#059669" />
-                        <Text style={styles.cardInternalTitle}>Program Mutaba’ah</Text>
-                      </View>
-                      {selectedCategory !== 'all' && (
+                    {/* Jika Fullday: tampilkan tab Rumah; Jika Boarding: tab Rumah disembunyikan */}
+                    {!isBoarding && (
+                      <TouchableOpacity
+                        style={[styles.periodTabBtn, scopeTab === 'home' && styles.periodTabBtnActive]}
+                        onPress={() => setScopeTab('home')}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.periodTabText, scopeTab === 'home' && styles.periodTabTextActive]}>
+                          🏠 Rumah
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Jika Fullday tampilkan Sekolah, jika Boarding tampilkan Asrama */}
+                    <TouchableOpacity
+                      style={[styles.periodTabBtn, (scopeTab === 'school' || (scopeTab as any) === 'boarding') && styles.periodTabBtnActive]}
+                      onPress={() => setScopeTab('school')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.periodTabText, (scopeTab === 'school' || (scopeTab as any) === 'boarding') && styles.periodTabTextActive]}>
+                        {isBoarding ? '🕌 Asrama' : '🏫 Sekolah'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Dynamic Category Chips (Tahfizh Style: juzFilterTrack) */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.juzFilterTrack}
+                  >
+                    {categoryFilterOptions.map((opt) => {
+                      const isActive = selectedCategory === opt.key;
+                      return (
                         <TouchableOpacity
-                          onPress={() => setSelectedCategory('all')}
-                          style={styles.resetFilterChip}
-                          activeOpacity={0.7}
+                          key={opt.key}
+                          style={[styles.juzFilterChip, isActive && styles.juzFilterChipActive]}
+                          onPress={() => setSelectedCategory(opt.key)}
+                          activeOpacity={0.8}
                         >
-                          <MaterialCommunityIcons name="refresh" size={12} color="#059669" />
-                          <Text style={styles.resetFilterText}>Lihat Semua</Text>
+                          <Text style={[styles.juzFilterChipText, isActive && styles.juzFilterChipTextActive]}>
+                            {opt.label} ({opt.count})
+                          </Text>
                         </TouchableOpacity>
-                      )}
-                    </View>
-
-                    <View style={styles.programsRow}>
-                      <TouchableOpacity
-                        style={[
-                          styles.programCard,
-                          { backgroundColor: '#F0F9FF', borderColor: selectedCategory === 'sholat' ? '#0284C7' : '#BAE6FD' },
-                          selectedCategory === 'sholat' && styles.programCardActive,
-                        ]}
-                        onPress={() => setSelectedCategory(selectedCategory === 'sholat' ? 'all' : 'sholat')}
-                        activeOpacity={0.8}
-                      >
-                        <View style={[styles.programIconWrap, { backgroundColor: '#E0F2FE' }]}>
-                          <MaterialCommunityIcons name="mosque" size={20} color="#0284C7" />
-                        </View>
-                        <Text style={styles.programCardName}>Sholat</Text>
-                        <Text style={styles.programCardCount}>{programCounts.shalat} kegiatan</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.programCard,
-                          { backgroundColor: '#FFFBEB', borderColor: selectedCategory === 'yaumiyyah' ? '#D97706' : '#FDE68A' },
-                          selectedCategory === 'yaumiyyah' && styles.programCardActive,
-                        ]}
-                        onPress={() => setSelectedCategory(selectedCategory === 'yaumiyyah' ? 'all' : 'yaumiyyah')}
-                        activeOpacity={0.8}
-                      >
-                        <View style={[styles.programIconWrap, { backgroundColor: '#FEF3C7' }]}>
-                          <MaterialCommunityIcons name="hands-pray" size={20} color="#D97706" />
-                        </View>
-                        <Text style={styles.programCardName}>Mutaba’ah</Text>
-                        <Text style={styles.programCardCount}>{programCounts.yaumiyyah} kegiatan</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.programCard,
-                          { backgroundColor: '#ECFDF5', borderColor: selectedCategory === 'quran' ? '#059669' : '#A7F3D0' },
-                          selectedCategory === 'quran' && styles.programCardActive,
-                        ]}
-                        onPress={() => setSelectedCategory(selectedCategory === 'quran' ? 'all' : 'quran')}
-                        activeOpacity={0.8}
-                      >
-                        <View style={[styles.programIconWrap, { backgroundColor: '#D1FAE5' }]}>
-                          <MaterialCommunityIcons name="book-open-page-variant" size={20} color="#059669" />
-                        </View>
-                        <Text style={styles.programCardName}>Al-Qur’an</Text>
-                        <Text style={styles.programCardCount}>{programCounts.quran} kegiatan</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
+                      );
+                    })}
+                  </ScrollView>
                 </View>
 
-                {/* SECTION 5: CATATAN PEMBIMBING (JIKA ADA) */}
+                {/* Catatan Pembimbing (Jika Ada) */}
                 {overview?.today?.notes && (
                   <View style={styles.containerBlock}>
                     <View style={styles.notesSectionCard}>
@@ -2562,7 +2617,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
                   </View>
 
                   {/* PANDUAN & JEMBATAN TAHFIZH JIKA KATEGORI AL-QUR'AN DIPILIH */}
-                  {selectedCategory === 'quran' && (
+                  {isSelectedCategoryQuran && (
                     <View style={styles.quranBridgeCard}>
                       <LinearGradient
                         colors={['#ECFDF5', '#F0FDF4']}
@@ -2635,19 +2690,14 @@ export default function MutabaahScreen({ route, navigation }: any) {
                       const catIconInfo = getCategoryIconInfo(item.category, item.name, item.category_code);
                       const isItemHome = item.scope === 'home' || item.input_location === 'home' || item.is_parent_item;
                       const canParentEditThis = isItemHome && isParent && !isBoarding;
-                      // Amalan rumah dianggap sudah diisi hanya jika input_source === 'parent' atau berstatus eksplisit
-                      const isParentFilled = item.input_source === 'parent';
-                      // Amalan sekolah / asrama dianggap sudah diisi jika diisi guru/musyrif dan berstatus eksplisit (bukan auto-init placeholder 'system')
-                      const isStaffFilled = !isItemHome && Boolean(item.input_source && item.input_source !== 'system' && item.status_value);
-
-                      const hasValue = isItemHome
-                        ? (isParentFilled && Boolean(item.status_value))
-                        : isStaffFilled;
-
-                      const isGood = hasValue && item.status_value === 'good';
-                      const isLess = hasValue && item.status_value === 'less';
-                      const isNotDone = hasValue && item.status_value === 'not_done';
-                      const isNa = hasValue && item.status_value === 'na';
+                      // Status riil dari basis data PostgreSQL (sinkron 100% dengan Web Dashboard)
+                      const itemStatus = item.status_value || null;
+                      const hasValue = Boolean(itemStatus);
+                      const isGood = itemStatus === 'good';
+                      const isLess = itemStatus === 'less';
+                      const isNotDone = itemStatus === 'not_done';
+                      const isNa = itemStatus === 'na';
+                      const isParentFilled = Boolean(item.is_parent_filled || (item.input_source === 'parent' && hasValue));
                       return (
                         <TouchableOpacity
                           key={item.id || item.agenda_item_id || `agenda-${index}`}
@@ -2840,7 +2890,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
                 </View>
 
                 {/* SECTION: PARAF & PENGESAHAN ORANG TUA (DI PALING BAWAH CARD-CARD AGENDA - SCREEN 7) */}
-                {isParent && overview?.today && (
+                {isParent && !isBoarding && overview?.today && (
                   <View style={[styles.containerBlock, { marginTop: 8, marginBottom: 24 }]}>
                     <View style={styles.evaluasiSectionCard}>
                       <View style={styles.cardInternalHeader}>
@@ -3053,8 +3103,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
               <TouchableOpacity
                 style={styles.calendarNavBtn}
                 onPress={() => {
-                  const prevMonth = new Date(calendarMonth);
-                  prevMonth.setMonth(prevMonth.getMonth() - 1);
+                  const prevMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1);
                   setCalendarMonth(prevMonth);
                 }}
               >
@@ -3066,8 +3115,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
               <TouchableOpacity
                 style={styles.calendarNavBtn}
                 onPress={() => {
-                  const nextMonth = new Date(calendarMonth);
-                  nextMonth.setMonth(nextMonth.getMonth() + 1);
+                  const nextMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1);
                   setCalendarMonth(nextMonth);
                 }}
               >
@@ -3786,12 +3834,10 @@ export default function MutabaahScreen({ route, navigation }: any) {
                 modalFilteredDetails.map((item: any, idx: number) => {
                   const isItemHome = item.scope === 'home' || item.input_location === 'home' || item.is_parent_item;
                   const canParentEditThis = isItemHome && isParent && !isBoarding;
-                  const isStaffFilled = !isItemHome && Boolean(item.input_source && item.input_source !== 'system' && item.status_value);
-                  const hasValue = isItemHome
-                    ? Boolean(item.status_value && item.input_source === 'parent')
-                    : isStaffFilled;
-                  const statusInfo = (hasValue && STATUS_CONFIG[item.status_value])
-                    ? STATUS_CONFIG[item.status_value]
+                  // Status riil dari basis data PostgreSQL (sinkron 100% dengan Web Dashboard)
+                  const itemStatus = item.status_value || null;
+                  const statusInfo = (itemStatus && STATUS_CONFIG[itemStatus])
+                    ? STATUS_CONFIG[itemStatus]
                     : (!isItemHome
                         ? { label: 'Belum Diisi', color: '#64748B', bg: '#F1F5F9', icon: 'minus-circle-outline' }
                         : STATUS_CONFIG.unfilled);
@@ -3873,7 +3919,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
               >
                 <Text style={styles.modalCloseFooterText}>Tutup</Text>
               </TouchableOpacity>
-              {isParent && (
+              {isParent && !isBoarding && (
                 <TouchableOpacity
                   style={styles.modalSignProceedBtn}
                   onPress={() => {
@@ -4219,13 +4265,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: -0.2,
   },
+  heroSubtitleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    marginTop: 2,
+  },
   heroModuleSubtitle: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '600',
     fontFamily: 'Nunito_600SemiBold',
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#D1FAE5',
     textAlign: 'center',
-    marginTop: 1,
   },
   heroBellDot: {
     position: 'absolute',
@@ -7450,6 +7506,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    marginTop: 4,
     marginBottom: 16,
   },
   kpiCategoryCard: {
@@ -7460,18 +7517,28 @@ const styles = StyleSheet.create({
   },
   kpiCategoryHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    gap: 4,
+    marginBottom: 6,
   },
   kpiCategoryTitle: {
-    fontSize: 11,
+    flex: 1,
+    fontSize: 9.5,
     fontWeight: '800',
     fontFamily: 'Poppins_700Bold',
     textTransform: 'uppercase',
+    lineHeight: 13,
+  },
+  kpiCategoryTagBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
   },
   kpiCategoryTag: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
     fontFamily: 'Poppins_700Bold',
   },
@@ -7699,5 +7766,254 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: '#0D9488',
     marginTop: 2,
+  },
+
+  // Tahfizh-style Hero KPI Group Card
+  tahfizhGroupCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 12,
+    borderWidth: 1.5,
+    marginBottom: 14,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  tahfizhGroupCardEmerald: {
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+  },
+  tahfizhGroupCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginBottom: 11,
+    borderRadius: 13,
+    borderWidth: 1,
+  },
+  tahfizhGroupCardHeaderRowEmerald: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  tahfizhGroupCardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    flex: 1,
+    marginRight: 8,
+  },
+  tahfizhGroupHeaderIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  tahfizhGroupHeaderIconBoxEmerald: {
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+  },
+  tahfizhGroupCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    lineHeight: 17,
+    letterSpacing: -0.2,
+  },
+  tahfizhGroupCardSub: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    lineHeight: 14,
+    marginTop: 2,
+  },
+  tahfizhGroupActionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexShrink: 0,
+  },
+  tahfizhGroupActionBadgeEmerald: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#A7F3D0',
+  },
+  tahfizhGroupActionBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  heroKpiRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  heroKpiCard: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  progressCircleBox: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressCircleRing: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 3,
+    borderColor: '#059669',
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressCircleText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#047857',
+  },
+  heroKpiContentCol: {
+    flex: 1,
+    justifyContent: 'center',
+    minWidth: 0,
+  },
+  heroKpiTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  heroKpiSub: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  heroProgressBarTrack: {
+    height: 4.5,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 3,
+    marginTop: 5,
+    overflow: 'hidden',
+  },
+  heroProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#059669',
+    borderRadius: 3,
+  },
+  targetIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroKpiTargetLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  heroKpiTargetValue: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 1,
+  },
+  heroKpiTargetSub: {
+    fontSize: 9.5,
+    color: '#059669',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  segmentedTabWrapper: {
+    flexDirection: 'row',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 18,
+    padding: 4,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  segmentedTabContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segmentedTabItem: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+  },
+  segmentedTabItemActive: {
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  segmentedTabText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  segmentedTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  juzFilterTrack: {
+    paddingHorizontal: 2,
+    paddingVertical: 6,
+    gap: 8,
+    flexDirection: 'row',
+  },
+  juzFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  juzFilterChipActive: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+  },
+  juzFilterChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  juzFilterChipTextActive: {
+    color: '#FFFFFF',
   },
 });

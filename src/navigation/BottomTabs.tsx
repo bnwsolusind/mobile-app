@@ -634,7 +634,17 @@ export default function BottomTabs() {
         if (!currentRoute?.name || currentRoute.name === 'Beranda') {
           return false;
         }
-        return useNavigationHistoryStore.getState().goBackDynamic(navigationRef);
+        const handled = useNavigationHistoryStore.getState().goBackDynamic(navigationRef, currentRoute?.params);
+        if (!handled) {
+          const globalActiveChildId = useActiveChildStore.getState().activeChildId;
+          const childId = currentRoute?.params?.child_id || currentRoute?.params?.student_id || globalActiveChildId;
+          (navigationRef as any)?.navigate?.('Beranda', childId ? {
+            reopen_child_portal_id: String(childId),
+            reopen_timestamp: Date.now(),
+          } : undefined);
+          return true;
+        }
+        return true;
       } catch {
         return false;
       }

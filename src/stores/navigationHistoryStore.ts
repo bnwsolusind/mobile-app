@@ -1,3 +1,5 @@
+import { useActiveChildStore } from './activeChildStore';
+
 export interface NavigationHistoryEntry {
   name: string;
   params?: Record<string, any>;
@@ -41,8 +43,13 @@ class NavigationHistoryManager {
       const effectiveParams = { ...(current.params || {}), ...(currentRouteParams || {}) };
 
       if (target.name === 'Beranda') {
-        const childId = effectiveParams.child_id || effectiveParams.student_id;
-        if (effectiveParams.from_child_portal && childId) {
+        const globalActiveChildId = useActiveChildStore.getState().activeChildId;
+        const childId = currentRouteParams?.child_id ||
+                        currentRouteParams?.student_id ||
+                        globalActiveChildId ||
+                        effectiveParams.child_id ||
+                        effectiveParams.student_id;
+        if (childId) {
           navigation.navigate('Beranda', {
             reopen_child_portal_id: String(childId),
             reopen_timestamp: Date.now(),
