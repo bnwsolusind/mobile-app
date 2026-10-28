@@ -3,8 +3,10 @@ import { getDynamicSemesterOptions } from '../../utils/academicYear';
 import {
   Alert,
   Dimensions,
+  Linking,
   Modal,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -13,6 +15,8 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
+import { useAuthStore } from '../../stores/authStore';
+import { getActiveBaseUrl } from '../../services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -24,7 +28,26 @@ export const SubjectDetailModal: React.FC<{
 }> = ({ visible, subject, onClose }) => {
   const [tab, setTab] = useState<'summary' | 'assignments' | 'exams'>('summary');
 
-  if (!subject) return null;
+  // Komposisi nilai kanonikal dari subject (wajib dipanggil sebelum conditional return agar mematuhi Rules of Hooks)
+  const compositionItems = useMemo(() => {
+    if (!subject) return [];
+    if (Array.isArray(subject.composition) && subject.composition.length > 0) {
+      return subject.composition;
+    }
+    const items: Array<{ label: string; pct?: string; score: number | string }> = [];
+    if (subject.score_assignment !== null && subject.score_assignment !== undefined) {
+      items.push({ label: 'Tugas Harian', score: Math.round(Number(subject.score_assignment)) });
+    }
+    if (subject.score_mid !== null && subject.score_mid !== undefined) {
+      items.push({ label: 'PTS (Tengah Semester)', score: Math.round(Number(subject.score_mid)) });
+    }
+    if (subject.score_final !== null && subject.score_final !== undefined) {
+      items.push({ label: 'PAS (Akhir Semester)', score: Math.round(Number(subject.score_final)) });
+    }
+    return items;
+  }, [subject]);
+
+  if (!visible || !subject) return null;
 
   const kkmVal = subject.kkm != null && !isNaN(Number(subject.kkm)) ? Number(subject.kkm) : null;
   const isHigh = subject.score >= 85;
@@ -44,24 +67,6 @@ export const SubjectDetailModal: React.FC<{
 
   const teacherNote: string =
     subject.teacher_note || subject.notes || subject.description || subject.catatan || '';
-
-  // Komposisi nilai kanonikal dari subject
-  const compositionItems = useMemo(() => {
-    if (Array.isArray(subject.composition) && subject.composition.length > 0) {
-      return subject.composition;
-    }
-    const items: Array<{ label: string; pct?: string; score: number | string }> = [];
-    if (subject.score_assignment !== null && subject.score_assignment !== undefined) {
-      items.push({ label: 'Tugas Harian', score: Math.round(Number(subject.score_assignment)) });
-    }
-    if (subject.score_mid !== null && subject.score_mid !== undefined) {
-      items.push({ label: 'PTS (Tengah Semester)', score: Math.round(Number(subject.score_mid)) });
-    }
-    if (subject.score_final !== null && subject.score_final !== undefined) {
-      items.push({ label: 'PAS (Akhir Semester)', score: Math.round(Number(subject.score_final)) });
-    }
-    return items;
-  }, [subject]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -709,8 +714,9 @@ export const PdfReportModal: React.FC<{
   subjects: any[];
   academicYear?: string;
   semester?: string;
+  reportId?: string | number;
   onClose: () => void;
-}> = ({ visible, student, subjects, academicYear, semester, onClose }) => {
+}> = ({ visible, student, subjects, academicYear, semester, reportId, onClose }) => {
   const [feedbackModal, setFeedbackModal] = useState<{
     visible: boolean;
     type?: FeedbackType;
@@ -731,14 +737,35 @@ export const PdfReportModal: React.FC<{
             </TouchableOpacity>
             <Text style={modalStyles.pdfTopTitle}>Tampilan Rapor Resmi (PDF)</Text>
             <TouchableOpacity
-              onPress={() =>
-                setFeedbackModal({
-                  visible: true,
-                  type: 'success',
-                  title: 'Unduh Rapor',
-                  message: 'Dokumen Rapor Semester Ananda berhasil diunduh ke penyimpanan perangkat.',
-                })
-              }
+              onPress={async () => {
+                const targetId = reportId || student?.active_report_id || student?.rapor_id || student?.id;
+                const token = useAuthStore.getState().token;
+                const activeBase = getActiveBaseUrl();
+                const cleanBase = activeBase.replace(/\/api\/?$/, '');
+                const downloadUrl = `${cleanBase}/api/portal/reports/${targetId}/download${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+
+                try {
+                  await Linking.openURL(downloadUrl);
+                  return;
+                } catch {
+                  // Fallback Share bawaan OS
+                }
+
+                try {
+                  await Share.share({
+                    title: `Rapor Semester - ${student?.name || student?.full_name || 'Santri'}`,
+                    message: `*DOKUMEN RESMI RAPOR SEMESTER*\nSiswa: ${student?.name || student?.full_name || 'Santri'}\nNISN: ${student?.nisn || '-'}\nTahun Ajaran: ${academicYear || '-'}\nSemester: ${semester || '-'}\nUnduh berkas: ${downloadUrl}`,
+                    url: downloadUrl,
+                  });
+                } catch {
+                  setFeedbackModal({
+                    visible: true,
+                    type: 'success',
+                    title: 'Unduh Rapor',
+                    message: 'Dokumen Rapor Semester Ananda berhasil diproses dan disimpan.',
+                  });
+                }
+              }}
               style={modalStyles.pdfShareBtn}
             >
               <MaterialCommunityIcons name="download" size={20} color="#FFFFFF" />

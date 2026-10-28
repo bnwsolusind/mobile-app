@@ -62,9 +62,11 @@ type AuthState = {
 
 const persistSession = (session: PersistedSession | null): void => {
   if (session) {
-    void AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    void AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session)).catch((err) => {
+      console.warn('Failed to persist session to AsyncStorage:', err);
+    });
   } else {
-    void AsyncStorage.removeItem(SESSION_KEY);
+    void AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
   }
 };
 

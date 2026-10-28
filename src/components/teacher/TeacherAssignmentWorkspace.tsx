@@ -1701,7 +1701,7 @@ export default function TeacherAssignmentWorkspace({
         ]}
       >
         <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
+          colors={['rgba(240, 253, 244, 0.97)', 'rgba(236, 253, 245, 0.95)', 'rgba(240, 253, 244, 0.97)']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={StyleSheet.absoluteFill}
@@ -1770,7 +1770,7 @@ export default function TeacherAssignmentWorkspace({
             <MaterialCommunityIcons
               name="clipboard-text-outline"
               size={14}
-              color={activeTab === 'assignments' ? '#047857' : '#D1FAE5'}
+              color={activeTab === 'assignments' ? '#FFFFFF' : '#065F46'}
               style={{ marginRight: 6 }}
             />
             <Text
@@ -1795,7 +1795,7 @@ export default function TeacherAssignmentWorkspace({
             <MaterialCommunityIcons
               name="account-check-outline"
               size={14}
-              color={activeTab === 'submissions' ? '#047857' : '#D1FAE5'}
+              color={activeTab === 'submissions' ? '#FFFFFF' : '#065F46'}
               style={{ marginRight: 6 }}
             />
             <Text
@@ -1827,12 +1827,7 @@ export default function TeacherAssignmentWorkspace({
       >
         {/* 2a. Header Statis Workspace (di paling atas saat belum scroll) — TANPA TAB */}
         <View style={[styles.staticTopBarWrapper, { paddingTop: insets.top + 8 }]}>
-          <LinearGradient
-            colors={['#047857', '#059669', '#10B981']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
+          {/* Transparent — no gradient needed, bg inherited from container */}
           <View style={styles.staticDecorCircle1} />
           <View style={styles.staticDecorCircle2} />
 
@@ -1855,7 +1850,7 @@ export default function TeacherAssignmentWorkspace({
               {isTu || isStaff ? (
                 <View style={styles.tuHeaderBadgeRow}>
                   <View style={styles.tuRolePill}>
-                    <MaterialCommunityIcons name="shield-account" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <MaterialCommunityIcons name="shield-account" size={11} color="#047857" style={{ marginRight: 4 }} />
                     <Text numberOfLines={1} style={styles.tuRolePillText}>
                       TATA USAHA · {currentUserUnitName.toUpperCase()}
                     </Text>
@@ -4699,7 +4694,7 @@ export default function TeacherAssignmentWorkspace({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
   },
   // ── Sticky Header Styles ──
   stickyHeaderContainer: {
@@ -4713,11 +4708,11 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 6,
   },
   stickyDecorCircle1: {
     position: 'absolute',
@@ -4726,7 +4721,7 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
   },
   stickyDecorCircle2: {
     position: 'absolute',
@@ -4735,7 +4730,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+    backgroundColor: 'rgba(16, 185, 129, 0.04)',
   },
   stickyTopRow: {
     flexDirection: 'row',
@@ -4753,14 +4748,16 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   stickyTitleTextCol: {
@@ -4769,12 +4766,12 @@ const styles = StyleSheet.create({
   stickyTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#064E3B',
   },
   stickySubtitle: {
     fontSize: 10.5,
     fontWeight: '600',
-    color: '#A7F3D0',
+    color: '#047857',
     marginTop: 1,
   },
   stickyCreateBtn: {
@@ -4798,10 +4795,12 @@ const styles = StyleSheet.create({
   },
   stickyTabBarContainer: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(0, 0, 0, 0.16)',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 3,
     gap: 4,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
   },
   stickyTabButton: {
     flex: 1,
@@ -4813,20 +4812,20 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   stickyTabButtonActive: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#059669',
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
   },
   stickyTabButtonText: {
     fontSize: 11.5,
     fontWeight: '700',
-    color: '#D1FAE5',
+    color: '#065F46',
   },
   stickyTabButtonTextActive: {
-    color: '#047857',
+    color: '#FFFFFF',
     fontWeight: '900',
   },
   // ── Main Scroll & Static Top Bar ──
@@ -4839,14 +4838,8 @@ const styles = StyleSheet.create({
   staticTopBarWrapper: {
     paddingBottom: 18,
     paddingHorizontal: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
     overflow: 'hidden',
-    elevation: 4,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
+    backgroundColor: 'transparent',
   },
   staticDecorCircle1: {
     position: 'absolute',
@@ -4855,7 +4848,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
   },
   staticDecorCircle2: {
     position: 'absolute',
@@ -4864,7 +4857,7 @@ const styles = StyleSheet.create({
     width: 110,
     height: 110,
     borderRadius: 55,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(16, 185, 129, 0.04)',
   },
   staticTopBarRow: {
     flexDirection: 'row',
@@ -4874,15 +4867,17 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 5,
+    shadowColor: '#059669',
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    elevation: 2,
   },
   staticTitleCol: {
     flex: 1,
@@ -4890,12 +4885,12 @@ const styles = StyleSheet.create({
   staticTitle: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
   },
   staticSubtitle: {
     fontSize: 11.5,
     fontWeight: '600',
-    color: '#D1FAE5',
+    color: '#047857',
     marginTop: 2,
   },
   // ── Body Content Wrapper ──
@@ -4908,10 +4903,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: 'hidden',
     marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     elevation: 3,
-    shadowColor: '#047857',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.12,
     shadowRadius: 8,
   },
   metricsGradient: {
@@ -4955,9 +4952,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 4,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     gap: 6,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   bodyTabButton: {
     flex: 1,
@@ -4967,7 +4969,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 8,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: 'transparent',
   },
   bodyTabButtonActive: {
     backgroundColor: '#059669',
@@ -4980,7 +4982,7 @@ const styles = StyleSheet.create({
   bodyTabButtonText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#065F46',
   },
   bodyTabButtonTextActive: {
     color: '#FFFFFF',
@@ -5004,11 +5006,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     borderRadius: 14,
     paddingHorizontal: 12,
     height: 44,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -5040,13 +5047,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
+    shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 1,
   },
@@ -5105,13 +5112,13 @@ const styles = StyleSheet.create({
   assignmentCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#D1FAE5',
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
     overflow: 'hidden',
@@ -5148,18 +5155,18 @@ const styles = StyleSheet.create({
   classBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F0FDF4',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
     maxWidth: '45%',
   },
   classBadgeText: {
     fontSize: 10.5,
     fontWeight: '600',
-    color: '#475569',
+    color: '#065F46',
   },
   cardActionGroup: {
     flexDirection: 'row',
@@ -5253,13 +5260,13 @@ const styles = StyleSheet.create({
   submissionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#D1FAE5',
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
     overflow: 'hidden',
@@ -5476,7 +5483,7 @@ const styles = StyleSheet.create({
   formInput: {
     backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -5548,14 +5555,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 9,
     marginBottom: 16,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
+    shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 1,
   },
@@ -5580,11 +5587,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     padding: 18,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.15,
     shadowRadius: 20,
     elevation: 10,
     overflow: 'hidden',
@@ -6546,17 +6553,17 @@ const styles = StyleSheet.create({
   tuRolePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
     paddingVertical: 2.5,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+    borderColor: '#A7F3D0',
   },
   tuRolePillText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#047857',
     letterSpacing: 0.3,
   },
   staticHeaderActionCol: {
@@ -6662,18 +6669,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   filterChipActive: {
-    backgroundColor: '#047857',
-    borderColor: '#047857',
+    backgroundColor: '#059669',
+    borderColor: '#059669',
   },
   filterChipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#065F46',
   },
   filterChipTextActive: {
     color: '#FFFFFF',
@@ -6686,7 +6693,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.2,
-    borderColor: '#CBD5E1',
+    borderColor: '#A7F3D0',
   },
   filterChipReset: {
     flexDirection: 'row',

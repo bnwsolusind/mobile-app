@@ -17,6 +17,8 @@ import {
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
   getProfileImageUrl,
+  getStudentAvatarSource,
+  isGirlStudent,
 } from '../utils/profile';
 import { isParentRole, isStudentRole } from '../utils/roles';
 
@@ -101,26 +103,27 @@ export function resolveStudentDisplay(student: any, user?: any): ResolvedStudent
     String(student?.name || student?.full_name || student?.nama_lengkap || '')
       .trim()
       .split(' ')[0] || STICKY_HEADER_TEXTS.fallbackChildShortName;
-  const gender = student?.gender || student?.jenis_kelamin || user?.gender || 'L';
-  const isGirl = gender === 'P' || gender === 'female' || gender === 'perempuan';
+  const isGirl = isGirlStudent(student);
   const kelas =
     typeof student?.kelas === 'object'
-      ? student?.kelas?.nama_kelas || student?.kelas?.name
-      : student?.class_name ||
-        student?.kelas ||
-        STICKY_HEADER_TEXTS.fallbackDash;
-  const unit =
-    typeof student?.education_unit === 'object'
-      ? student?.education_unit?.name || student?.education_unit?.nama
-      : student?.kelas?.unit_pendidikan?.name ||
-        student?.kelas?.unit_pendidikan?.nama ||
-        student?.kelas?.unitPendidikan?.name ||
-        student?.kelas?.unitPendidikan?.nama ||
-        student?.unit_name ||
-        student?.unit?.name ||
-        user?.unit_name ||
-        (user as any)?.unit?.name ||
-        STICKY_HEADER_TEXTS.fallbackUnit;
+      ? String(student?.kelas?.nama_kelas || student?.kelas?.name || STICKY_HEADER_TEXTS.fallbackDash)
+      : String(student?.class_name || (typeof student?.kelas === 'string' ? student.kelas : '') || STICKY_HEADER_TEXTS.fallbackDash);
+  const unit = String(
+    (student?.education_unit && typeof student.education_unit === 'object'
+      ? student.education_unit?.name || student.education_unit?.nama
+      : '') ||
+    student?.kelas?.unit_pendidikan?.name ||
+    student?.kelas?.unit_pendidikan?.nama ||
+    student?.kelas?.unitPendidikan?.name ||
+    student?.kelas?.unitPendidikan?.nama ||
+    student?.unit_name ||
+    (student?.unit && typeof student.unit === 'object'
+      ? student.unit?.name || student.unit?.nama
+      : (typeof student?.unit === 'string' ? student.unit : '')) ||
+    user?.unit_name ||
+    (user as any)?.unit?.name ||
+    STICKY_HEADER_TEXTS.fallbackUnit
+  );
   return {
     displayName: String(displayName),
     firstName,
@@ -129,7 +132,7 @@ export function resolveStudentDisplay(student: any, user?: any): ResolvedStudent
     kelas: String(kelas),
     unit: String(unit),
     avatarUri: getProfileImageUrl(student),
-    defaultAvatar: isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR,
+    defaultAvatar: getStudentAvatarSource(student),
   };
 }
 

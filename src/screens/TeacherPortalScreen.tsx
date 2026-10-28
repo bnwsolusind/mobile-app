@@ -30,6 +30,8 @@ import {
   DEFAULT_PARENT_AVATAR,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
+  isGirlStudent,
 } from '../utils/profile';
 import AppFeedbackModal, { FeedbackType } from '../components/AppFeedbackModal';
 import EmptyStateCard from '../components/EmptyStateCard';
@@ -716,17 +718,8 @@ export default function TeacherPortalScreen({ route, navigation }: any) {
     return students[0] || null;
   }, [selectedNoteStudent, form.student_id, students]);
 
-  const noteAvatarUri = getProfileImageUrl(noteTarget);
-  const noteIsGirl =
-    noteTarget?.gender === 'P' ||
-    noteTarget?.jenis_kelamin === 'P' ||
-    noteTarget?.gender === 'female' ||
-    noteTarget?.gender === 'F';
-  const noteAvatarSrc = noteAvatarUri
-    ? { uri: noteAvatarUri }
-    : noteIsGirl
-    ? DEFAULT_STUDENT_GIRL_AVATAR
-    : DEFAULT_STUDENT_BOY_AVATAR;
+  const noteAvatarSrc = getStudentAvatarSource(noteTarget);
+  const noteIsGirl = isGirlStudent(noteTarget);
 
   const noteStudentName =
     noteTarget?.full_name ||
@@ -1584,17 +1577,8 @@ export default function TeacherPortalScreen({ route, navigation }: any) {
               />
             ) : (
               filteredStudents.map((st, idx) => {
-                const sAvatar = getProfileImageUrl(st);
-                const isGirl =
-                  st.gender === 'P' ||
-                  st.jenis_kelamin === 'P' ||
-                  st.gender === 'female' ||
-                  st.gender === 'F';
-                const avatarSource = sAvatar
-                  ? { uri: sAvatar }
-                  : isGirl
-                  ? DEFAULT_STUDENT_GIRL_AVATAR
-                  : DEFAULT_STUDENT_BOY_AVATAR;
+                const avatarSource = getStudentAvatarSource(st);
+                const isGirl = isGirlStudent(st);
 
                 const sName = st.full_name || st.nama_lengkap || st.name || 'Santri';
                 const sNis = st.nis || '-';

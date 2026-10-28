@@ -109,24 +109,48 @@ async function main() {
     console.log(`Updated ${m.dir} icons (legacy: ${m.legacySize}px, adaptive: ${m.adaptiveSize}px)`);
   }
 
-  // 5. Update native splash logos in drawable-*
+  // 5. Update native splash logos in drawable-* with Android 12 inner circle safe zone (108dp in 288dp -> 44%)
   const splashDrawables = [
-    { dir: 'drawable-mdpi', size: 288 },
-    { dir: 'drawable-hdpi', size: 432 },
-    { dir: 'drawable-xhdpi', size: 576 },
-    { dir: 'drawable-xxhdpi', size: 864 },
-    { dir: 'drawable-xxxhdpi', size: 1152 },
+    { dir: 'drawable-mdpi', size: 288, iconSize: 110 },
+    { dir: 'drawable-hdpi', size: 432, iconSize: 165 },
+    { dir: 'drawable-xhdpi', size: 576, iconSize: 220 },
+    { dir: 'drawable-xxhdpi', size: 864, iconSize: 330 },
+    { dir: 'drawable-xxxhdpi', size: 1152, iconSize: 440 },
   ];
 
   for (const s of splashDrawables) {
-    const splashImg = await iu.generateImageAsync(
+    const innerImg = await iu.generateImageAsync(
       { projectRoot, cacheType: 'icons' },
-      { src: sourceIcon, width: s.size, height: s.size, resizeMode: 'contain', backgroundColor: 'transparent' }
+      { src: sourceIcon, width: s.iconSize, height: s.iconSize, resizeMode: 'contain', backgroundColor: 'transparent' }
     );
+    const tempInner = path.join(projectRoot, 'assets', `temp_splash_${s.dir}.png`);
+    fs.writeFileSync(tempInner, innerImg.source);
+
+    const fullCanvas = await iu.generateImageAsync(
+      { projectRoot, cacheType: 'icons' },
+      { src: tempInner, width: s.size, height: s.size, resizeMode: 'contain', backgroundColor: 'transparent' }
+    );
+    fs.unlinkSync(tempInner);
+
     const targetFile = path.join(resBase, s.dir, 'splashscreen_logo.png');
-    fs.writeFileSync(targetFile, splashImg.source);
-    console.log(`Updated ${s.dir}/splashscreen_logo.png (${s.size}px)`);
+    fs.writeFileSync(targetFile, fullCanvas.source);
+    console.log(`Updated ${s.dir}/splashscreen_logo.png (${s.size}px with ${s.iconSize}px safe zone)`);
   }
+
+  // Also default drawable/splashscreen_logo.png
+  const defInner = await iu.generateImageAsync(
+    { projectRoot, cacheType: 'icons' },
+    { src: sourceIcon, width: 195, height: 195, resizeMode: 'contain', backgroundColor: 'transparent' }
+  );
+  const tempDef = path.join(projectRoot, 'assets', 'temp_def_splash.png');
+  fs.writeFileSync(tempDef, defInner.source);
+  const defCanvas = await iu.generateImageAsync(
+    { projectRoot, cacheType: 'icons' },
+    { src: tempDef, width: 512, height: 512, resizeMode: 'contain', backgroundColor: 'transparent' }
+  );
+  fs.unlinkSync(tempDef);
+  fs.writeFileSync(path.join(resBase, 'drawable', 'splashscreen_logo.png'), defCanvas.source);
+  console.log('Updated drawable/splashscreen_logo.png (512px with 270px safe zone)');
 
   console.log('ALL ICONS AND SPLASH LOGOS SUCCESSFULLY GENERATED!');
 }

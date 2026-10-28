@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Animated,
-  Dimensions,
   Easing,
   Image,
   Pressable,
   StyleSheet,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -14,7 +14,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 interface SplashScreenProps {
   onFinish?: () => void;
@@ -84,16 +84,18 @@ export default function SplashScreen({ onFinish, duration = 1600 }: SplashScreen
       accessibilityRole="button"
       accessibilityLabel="Lanjutkan ke aplikasi"
     >
-      <LinearGradient
-        colors={['#10A368', '#0B8A4D', '#087340']}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
+      {/* Background Image Ilustrasi Gedung Sekolah & Masjid (Identik dengan Halaman Utama) */}
+      <Image
+        source={PARENT_HOME_BG}
+        style={[StyleSheet.absoluteFill, styles.bgImage]}
+        resizeMode="cover"
       />
-      {/* Soft Decorative Ambient Circles (Exact match to reference design) */}
-      <View style={styles.topRightDecorCircle} />
-      <View style={styles.bottomLeftDecorCircle} />
-      <View style={styles.midRightDecorDot} />
+      {/* Overlay gradien halus berbasis warna #18A165 agar background tetap kelihatan */}
+      <LinearGradient
+        colors={['rgba(24, 161, 101, 0.35)', 'rgba(24, 161, 101, 0.72)', 'rgba(18, 128, 80, 0.94)']}
+        locations={[0, 0.45, 1]}
+        style={StyleSheet.absoluteFill}
+      />
 
       {/* Center Branding Content */}
       <View style={styles.content}>
@@ -127,7 +129,7 @@ export default function SplashScreen({ onFinish, duration = 1600 }: SplashScreen
         </Animated.View>
       </View>
 
-      {/* Bottom Loading Progress Section (Active only in final splash phase) */}
+      {/* Bottom Loading Progress Section (Active only in In-App Splash) */}
       <Animated.View
         style={[
           styles.bottomSection,
@@ -147,6 +149,16 @@ export default function SplashScreen({ onFinish, duration = 1600 }: SplashScreen
           <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
         </View>
 
+        {/* Tombol Lanjut ke Aplikasi Berwarna #18A165 */}
+        <TouchableOpacity
+          onPress={triggerFinish}
+          activeOpacity={0.85}
+          style={styles.splashActionButton}
+        >
+          <Text style={styles.splashActionButtonText}>Lanjut ke Aplikasi</Text>
+          <MaterialCommunityIcons name="arrow-right" size={18} color="#FFFFFF" />
+        </TouchableOpacity>
+
         {/* App Version Info */}
         <Text style={styles.versionText}>Versi 1.0.0</Text>
       </Animated.View>
@@ -160,6 +172,12 @@ const styles = StyleSheet.create({
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#18A165',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.88,
   },
   // Decorative ambient circles
   topRightDecorCircle: {
@@ -202,23 +220,25 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   logoCardOuter: {
-    width: 176,
-    height: 176,
-    borderRadius: 48,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.16,
-    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
     elevation: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
+    overflow: 'hidden',
   },
   logoImage: {
-    width: 148,
-    height: 148,
+    width: 156,
+    height: 156,
+    borderRadius: 78,
   },
   appNameText: {
     fontSize: 34,
@@ -227,31 +247,45 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     marginTop: 26,
     textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.45)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
   },
   subTitleText: {
     fontSize: 15,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.95)',
+    color: 'rgba(255, 255, 255, 0.98)',
     marginTop: 8,
     textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   orgNameText: {
     fontSize: 14.5,
     fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.88)',
+    color: 'rgba(255, 255, 255, 0.92)',
     marginTop: 4,
     textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   taglineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    backgroundColor: 'rgba(24, 161, 101, 0.70)',
     borderRadius: 20,
     paddingVertical: 10,
     paddingHorizontal: 20,
     marginTop: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.50)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
   },
   taglineBadgeIcon: {
     marginRight: 8,
@@ -262,7 +296,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     letterSpacing: 0.2,
   },
-  // Bottom Progress Section
+  // Bottom Section with Progress Bar & Action Button
   bottomSection: {
     position: 'absolute',
     bottom: 24,
@@ -297,11 +331,35 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#FFFFFF',
   },
+  splashActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#18A165',
+    paddingVertical: 13,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    marginTop: 18,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  splashActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '800',
+    marginRight: 6,
+    letterSpacing: 0.3,
+  },
   versionText: {
     fontSize: 12,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: 'rgba(255, 255, 255, 0.85)',
     textAlign: 'center',
-    marginTop: 28,
+    marginTop: 16,
   },
 });

@@ -7,14 +7,18 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
+  Linking,
   Modal,
   Platform,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
+
 import {
   isParentRole,
   isTeacherRole,
@@ -44,9 +49,18 @@ import { StudentQrModal } from '../components/StudentQrModal';
 import { StudentMenuModal } from '../components/StudentMenuModal';
 import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
 import { StudentMonthlyReportModal } from '../components/StudentMonthlyReportModal';
-import { getApiErrorMessage } from '../services/api';
+import { getApiErrorMessage, getActiveBaseUrl } from '../services/api';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
+import {
+  getProfileImageUrl,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
+  isGirlStudent,
+} from '../utils/profile';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 const STUDENT_CARD_GAP = 12;
 const STUDENT_PEEK_WIDTH = 26;
 const studentCardWidth = SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP;
@@ -101,6 +115,37 @@ const getCategoryIconInfo = (category: string, name: string, categoryCode?: stri
   }
 
   return { icon: iconName, color: categoryColor || '#059669', bg: '#ECFDF5' };
+};
+
+/**
+ * Helper untuk mengelompokkan butir agenda ke dalam kategori Sholat vs Mutaba'ah
+ * Menggunakan data dinamis kategori, kode relasional, dan kata kunci nama amalan
+ */
+const isSholatItem = (item: any): boolean => {
+  if (!item) return false;
+  const code = String(item.category_code || '').toUpperCase();
+  if (code === 'SHALAT' || code === 'SHOLAT') return true;
+
+  const cat = String(item.category || '').toLowerCase();
+  if (cat.includes('shalat') || cat.includes('sholat') || cat.includes('prayer')) return true;
+
+  const name = String(item.name || '').toLowerCase();
+  const prayerKeywords = [
+    'shalat',
+    'sholat',
+    'subuh',
+    'dzuhur',
+    'ashar',
+    'maghrib',
+    'isya',
+    'dhuha',
+    'tahajjud',
+    'rawatib',
+    'witir',
+    'qiyam',
+    'tarawih',
+  ];
+  return prayerKeywords.some((kw) => name.includes(kw));
 };
 
 const formatDateIndo = (dateStr: string) => {
@@ -969,6 +1014,26 @@ export default function MutabaahScreen({ route, navigation }: any) {
   // Filter Categories & Scope Segmentation
   const [scopeTab, setScopeTab] = useState<'all' | 'home' | 'school'>('all');
 
+  // Accordion Expand/Collapse State untuk Tab "Semua Lingkup" (Grup Sholat & Mutaba'ah)
+  const [isSholatExpanded, setIsSholatExpanded] = useState(false);
+  const [isMutabaahExpanded, setIsMutabaahExpanded] = useState(false);
+
+  const toggleSholatAccordion = useCallback(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setIsSholatExpanded((prev) => !prev);
+  }, []);
+
+  const toggleMutabaahAccordion = useCallback(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setIsMutabaahExpanded((prev) => !prev);
+  }, []);
+
   const details = useMemo(() => {
     return overview?.today?.details || [];
   }, [overview]);
@@ -1132,6 +1197,31 @@ export default function MutabaahScreen({ route, navigation }: any) {
     return isBoarding ? filtered : sortHomeFirst(filtered);
   }, [details, isBoarding, scopeTab, homeDetails, schoolDetails, selectedCategory]);
 
+  // Segmentasi Grup Sholat dan Mutaba'ah (Khusus untuk Tab "Semua Lingkup")
+  const { sholatItems, mutabaahItems, sholatGoodCount, mutabaahGoodCount } = useMemo(() => {
+    const sholat: any[] = [];
+    const mutabaah: any[] = [];
+    let sGood = 0;
+    let mGood = 0;
+
+    filteredDetails.forEach((item: any) => {
+      if (isSholatItem(item)) {
+        sholat.push(item);
+        if (item.status_value === 'good') sGood += 1;
+      } else {
+        mutabaah.push(item);
+        if (item.status_value === 'good') mGood += 1;
+      }
+    });
+
+    return {
+      sholatItems: sholat,
+      mutabaahItems: mutabaah,
+      sholatGoodCount: sGood,
+      mutabaahGoodCount: mGood,
+    };
+  }, [filteredDetails]);
+
   const isSelectedCategoryQuran = useMemo(() => {
     if (selectedCategory === 'all') return false;
     const found = dynamicCategories.find(c => c.name === selectedCategory || c.id === selectedCategory || c.code === selectedCategory);
@@ -1238,6 +1328,58 @@ export default function MutabaahScreen({ route, navigation }: any) {
     const y = now.getFullYear();
     return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
   }, [overview?.academic_year, headerStudent?.academic_year]);
+
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState(false);
+
+  const currentChild = headerStudent || (children && children.length > 0 ? children[0] : null);
+  const studentFullName = currentChild?.full_name || currentChild?.nama_lengkap || currentChild?.name || 'Ananda';
+  const studentUnit = currentChild?.unit_name || currentChild?.education_unit?.name || currentChild?.unit_pendidikan?.nama || currentChild?.unit || '';
+  const studentClass = currentChild?.class_name || currentChild?.classroom?.name || currentChild?.kelas?.nama || currentChild?.kelas?.nama_kelas || currentChild?.rombel_name || '';
+  const studentPhotoUrl = getProfileImageUrl(currentChild);
+  const isGirl = isGirlStudent(currentChild);
+  const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+  const studentAvatarSource = studentPhotoUrl ? { uri: studentPhotoUrl } : defaultAvatar;
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini — Single Source of Truth selaras dengan HomeScreen
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(headerStudent || currentChild);
+  }, [headerStudent, currentChild]);
+
+  const handleExportWeeklyPdf = useCallback(async () => {
+    const sId = selectedChildId || currentChild?.id || (user as any)?.student?.id || (user as any)?.id;
+    const token = useAuthStore.getState().token;
+    const baseUrl = getActiveBaseUrl().replace(/\/api\/?$/, '');
+    const downloadUrl = sId
+      ? `${baseUrl}/api/parent/mutabaah/${sId}/weekly-pdf?date=${selectedDate}&token=${encodeURIComponent(token || '')}`
+      : null;
+
+    if (downloadUrl) {
+      try {
+        await Linking.openURL(downloadUrl);
+        return;
+      } catch {
+        // Fallback ke Share bawaan OS
+      }
+    }
+
+    const shareContent = [
+      `*LAPORAN MUTABA'AH PEKANAN*`,
+      `Santri: ${studentFullName}`,
+      `Unit: ${studentUnit || '-'}`,
+      `Kelas: ${studentClass || '-'}`,
+      `Tanggal: ${selectedDate}`,
+      `----------------------------------------`,
+      `Format resmi laporan perkembangan ibadah dan mutaba'ah santri/siswa.`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        title: `Laporan Mutaba'ah Pekanan - ${studentFullName}`,
+        message: shareContent,
+        url: downloadUrl || undefined,
+      });
+    } catch {}
+  }, [selectedChildId, currentChild?.id, user, selectedDate, studentFullName, studentUnit, studentClass]);
 
   const monthlyStats = useMemo(() => {
     if (overview?.monthly && typeof overview.monthly.score !== 'undefined') {
@@ -1645,258 +1787,380 @@ export default function MutabaahScreen({ route, navigation }: any) {
     );
   };
 
+  /**
+   * Helper render kartu butir agenda mutabaah (dipergunakan oleh Accordion & Flat List)
+   */
+  const renderAgendaItemCard = (item: any, index: number) => {
+    const catIconInfo = getCategoryIconInfo(item.category, item.name, item.category_code);
+    const isItemHome = item.scope === 'home' || item.input_location === 'home' || item.is_parent_item;
+    const canParentEditThis = isItemHome && isParent && !isBoarding;
+    // Status riil dari basis data PostgreSQL (sinkron 100% dengan Web Dashboard)
+    const itemStatus = item.status_value || null;
+    const hasValue = Boolean(itemStatus);
+    const isGood = itemStatus === 'good';
+    const isLess = itemStatus === 'less';
+    const isNotDone = itemStatus === 'not_done';
+    const isNa = itemStatus === 'na';
+    const isParentFilled = Boolean(item.is_parent_filled || (item.input_source === 'parent' && hasValue));
+
+    return (
+      <TouchableOpacity
+        key={item.id || item.agenda_item_id || `agenda-${index}`}
+        style={[
+          styles.agendaItemCard,
+          canParentEditThis && styles.agendaItemCardClickable,
+        ]}
+        onPress={() => handleItemPress(item)}
+        activeOpacity={0.75}
+      >
+        <View style={styles.agendaCardRow}>
+          {/* Nomor Urut */}
+          <View style={[styles.agendaNumBox, isGood && styles.agendaNumBoxActive]}>
+            <Text style={[styles.agendaNumText, isGood && styles.agendaNumTextActive]}>
+              {index + 1}
+            </Text>
+          </View>
+
+          {/* Squircle Pastel Icon Box */}
+          <View style={[styles.agendaSquircleIcon, { backgroundColor: catIconInfo.bg }]}>
+            <MaterialCommunityIcons
+              name={catIconInfo.icon as any}
+              size={18}
+              color={catIconInfo.color}
+            />
+          </View>
+
+          {/* Informasi Nama & Kategori (Rapi, label sekolah/asrama/rumah di bawah kategori) */}
+          <View style={styles.agendaCardCenter}>
+            <Text style={styles.agendaTitleText} numberOfLines={2}>
+              {item.name}
+            </Text>
+            <View style={styles.agendaMetaColumn}>
+              <Text style={styles.agendaCatText}>{item.category || 'Amalan'}</Text>
+              <View
+                style={[
+                  styles.scopePill,
+                  styles.scopePillAligned,
+                  isItemHome
+                    ? styles.scopePillHome
+                    : (isBoarding || item.scope === 'boarding')
+                      ? styles.scopePillBoarding
+                      : styles.scopePillSchool,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.scopePillText,
+                    isItemHome
+                      ? styles.scopePillTextHome
+                      : (isBoarding || item.scope === 'boarding')
+                        ? styles.scopePillTextBoarding
+                        : styles.scopePillTextSchool,
+                  ]}
+                >
+                  {isItemHome
+                    ? '🏠 Rumah'
+                    : (isBoarding || item.scope === 'boarding')
+                      ? '🕌 Asrama'
+                      : '🏫 Sekolah'}
+                </Text>
+              </View>
+            </View>
+            {item.notes ? (
+              <Text style={styles.agendaNotesText} numberOfLines={1}>
+                Catatan: {item.notes}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Status Indicator (Checklist Hijau Besar / Kurang Jam / Silang Merah / Minus / Lingkaran Bergaris Sekolah/Asrama / Radar Tanda Seru) */}
+          <View style={styles.agendaCardRight}>
+            {isGood ? (
+              <View style={styles.statusCheckWrap}>
+                <MaterialCommunityIcons
+                  name="check-circle"
+                  size={26}
+                  color="#059669"
+                />
+              </View>
+            ) : isLess ? (
+              <View style={styles.statusLessWrap}>
+                <MaterialCommunityIcons
+                  name="clock-alert-outline"
+                  size={24}
+                  color="#D97706"
+                />
+              </View>
+            ) : isNotDone ? (
+              <View style={styles.statusCrossWrap}>
+                <MaterialCommunityIcons
+                  name="close-circle"
+                  size={24}
+                  color="#E11D48"
+                />
+              </View>
+            ) : isNa ? (
+              <View style={styles.statusNaWrap}>
+                <MaterialCommunityIcons
+                  name="minus-circle-outline"
+                  size={22}
+                  color="#64748B"
+                />
+              </View>
+            ) : !isItemHome ? (
+              <View style={styles.statusSchoolUnfilledWrap}>
+                <MaterialCommunityIcons
+                  name="minus-circle-outline"
+                  size={24}
+                  color="#94A3B8"
+                />
+              </View>
+            ) : isSelectedDatePast ? (
+              <View style={styles.statusCrossWrap}>
+                <MaterialCommunityIcons
+                  name="close-circle"
+                  size={24}
+                  color="#E11D48"
+                />
+              </View>
+            ) : (
+              <RadarExclamation />
+            )}
+            {canParentEditThis && (
+              <MaterialCommunityIcons
+                name="chevron-right"
+                size={17}
+                color="#059669"
+                style={{ marginLeft: 2 }}
+              />
+            )}
+          </View>
+        </View>
+
+        {/* Status Verifikasi Pembimbing & Sumber Input */}
+        <View style={styles.agendaItemFooter}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 4 }}>
+            <MaterialCommunityIcons
+              name={
+                isParentFilled
+                  ? (item.verification_status === 'verified' ? 'shield-check' : 'check-circle-outline')
+                  : (isItemHome
+                      ? 'clock-alert-outline'
+                      : (hasValue
+                          ? (item.verification_status === 'verified' ? 'shield-check' : (isBoarding ? 'mosque' : 'check-circle-outline'))
+                          : 'minus-circle-outline'))
+              }
+              size={13}
+              color={
+                isParentFilled
+                  ? '#059669'
+                  : (isItemHome
+                      ? '#D97706'
+                      : (hasValue ? (item.verification_status === 'verified' ? '#059669' : (isBoarding ? '#0D9488' : '#0284C7')) : '#94A3B8'))
+              }
+            />
+            <Text
+              style={[
+                styles.agendaItemFooterText,
+                {
+                  color: isParentFilled
+                    ? '#059669'
+                    : (isItemHome
+                        ? '#D97706'
+                        : (hasValue ? (item.verification_status === 'verified' ? '#059669' : (isBoarding ? '#0D9488' : '#0284C7')) : '#94A3B8')),
+                },
+              ]}
+            >
+              {isParentFilled
+                ? (item.verification_status === 'verified' ? 'Diisi Orang Tua · Terverifikasi' : 'Diisi Orang Tua · Siap Diparaf')
+                : (isItemHome
+                    ? 'Menunggu Input Orang Tua'
+                    : (isBoarding || item.scope === 'boarding'
+                        ? (hasValue ? 'Dicatat oleh Musyrif Asrama' : 'Belum diisi di asrama')
+                        : (hasValue
+                            ? (item.verification_status === 'verified' ? 'Diisi Guru · Terverifikasi' : 'Diisi Guru di Sekolah')
+                            : 'Belum diisi di sekolah')))}
+            </Text>
+          </View>
+          {canParentEditThis && (
+            <Text style={styles.agendaTapHintText}>
+              {hasValue ? 'Tap untuk ubah ➔' : 'Tap untuk isi ➔'}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <View style={styles.rootContainer}>
-      {/* 0. STICKY HEADER BERSAMA (top bar + card siswa, sama dengan Tugas/Jadwal/Materi/Nilai) */}
-      <StudentStickyHeader
-        scrollY={scrollY}
-        topInset={topInset}
-        title="Mutaba’ah Yaumiyyah"
-        navigation={navigation}
-        route={route}
-        student={headerStudent}
-        user={user}
-        childrenList={children}
-        selectedChildId={selectedChildId}
-        onSelectChild={(cid) => {
-          const strId = String(cid);
-          setSelectedChildId(strId);
-          useActiveChildStore.getState().setActiveChildId(strId);
-        }}
-        middleAction={{
-          label: 'Jadwal',
-          icon: 'calendar-clock',
-          onPress: () => openScheduleForStudent(headerStudent),
-        }}
-        onOpenIdCard={(s) => openIdCard(s)}
-        onOpenQr={(s) => openQrCard(s)}
-        onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-        onOpenMenu={(s) => setSelectedMenuStudent(s)}
-      />
-      <View style={styles.sheetContainer}>
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN JADWAL & UTAMA, JERNIH & CRISP) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#FFFFFF', '#F4FBF8', '#ECFDF5']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
 
-        <Animated.ScrollView
-          ref={mainScrollRef}
-          style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
-          onScroll={handleMainScroll}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void loadMutabaah();
-                void loadMonitoring();
-              }}
-              colors={['#18A165']}
-              progressViewOffset={topInset + 10}
-            />
-          }
+      {/* ── TOP HEADER IDENTIK HALAMAN UTAMA (TOMBOL KARTU PUTIH MINT GREEN SHADOW) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
         >
-          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#064E3B', '#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
 
-            <View style={styles.staticTopBarRow}>
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Mutaba’ah Yaumiyyah
+        </Text>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={handleExportWeeklyPdf}
+            style={styles.cleanHeaderIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Unduh PDF Pekanan"
+          >
+            <MaterialCommunityIcons name="file-pdf-box" size={22} color="#059669" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => navigation?.navigate('Notifikasi')}
+            style={styles.cleanHeaderIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Notifikasi"
+          >
+            <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+            {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView
+        ref={mainScrollRef}
+        style={styles.screen}
+        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void loadMutabaah();
+              void loadMonitoring();
+            }}
+            colors={['#18A165']}
+          />
+        }
+      >
+        <View style={styles.cleanScrollInner}>
+          {/* 1. STUDENT PROFILE SECTION (TERBUKA, INDAH, DENGAN TOMBOL GANTI SISWA AKTIF) */}
+          <View style={styles.studentProfileRow}>
+            {/* Circular Avatar dengan mint ring */}
+            <TouchableOpacity
+              activeOpacity={children && children.length > 1 ? 0.75 : 1}
+              onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+              style={styles.studentAvatarRing}
+            >
+              <Image
+                source={studentAvatarSource}
+                style={styles.studentAvatarImg}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+
+            {/* Profile Info */}
+            <View style={styles.studentProfileInfoCol}>
               <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
+                activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                style={styles.studentNameRow}
               >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#047857" />
+                <Text numberOfLines={1} style={styles.studentProfileName}>
+                  {studentFullName}
+                </Text>
               </TouchableOpacity>
 
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>
-                  Mutaba’ah Yaumiyyah
-                </Text>
-                <View style={styles.heroSubtitleBadge}>
-                  <MaterialCommunityIcons name="clipboard-check-outline" size={11} color="#D1FAE5" style={{ marginRight: 4 }} />
-                  <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                    {heroFirstName ? `Ananda ${heroFirstName}` : heroSubtitleFallback}
+              {/* Baris 2: Unit Pendidikan */}
+              {studentUnit ? (
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                    {studentUnit}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Baris 3: Kelas Siswa tepat di bawah Unit Pendidikan */}
+              {studentClass ? (
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                    {studentClass}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran di Sebelahnya */}
+              <View style={styles.studentActionBadgeRow}>
+                {children && children.length > 1 && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowChildSelectorModal(true)}
+                    style={styles.parentGantiAnakBtn}
+                  >
+                    <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                    <MaterialCommunityIcons name="chevron-down" size={15} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={handleExportWeeklyPdf}
+                  style={[styles.parentGantiAnakBtn, { backgroundColor: '#059669', marginRight: 4 }]}
+                >
+                  <MaterialCommunityIcons name="file-pdf-box" size={14} color="#FFFFFF" style={{ marginRight: 3 }} />
+                  <Text style={styles.parentGantiAnakBtnText}>PDF</Text>
+                </TouchableOpacity>
+
+                <View
+                  style={[
+                    styles.attendanceStatusBadge,
+                    { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={attendanceStatus.icon}
+                    size={12}
+                    color={attendanceStatus.color}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                    {attendanceStatus.label}
                   </Text>
                 </View>
               </View>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#047857" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
             </View>
           </View>
 
           {/* Badan Halaman Konten */}
           <View style={styles.bodyContentWrapper}>
             {/* ============================================================ */}
-            {/* SECTION 1: DATA SISWA & UNIT PENDIDIKAN (HERO CARD ANANDA TERPILIH) */}
-            {/* ============================================================ */}
-            {children && children.length > 0 ? (
-              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                {children.length === 1 ? (
-                  <View style={styles.singleHeroCardContainer}>
-                    <StudentHeroCard
-                      child={children[0]}
-                      isSelected={true}
-                      isSingleChild={true}
-                      showActionButtons={true}
-                      cardLabel="Kartu Siswa"
-                      calendarLabel="Jadwal"
-                      portalLabel="Menu"
-                      onPressCard={() => openIdCard(children[0])}
-                      onPressQr={() => openQrCard(children[0])}
-                      onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                      onPressCalendar={() => openScheduleForStudent(children[0])}
-                      onPressPortal={() => setSelectedMenuStudent(children[0])}
-                    />
-                  </View>
-                ) : (
-                  <>
-                    <ScrollView
-                      ref={studentScrollRef}
-                      horizontal
-                      nestedScrollEnabled={true}
-                      showsHorizontalScrollIndicator={false}
-                      contentOffset={{ x: centerLoopOffset, y: 0 }}
-                      contentContainerStyle={[
-                        styles.studentCardsTrack,
-                        { paddingHorizontal: studentTrackPad },
-                      ]}
-                      decelerationRate="fast"
-                      snapToInterval={studentSnapInterval}
-                      snapToAlignment="start"
-                      disableIntervalMomentum
-                      onMomentumScrollEnd={(e) => {
-                        if (studentLoopCount === 0) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                          requestAnimationFrame(() => {
-                            recenterLoop();
-                          });
-                        } else {
-                          recenterLoop();
-                        }
-                      }}
-                      onScrollEndDrag={(e) => {
-                        if (studentLoopCount === 0) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                        }
-                      }}
-                      scrollEventThrottle={16}
-                      style={styles.heroCardScrollContainer}
-                    >
-                      {loopWindow.list.map((child: any, sIdx: number) => {
-                        const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                        const isCardActive = realIdx === safeCenter;
-                        return (
-                          <StudentHeroCard
-                            key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                            child={child}
-                            isSelected={isCardActive}
-                            isSingleChild={false}
-                            showActionButtons={true}
-                            cardWidth={studentCardWidth}
-                            cardLabel="Kartu Siswa"
-                            calendarLabel="Jadwal"
-                            portalLabel="Menu"
-                            onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                            onPressCard={() => openIdCard(child)}
-                            onPressQr={() => openQrCard(child)}
-                            onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                            onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                            onPressCalendar={() => openScheduleForStudent(child)}
-                            onPressPortal={() => setSelectedMenuStudent(child)}
-                          />
-                        );
-                      })}
-                    </ScrollView>
-
-                    {/* DOT INDIKATOR SCROLL SISWA */}
-                    <View style={styles.paginationDotsRow}>
-                      {children.map((_, dotIdx) => {
-                        const isDotActive = dotIdx === safeCenter;
-                        return (
-                          <TouchableOpacity
-                            key={dotIdx}
-                            activeOpacity={0.7}
-                            onPress={() => goToLoopChild(dotIdx)}
-                            style={[
-                              styles.paginationDot,
-                              isDotActive && styles.paginationDotActive,
-                            ]}
-                          />
-                        );
-                      })}
-                    </View>
-                  </>
-                )}
-              </View>
-            ) : headerStudent ? (
-              <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={headerStudent}
-                    isSelected={true}
-                    isSingleChild={true}
-                    showActionButtons={true}
-                    cardLabel="Kartu Siswa"
-                    calendarLabel="Jadwal"
-                    portalLabel="Menu"
-                    onPressCard={() => openIdCard(headerStudent)}
-                    onPressQr={() => openQrCard(headerStudent)}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(headerStudent)}
-                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                    onPressCalendar={() => openScheduleForStudent(headerStudent)}
-                    onPressPortal={() => setSelectedMenuStudent(headerStudent)}
-                  />
-                </View>
-              </View>
-            ) : null}
-
-            {/* ============================================================ */}
             {/* SECTION 2: RINGKASAN CAPAIAN MUTABA'AH (HERO KPI GROUP CARD - TAHFIZH STYLE) */}
             {/* ============================================================ */}
-            <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald]}>
+            <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald, { marginTop: 6 }]}>
               <View style={[styles.tahfizhGroupCardHeaderRow, styles.tahfizhGroupCardHeaderRowEmerald]}>
                 <View style={styles.tahfizhGroupCardHeaderLeft}>
                   <View style={[styles.tahfizhGroupHeaderIconBox, styles.tahfizhGroupHeaderIconBoxEmerald]}>
@@ -2461,10 +2725,34 @@ export default function MutabaahScreen({ route, navigation }: any) {
                 <View style={styles.containerBlock}>
                   <View style={styles.periodCardWrapper}>
                     <View style={styles.cardInternalHeader}>
-                      <View style={styles.cardInternalHeaderTitleWrap}>
-                        <MaterialCommunityIcons name="calendar-clock-outline" size={17} color="#18A165" />
-                        <Text style={styles.cardInternalTitle}>Pilih Tanggal Mutaba’ah</Text>
+                      <View style={styles.datePickerHeaderLeft}>
+                        <View style={styles.datePickerIconSquircle}>
+                          <MaterialCommunityIcons name="calendar-clock-outline" size={18} color="#0D6B42" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cardInternalTitle}>Pilih Tanggal Mutaba’ah</Text>
+                          <Text style={styles.datePickerSubtitle}>
+                            {formatDateIndo(selectedDate)}
+                          </Text>
+                        </View>
                       </View>
+
+                      {/* Right Tag/Button: Status Tanggal Sekarang / Tombol Kembali ke Hari Ini */}
+                      {selectedDate === todayStr ? (
+                        <View style={styles.headerTodayBadge}>
+                          <MaterialCommunityIcons name="check-circle" size={12} color="#FFFFFF" />
+                          <Text style={styles.headerTodayBadgeText}>Hari Ini</Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.headerBackTodayBtn}
+                          onPress={() => setSelectedDate(todayStr)}
+                          activeOpacity={0.8}
+                        >
+                          <MaterialCommunityIcons name="restore" size={13} color="#047857" />
+                          <Text style={styles.headerBackTodayBtnText}>Ke Hari Ini</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
 
                     <View style={styles.dateStripContainer}>
@@ -2473,24 +2761,66 @@ export default function MutabaahScreen({ route, navigation }: any) {
                         showsHorizontalScrollIndicator={false}
                         contentContainerStyle={styles.dateStripScrollContent}
                       >
-                        {dateStripDays.map((d) => (
-                          <TouchableOpacity
-                            key={d.dateStr}
-                            style={[styles.dateStripItem, d.isSelected && styles.dateStripItemActive]}
-                            onPress={() => setSelectedDate(d.dateStr)}
-                            activeOpacity={0.75}
-                          >
-                            <Text style={[styles.dateStripDayName, d.isSelected && styles.dateStripDayNameActive]}>
-                              {d.dayName}
-                            </Text>
-                            <View style={[styles.dateStripCircle, d.isSelected && styles.dateStripCircleActive]}>
-                              <Text style={[styles.dateStripDayNum, d.isSelected && styles.dateStripDayNumActive]}>
-                                {d.dayNum}
+                        {dateStripDays.map((d) => {
+                          const isSelected = d.isSelected;
+                          const isToday = d.isToday;
+
+                          return (
+                            <TouchableOpacity
+                              key={d.dateStr}
+                              style={[
+                                styles.dateStripItem,
+                                isSelected && styles.dateStripItemActive,
+                                isToday && !isSelected && styles.dateStripItemToday,
+                              ]}
+                              onPress={() => setSelectedDate(d.dateStr)}
+                              activeOpacity={0.75}
+                            >
+                              <Text
+                                style={[
+                                  styles.dateStripDayName,
+                                  isSelected && styles.dateStripDayNameActive,
+                                  isToday && !isSelected && styles.dateStripDayNameToday,
+                                ]}
+                              >
+                                {d.dayName}
                               </Text>
-                            </View>
-                            {d.isToday && !d.isSelected && <View style={styles.dateTodayDot} />}
-                          </TouchableOpacity>
-                        ))}
+
+                              <View
+                                style={[
+                                  styles.dateStripCircle,
+                                  isSelected && styles.dateStripCircleActive,
+                                  isToday && !isSelected && styles.dateStripCircleToday,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.dateStripDayNum,
+                                    isSelected && styles.dateStripDayNumActive,
+                                    isToday && !isSelected && styles.dateStripDayNumToday,
+                                  ]}
+                                >
+                                  {d.dayNum}
+                                </Text>
+                              </View>
+
+                              {/* Label Penanda Khusus */}
+                              {isSelected ? (
+                                <View style={[styles.dateStripTagPill, isToday ? styles.dateStripTagPillKini : styles.dateStripTagPillActive]}>
+                                  <Text style={styles.dateStripTagPillText}>
+                                    {isToday ? 'KINI' : 'PILIH'}
+                                  </Text>
+                                </View>
+                              ) : isToday ? (
+                                <View style={[styles.dateStripTagPill, styles.dateStripTagPillToday]}>
+                                  <Text style={styles.dateStripTagPillTextToday}>HARI INI</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.dateStripTagPlaceholder} />
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
                       </ScrollView>
 
                       <TouchableOpacity
@@ -2498,7 +2828,8 @@ export default function MutabaahScreen({ route, navigation }: any) {
                         onPress={() => setIsCalendarPickerVisible(true)}
                         activeOpacity={0.8}
                       >
-                        <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#059669" />
+                        <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#0D6B42" />
+                        <Text style={styles.dateStripCalendarBtnText}>Pilih</Text>
                       </TouchableOpacity>
                     </View>
 
@@ -2685,207 +3016,181 @@ export default function MutabaahScreen({ route, navigation }: any) {
                         </TouchableOpacity>
                       )}
                     </View>
-                  ) : (
-                    filteredDetails.map((item: any, index: number) => {
-                      const catIconInfo = getCategoryIconInfo(item.category, item.name, item.category_code);
-                      const isItemHome = item.scope === 'home' || item.input_location === 'home' || item.is_parent_item;
-                      const canParentEditThis = isItemHome && isParent && !isBoarding;
-                      // Status riil dari basis data PostgreSQL (sinkron 100% dengan Web Dashboard)
-                      const itemStatus = item.status_value || null;
-                      const hasValue = Boolean(itemStatus);
-                      const isGood = itemStatus === 'good';
-                      const isLess = itemStatus === 'less';
-                      const isNotDone = itemStatus === 'not_done';
-                      const isNa = itemStatus === 'na';
-                      const isParentFilled = Boolean(item.is_parent_filled || (item.input_source === 'parent' && hasValue));
-                      return (
-                        <TouchableOpacity
-                          key={item.id || item.agenda_item_id || `agenda-${index}`}
-                          style={[
-                            styles.agendaItemCard,
-                            canParentEditThis && styles.agendaItemCardClickable,
-                          ]}
-                          onPress={() => handleItemPress(item)}
-                          activeOpacity={0.75}
-                        >
-                          <View style={styles.agendaCardRow}>
-                            {/* Nomor Urut */}
-                            <View style={[styles.agendaNumBox, isGood && styles.agendaNumBoxActive]}>
-                              <Text style={[styles.agendaNumText, isGood && styles.agendaNumTextActive]}>
-                                {index + 1}
-                              </Text>
-                            </View>
+                  ) : scopeTab === 'all' ? (
+                    <View style={styles.accordionGroupsContainer}>
+                      {/* ===================== GRUP 1: SHOLAT ===================== */}
+                      {sholatItems.length > 0 && (
+                        <View style={styles.accordionSectionWrap}>
+                          <TouchableOpacity
+                            style={[
+                              styles.accordionHeaderCard,
+                              isSholatExpanded && styles.accordionHeaderCardActive,
+                            ]}
+                            onPress={toggleSholatAccordion}
+                            activeOpacity={0.82}
+                          >
+                            <View style={styles.accordionHeaderMainRow}>
+                              {/* Squircle 3D Icon Box */}
+                              <View style={[styles.accordionIconSquircle, { backgroundColor: '#E0F2FE' }]}>
+                                <MaterialCommunityIcons name="mosque" size={24} color="#0284C7" />
+                              </View>
 
-                            {/* Squircle Pastel Icon Box */}
-                            <View style={[styles.agendaSquircleIcon, { backgroundColor: catIconInfo.bg }]}>
-                              <MaterialCommunityIcons
-                                name={catIconInfo.icon as any}
-                                size={18}
-                                color={catIconInfo.color}
-                              />
-                            </View>
-
-                            {/* Informasi Nama & Kategori (Rapi, label sekolah/asrama/rumah di bawah kategori) */}
-                            <View style={styles.agendaCardCenter}>
-                              <Text style={styles.agendaTitleText} numberOfLines={2}>
-                                {item.name}
-                              </Text>
-                              <View style={styles.agendaMetaColumn}>
-                                <Text style={styles.agendaCatText}>{item.category || 'Amalan'}</Text>
-                                <View
-                                  style={[
-                                    styles.scopePill,
-                                    styles.scopePillAligned,
-                                    isItemHome
-                                      ? styles.scopePillHome
-                                      : (isBoarding || item.scope === 'boarding')
-                                        ? styles.scopePillBoarding
-                                        : styles.scopePillSchool,
-                                  ]}
-                                >
-                                  <Text
+                              {/* Title & Stats */}
+                              <View style={styles.accordionHeaderTextCol}>
+                                <View style={styles.accordionTitleRow}>
+                                  <Text style={styles.accordionGroupTitle}>Ibadah Sholat</Text>
+                                  <View
                                     style={[
-                                      styles.scopePillText,
-                                      isItemHome
-                                        ? styles.scopePillTextHome
-                                        : (isBoarding || item.scope === 'boarding')
-                                          ? styles.scopePillTextBoarding
-                                          : styles.scopePillTextSchool,
+                                      styles.accordionCountPill,
+                                      sholatGoodCount === sholatItems.length && sholatItems.length > 0
+                                        ? styles.accordionCountPillComplete
+                                        : styles.accordionCountPillDefault,
                                     ]}
                                   >
-                                    {isItemHome
-                                      ? '🏠 Rumah'
-                                      : (isBoarding || item.scope === 'boarding')
-                                        ? '🕌 Asrama'
-                                        : '🏫 Sekolah'}
-                                  </Text>
+                                    <Text
+                                      style={[
+                                        styles.accordionCountPillText,
+                                        sholatGoodCount === sholatItems.length && sholatItems.length > 0
+                                          ? styles.accordionCountPillTextComplete
+                                          : styles.accordionCountPillTextDefault,
+                                      ]}
+                                    >
+                                      {sholatGoodCount === sholatItems.length && sholatItems.length > 0
+                                        ? `✓ ${sholatItems.length} Lengkap`
+                                        : `${sholatGoodCount}/${sholatItems.length} Selesai`}
+                                    </Text>
+                                  </View>
                                 </View>
-                              </View>
-                              {item.notes ? (
-                                <Text style={styles.agendaNotesText} numberOfLines={1}>
-                                  Catatan: {item.notes}
+                                <Text style={styles.accordionGroupSub}>
+                                  Fardhu 5 Waktu & Sunnah ({sholatItems.length} Amalan)
                                 </Text>
-                              ) : null}
-                            </View>
+                              </View>
 
-                            {/* Status Indicator (Checklist Hijau Besar / Kurang Jam / Silang Merah / Minus / Lingkaran Bergaris Sekolah/Asrama / Radar Tanda Seru) */}
-                            <View style={styles.agendaCardRight}>
-                              {isGood ? (
-                                <View style={styles.statusCheckWrap}>
-                                  <MaterialCommunityIcons
-                                    name="check-circle"
-                                    size={26}
-                                    color="#059669"
-                                  />
-                                </View>
-                              ) : isLess ? (
-                                <View style={styles.statusLessWrap}>
-                                  <MaterialCommunityIcons
-                                    name="clock-alert-outline"
-                                    size={24}
-                                    color="#D97706"
-                                  />
-                                </View>
-                              ) : isNotDone ? (
-                                <View style={styles.statusCrossWrap}>
-                                  <MaterialCommunityIcons
-                                    name="close-circle"
-                                    size={24}
-                                    color="#E11D48"
-                                  />
-                                </View>
-                              ) : isNa ? (
-                                <View style={styles.statusNaWrap}>
-                                  <MaterialCommunityIcons
-                                    name="minus-circle-outline"
-                                    size={22}
-                                    color="#64748B"
-                                  />
-                                </View>
-                              ) : !isItemHome ? (
-                                <View style={styles.statusSchoolUnfilledWrap}>
-                                  <MaterialCommunityIcons
-                                    name="minus-circle-outline"
-                                    size={24}
-                                    color="#94A3B8"
-                                  />
-                                </View>
-                              ) : isSelectedDatePast ? (
-                                <View style={styles.statusCrossWrap}>
-                                  <MaterialCommunityIcons
-                                    name="close-circle"
-                                    size={24}
-                                    color="#E11D48"
-                                  />
-                                </View>
-                              ) : (
-                                <RadarExclamation />
-                              )}
-                              {canParentEditThis && (
-                                <MaterialCommunityIcons
-                                  name="chevron-right"
-                                  size={17}
-                                  color="#059669"
-                                  style={{ marginLeft: 2 }}
-                                />
-                              )}
-                            </View>
-                          </View>
-
-                          {/* Status Verifikasi Pembimbing & Sumber Input */}
-                          <View style={styles.agendaItemFooter}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 4 }}>
-                              <MaterialCommunityIcons
-                                name={
-                                  isParentFilled
-                                    ? (item.verification_status === 'verified' ? 'shield-check' : 'check-circle-outline')
-                                    : (isItemHome
-                                        ? 'clock-alert-outline'
-                                        : (hasValue
-                                            ? (item.verification_status === 'verified' ? 'shield-check' : (isBoarding ? 'mosque' : 'check-circle-outline'))
-                                            : 'minus-circle-outline'))
-                                }
-                                size={13}
-                                color={
-                                  isParentFilled
-                                    ? '#059669'
-                                    : (isItemHome
-                                        ? '#D97706'
-                                        : (hasValue ? (item.verification_status === 'verified' ? '#059669' : (isBoarding ? '#0D9488' : '#0284C7')) : '#94A3B8'))
-                                }
-                              />
-                              <Text
+                              {/* Chevron Expand Indicator Button */}
+                              <View
                                 style={[
-                                  styles.agendaItemFooterText,
-                                  {
-                                    color: isParentFilled
-                                      ? '#059669'
-                                      : (isItemHome
-                                          ? '#D97706'
-                                          : (hasValue ? (item.verification_status === 'verified' ? '#059669' : (isBoarding ? '#0D9488' : '#0284C7')) : '#94A3B8')),
-                                  },
+                                  styles.accordionChevronBtn,
+                                  isSholatExpanded && styles.accordionChevronBtnActive,
                                 ]}
                               >
-                                {isParentFilled
-                                  ? (item.verification_status === 'verified' ? 'Diisi Orang Tua · Terverifikasi' : 'Diisi Orang Tua · Siap Diparaf')
-                                  : (isItemHome
-                                      ? 'Menunggu Input Orang Tua'
-                                      : (isBoarding || item.scope === 'boarding'
-                                          ? (hasValue ? 'Dicatat oleh Musyrif Asrama' : 'Belum diisi di asrama')
-                                          : (hasValue
-                                              ? (item.verification_status === 'verified' ? 'Diisi Guru · Terverifikasi' : 'Diisi Guru di Sekolah')
-                                              : 'Belum diisi di sekolah')))}
-                              </Text>
+                                <MaterialCommunityIcons
+                                  name={isSholatExpanded ? 'chevron-up' : 'chevron-down'}
+                                  size={22}
+                                  color={isSholatExpanded ? '#0D6B42' : '#64748B'}
+                                />
+                              </View>
                             </View>
-                            {canParentEditThis && (
-                              <Text style={styles.agendaTapHintText}>
-                                {hasValue ? 'Tap untuk ubah ➔' : 'Tap untuk isi ➔'}
+
+                            {/* Action Callout Bar */}
+                            <View style={styles.accordionTapPromptRow}>
+                              <Text style={styles.accordionTapPromptText}>
+                                {isSholatExpanded ? 'Ketuk untuk menutup rincian sholat' : 'Ketuk untuk membuka rincian sholat'}
                               </Text>
-                            )}
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })
+                              <MaterialCommunityIcons
+                                name={isSholatExpanded ? 'arrow-collapse-vertical' : 'arrow-expand-vertical'}
+                                size={13}
+                                color="#059669"
+                              />
+                            </View>
+                          </TouchableOpacity>
+
+                          {/* EXPANDED CONTENT DOWNWARDS */}
+                          {isSholatExpanded && (
+                            <View style={styles.accordionBodyWrap}>
+                              {sholatItems.map((item: any, idx: number) => renderAgendaItemCard(item, idx))}
+                            </View>
+                          )}
+                        </View>
+                      )}
+
+                      {/* ===================== GRUP 2: MUTABA'AH ===================== */}
+                      {mutabaahItems.length > 0 && (
+                        <View style={[styles.accordionSectionWrap, { marginTop: sholatItems.length > 0 ? 10 : 0 }]}>
+                          <TouchableOpacity
+                            style={[
+                              styles.accordionHeaderCard,
+                              isMutabaahExpanded && styles.accordionHeaderCardActive,
+                            ]}
+                            onPress={toggleMutabaahAccordion}
+                            activeOpacity={0.82}
+                          >
+                            <View style={styles.accordionHeaderMainRow}>
+                              {/* Squircle 3D Icon Box */}
+                              <View style={[styles.accordionIconSquircle, { backgroundColor: '#FEF3C7' }]}>
+                                <MaterialCommunityIcons name="book-open-page-variant" size={22} color="#D97706" />
+                              </View>
+
+                              {/* Title & Stats */}
+                              <View style={styles.accordionHeaderTextCol}>
+                                <View style={styles.accordionTitleRow}>
+                                  <Text style={styles.accordionGroupTitle}>Mutaba’ah & Pembiasaan</Text>
+                                  <View
+                                    style={[
+                                      styles.accordionCountPill,
+                                      mutabaahGoodCount === mutabaahItems.length && mutabaahItems.length > 0
+                                        ? styles.accordionCountPillComplete
+                                        : styles.accordionCountPillDefault,
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.accordionCountPillText,
+                                        mutabaahGoodCount === mutabaahItems.length && mutabaahItems.length > 0
+                                          ? styles.accordionCountPillTextComplete
+                                          : styles.accordionCountPillTextDefault,
+                                      ]}
+                                    >
+                                      {mutabaahGoodCount === mutabaahItems.length && mutabaahItems.length > 0
+                                        ? `✓ ${mutabaahItems.length} Lengkap`
+                                        : `${mutabaahGoodCount}/${mutabaahItems.length} Selesai`}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text style={styles.accordionGroupSub}>
+                                  Tilawah, Dzikir, Adab & Mandiri ({mutabaahItems.length} Amalan)
+                                </Text>
+                              </View>
+
+                              {/* Chevron Expand Indicator Button */}
+                              <View
+                                style={[
+                                  styles.accordionChevronBtn,
+                                  isMutabaahExpanded && styles.accordionChevronBtnActive,
+                                ]}
+                              >
+                                <MaterialCommunityIcons
+                                  name={isMutabaahExpanded ? 'chevron-up' : 'chevron-down'}
+                                  size={22}
+                                  color={isMutabaahExpanded ? '#0D6B42' : '#64748B'}
+                                />
+                              </View>
+                            </View>
+
+                            {/* Action Callout Bar */}
+                            <View style={styles.accordionTapPromptRow}>
+                              <Text style={styles.accordionTapPromptText}>
+                                {isMutabaahExpanded ? 'Ketuk untuk menutup rincian mutaba’ah' : 'Ketuk untuk membuka rincian mutaba’ah'}
+                              </Text>
+                              <MaterialCommunityIcons
+                                name={isMutabaahExpanded ? 'arrow-collapse-vertical' : 'arrow-expand-vertical'}
+                                size={13}
+                                color="#059669"
+                              />
+                            </View>
+                          </TouchableOpacity>
+
+                          {/* EXPANDED CONTENT DOWNWARDS */}
+                          {isMutabaahExpanded && (
+                            <View style={styles.accordionBodyWrap}>
+                              {mutabaahItems.map((item: any, idx: number) => renderAgendaItemCard(item, idx))}
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    /* Flat list saat tab selain 'Semua' (Rumah / Sekolah / Asrama) */
+                    filteredDetails.map((item: any, index: number) => renderAgendaItemCard(item, index))
                   )}
                 </View>
 
@@ -2995,8 +3300,8 @@ export default function MutabaahScreen({ route, navigation }: any) {
               </>
             )}
           </View>
-        </Animated.ScrollView>
-      </View>
+        </View>
+      </ScrollView>
 
       {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
       <StudentIdCardModal
@@ -3027,6 +3332,74 @@ export default function MutabaahScreen({ route, navigation }: any) {
         historyRows={historyRows}
         onClose={() => setSelectedMonthlyStudent(null)}
       />
+
+      {/* MODAL PEMILIH ANANDA (JIKA ORANG TUA MEMILIKI >1 ANAK) */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children.map((c, idx) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = c.name || c.nama_lengkap || c.full_name || 'Ananda';
+                const cUnit = c.unit?.name || c.unit_name || c.education_unit?.name || c.kelas?.unit_pendidikan?.name || '';
+                const cClass = c.class?.name || c.kelas?.nama_kelas || c.kelas?.name || c.class_name || '';
+                const cAvatar = c.photo_url || c.avatar_url;
+
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      goToLoopChild(idx);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={[styles.childModalItemName, isSelected && { color: '#0D6B42', fontWeight: '800' }]}>
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#0D6B42" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* ============================================================ */}
       {/* MODAL PICKER KALENDER (SCREEN 2) */}
@@ -4178,7 +4551,211 @@ export default function MutabaahScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+    backgroundColor: '#ECFDF5',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    ...(StyleSheet.absoluteFill as any),
+    opacity: 1,
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cleanHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  cleanScrollInner: {
+    flex: 1,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#0D6B42',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#0D6B42',
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  childModalItemSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   sheetContainer: {
     flex: 1,
@@ -4188,13 +4765,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'transparent',
   },
-  // Struktur scroll + hero statis disamakan plek dengan Tugas/Jadwal/Materi/Nilai
   mainScrollContent: {
     flexGrow: 1,
   },
   bodyContentWrapper: {
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 0,
   },
   staticTopBarWrapper: {
     width: '100%',
@@ -6253,9 +6829,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingBottom: 10,
-    marginBottom: 10,
+    marginBottom: 4,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#DCFCE7',
   },
   cardInternalHeaderTitleWrap: {
     flexDirection: 'row',
@@ -6263,22 +6839,92 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   cardInternalTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontFamily: 'Poppins_700Bold',
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#064E3B',
   },
   periodCardWrapper: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 22,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  datePickerHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+    marginRight: 8,
+  },
+  datePickerIconSquircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
     elevation: 2,
+  },
+  datePickerSubtitle: {
+    fontSize: 11.5,
+    fontFamily: 'Nunito_600SemiBold',
+    color: '#047857',
+    marginTop: 1,
+  },
+  headerTodayBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 4,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  headerTodayBadgeText: {
+    fontSize: 11,
+    fontFamily: 'Poppins_600SemiBold',
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  headerBackTodayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    gap: 4,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  headerBackTodayBtnText: {
+    fontSize: 10.5,
+    fontFamily: 'Poppins_600SemiBold',
+    fontWeight: '700',
+    color: '#047857',
   },
   periodTabsCapsule: {
     flexDirection: 'row',
@@ -6315,48 +6961,81 @@ const styles = StyleSheet.create({
   dateStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    marginTop: 8,
     gap: 8,
   },
   dateStripScrollContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     paddingRight: 4,
   },
   dateStripItem: {
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    borderRadius: 12,
-    minWidth: 42,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 16,
+    minWidth: 48,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   dateStripItemActive: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#004D32',
+    borderColor: '#047857',
+    borderWidth: 1.5,
+    shadowColor: '#004D32',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  dateStripItemToday: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#10B981',
+    borderWidth: 2,
+    shadowColor: '#10B981',
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   dateStripDayName: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontFamily: 'Nunito_600SemiBold',
     color: '#64748B',
     marginBottom: 4,
   },
   dateStripDayNameActive: {
-    color: '#059669',
+    color: '#FFFFFF',
+    fontFamily: 'Poppins_700Bold',
     fontWeight: '700',
   },
+  dateStripDayNameToday: {
+    color: '#059669',
+    fontFamily: 'Poppins_700Bold',
+    fontWeight: '800',
+  },
   dateStripCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F8FAFC',
   },
   dateStripCircleActive: {
-    backgroundColor: '#059669',
+    backgroundColor: '#FFFFFF',
+  },
+  dateStripCircleToday: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
   },
   dateStripDayNum: {
     fontSize: 12.5,
@@ -6365,7 +7044,49 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   dateStripDayNumActive: {
+    color: '#004D32',
+    fontWeight: '800',
+  },
+  dateStripDayNumToday: {
+    color: '#059669',
+    fontWeight: '800',
+  },
+  dateStripTagPill: {
+    marginTop: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateStripTagPillActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  dateStripTagPillKini: {
+    backgroundColor: '#10B981',
+  },
+  dateStripTagPillToday: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 0.8,
+    borderColor: '#86EFAC',
+  },
+  dateStripTagPillText: {
+    fontSize: 7.5,
+    fontFamily: 'Poppins_700Bold',
+    fontWeight: '800',
     color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  dateStripTagPillTextToday: {
+    fontSize: 7.5,
+    fontFamily: 'Poppins_700Bold',
+    fontWeight: '800',
+    color: '#15803D',
+    letterSpacing: 0.3,
+  },
+  dateStripTagPlaceholder: {
+    height: 14,
+    marginTop: 4,
   },
   dateTodayDot: {
     width: 4,
@@ -6375,14 +7096,26 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   dateStripCalendarBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
+    width: 46,
+    height: 70,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
     borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 3,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  dateStripCalendarBtnText: {
+    fontSize: 9.5,
+    fontFamily: 'Poppins_600SemiBold',
+    fontWeight: '700',
+    color: '#0D6B42',
   },
 
   // --- Section 3: Ringkasan Hari Ini ---
@@ -7180,11 +7913,14 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   calendarGridCellActive: {
-    backgroundColor: '#059669',
+    backgroundColor: '#004D32',
+    borderWidth: 1.5,
+    borderColor: '#047857',
   },
   calendarGridCellToday: {
-    borderWidth: 1.5,
-    borderColor: '#059669',
+    borderWidth: 2,
+    borderColor: '#10B981',
+    backgroundColor: '#ECFDF5',
   },
   calendarGridDayText: {
     fontSize: 12,
@@ -7194,11 +7930,11 @@ const styles = StyleSheet.create({
   },
   calendarGridDayTextActive: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
   },
   calendarGridDayTextToday: {
     color: '#059669',
-    fontWeight: '700',
+    fontWeight: '800',
   },
   calendarCloseDoneBtn: {
     marginTop: 14,
@@ -8015,5 +8751,123 @@ const styles = StyleSheet.create({
   },
   juzFilterChipTextActive: {
     color: '#FFFFFF',
+  },
+
+  /* ============================================================ */
+  /* ACCORDION GROUPS STYLES (TAB SEMUA: SHOLAT & MUTABAAH) */
+  /* ============================================================ */
+  accordionGroupsContainer: {
+    gap: 4,
+  },
+  accordionSectionWrap: {
+    marginBottom: 6,
+  },
+  accordionHeaderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  accordionHeaderCardActive: {
+    borderColor: '#10B981',
+    backgroundColor: '#F8FCFA',
+    shadowColor: '#059669',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  accordionHeaderMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  accordionIconSquircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accordionHeaderTextCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  accordionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  accordionGroupTitle: {
+    fontSize: 14.5,
+    fontFamily: 'Poppins_700Bold',
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  accordionGroupSub: {
+    fontSize: 11,
+    fontFamily: 'Nunito_600SemiBold',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  accordionCountPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  accordionCountPillDefault: {
+    backgroundColor: '#F1F5F9',
+  },
+  accordionCountPillComplete: {
+    backgroundColor: '#DCFCE7',
+  },
+  accordionCountPillText: {
+    fontSize: 10.5,
+    fontFamily: 'Poppins_600SemiBold',
+    fontWeight: '700',
+  },
+  accordionCountPillTextDefault: {
+    color: '#475569',
+  },
+  accordionCountPillTextComplete: {
+    color: '#15803D',
+  },
+  accordionChevronBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  accordionChevronBtnActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  accordionTapPromptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  accordionTapPromptText: {
+    fontSize: 10.5,
+    fontFamily: 'Nunito_600SemiBold',
+    color: '#059669',
+  },
+  accordionBodyWrap: {
+    marginTop: 8,
   },
 });

@@ -35,12 +35,15 @@ import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
+  isGirlStudent,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
 import { resolveSelectedChildId } from '../utils/selectedChild';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
 import { StudentIdCardModal } from '../components/StudentIdCardModal';
@@ -56,6 +59,8 @@ import {
 } from '../utils/academicYear';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const STUDENT_CARD_GAP = 12;
 const STUDENT_PEEK_WIDTH = 26;
@@ -1307,6 +1312,22 @@ export default function TahfizhScreen({ route, navigation }: any) {
     return userUnit || '';
   }, [activeChild, studentInfo, user]);
 
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState(false);
+
+  const currentChild = headerStudent || activeChild;
+  const studentFullName = currentChild?.full_name || currentChild?.nama_lengkap || currentChild?.name || 'Ananda';
+  const studentUnit = currentChild?.unit_name || currentChild?.education_unit?.name || currentChild?.unit_pendidikan?.nama || studentUnitName || '';
+  const studentClass = currentChild?.class_name || currentChild?.classroom?.name || currentChild?.kelas?.nama || '';
+  const studentPhotoUrl = getProfileImageUrl(currentChild);
+  const isGirl = isGirlStudent(currentChild);
+  const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+  const studentAvatarSource = studentPhotoUrl ? { uri: studentPhotoUrl } : defaultAvatar;
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini — Single Source of Truth selaras dengan HomeScreen
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(headerStudent || activeChild);
+  }, [headerStudent, activeChild]);
+
   // Latest memorization log
   const latestLog = useMemo(() => {
     return (
@@ -2137,343 +2158,139 @@ export default function TahfizhScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* 0. STICKY HEADER BERSAMA (top bar + card siswa, sama dengan Tugas/Jadwal/Materi/Nilai) */}
-      <StudentStickyHeader
-        scrollY={scrollY}
-        topInset={topInset}
-        title="Tahfizh Al-Qur'an"
-        navigation={navigation}
-        route={route}
-        student={headerStudent}
-        user={user}
-        childrenList={children}
-        onSelectChild={(cid, idx) => {
-          setSelectedChildId(cid);
-          useActiveChildStore.getState().setActiveChildId(cid);
-          setActiveChildIndex(idx);
-        }}
-        middleAction={{
-          label: 'Jadwal',
-          icon: 'calendar-clock',
-          onPress: () => openScheduleForStudent(headerStudent),
-        }}
-        onOpenIdCard={(s) => openIdCard(s)}
-        onOpenQr={(s) => openQrCard(s)}
-        onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-        onOpenMenu={(s) => setSelectedMenuStudent(s)}
-      />
-      <View style={styles.sheetContainer}>
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN JADWAL & UTAMA, JERNIH & CRISP) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#FFFFFF', '#F4FAF7', '#EAF7F0']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <Animated.ScrollView
-          style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
-          onScroll={handleMainScroll}
-          scrollEventThrottle={16}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} progressViewOffset={topInset + 10} />}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#064E3B', '#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
+      </View>
 
-            <View style={styles.staticTopBarRow}>
+      {/* ── TOP HEADER IDENTIK HALAMAN UTAMA (TOMBOL KARTU PUTIH MINT GREEN SHADOW) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
+
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Tahfizh Al-Qur'an
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />}
+      >
+        <View style={styles.cleanScrollInner}>
+          {/* 1. STUDENT PROFILE SECTION (TERBUKA, INDAH, DENGAN TOMBOL GANTI SISWA AKTIF) */}
+          <View style={styles.studentProfileRow}>
+            {/* Circular Avatar dengan mint ring */}
+            <TouchableOpacity
+              activeOpacity={children && children.length > 1 ? 0.75 : 1}
+              onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+              style={styles.studentAvatarRing}
+            >
+              <Image
+                source={studentAvatarSource}
+                style={styles.studentAvatarImg}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+
+            {/* Profile Info */}
+            <View style={styles.studentProfileInfoCol}>
               <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
+                activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                style={styles.studentNameRow}
               >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#047857" />
+                <Text numberOfLines={1} style={styles.studentProfileName}>
+                  {studentFullName}
+                </Text>
               </TouchableOpacity>
 
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>
-                  Tahfizh Al-Qur'an
-                </Text>
-                <View style={styles.heroSubtitleBadge}>
-                  <MaterialCommunityIcons name="book-open-page-variant" size={11} color="#D1FAE5" style={{ marginRight: 4 }} />
-                  <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                    {heroFirstName ? `Ananda ${heroFirstName}` : (heroSubtitleFallback || "Setoran & Mutaba'ah Qur'an")}
+              {/* Baris 2: Unit Pendidikan */}
+              {studentUnit ? (
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                    {studentUnit}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Baris 3: Kelas Siswa tepat di bawah Unit Pendidikan */}
+              {studentClass ? (
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                    {studentClass}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran di Sebelahnya */}
+              <View style={styles.studentActionBadgeRow}>
+                {children && children.length > 1 && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowChildSelectorModal(true)}
+                    style={styles.parentGantiAnakBtn}
+                  >
+                    <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                    <MaterialCommunityIcons name="chevron-down" size={15} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+
+                <View
+                  style={[
+                    styles.attendanceStatusBadge,
+                    { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={attendanceStatus.icon}
+                    size={12}
+                    color={attendanceStatus.color}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                    {attendanceStatus.label}
                   </Text>
                 </View>
               </View>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#047857" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
             </View>
           </View>
 
           {/* Badan Halaman Konten */}
           <View style={styles.bodyContentWrapper}>
-          {/* SECTION 1: DATA SISWA & UNIT PENDIDIKAN (HERO CARD SISWA TERPILIH) */}
-          {(children && children.length > 0) ? (
-            <Animated.View style={[styles.containerBlock, styles.studentContainerBlock, { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] }]}>
-              {children.length === 1 ? (
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={children[0]}
-                    isSelected={true}
-                    isSingleChild={true}
-                    showActionButtons={true}
-                    cardLabel="Kartu Siswa"
-                    calendarLabel="Jadwal"
-                    portalLabel="Menu"
-                    onPressCard={() => openIdCard(children[0])}
-                    onPressQr={() => openQrCard(children[0])}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                    onPressCalendar={() => openScheduleForStudent(children[0])}
-                    onPressPortal={() => setSelectedMenuStudent(children[0])}
-                  />
-                </View>
-              ) : (
-                <>
-                  <ScrollView
-                    ref={studentScrollRef}
-                    horizontal
-                    nestedScrollEnabled={true}
-                    showsHorizontalScrollIndicator={false}
-                    contentOffset={{ x: centerLoopOffset, y: 0 }}
-                    contentContainerStyle={[
-                      styles.studentCardsTrack,
-                      { paddingHorizontal: studentTrackPad },
-                    ]}
-                    decelerationRate="fast"
-                    snapToInterval={studentSnapInterval}
-                    snapToAlignment="start"
-                    disableIntervalMomentum
-                    onMomentumScrollEnd={(e) => {
-                      if (studentLoopCount === 0) return;
-                      const offsetX = e.nativeEvent.contentOffset.x;
-                      const slot = Math.round(offsetX / studentSnapInterval);
-                      const n = studentLoopCount;
-                      const cur = ((activeChildIndex % n) + n) % n;
-                      let realIdx = cur;
-                      if (slot === 2) realIdx = (cur + 1) % n;
-                      else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                      if (realIdx !== cur) {
-                        setActiveChildIndex(realIdx);
-                        syncLoopChildId(realIdx);
-                        requestAnimationFrame(() => {
-                          recenterLoop();
-                        });
-                      } else {
-                        recenterLoop();
-                      }
-                    }}
-                    onScrollEndDrag={(e) => {
-                      if (studentLoopCount === 0) return;
-                      const offsetX = e.nativeEvent.contentOffset.x;
-                      const slot = Math.round(offsetX / studentSnapInterval);
-                      const n = studentLoopCount;
-                      const cur = ((activeChildIndex % n) + n) % n;
-                      let realIdx = cur;
-                      if (slot === 2) realIdx = (cur + 1) % n;
-                      else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                      if (realIdx !== cur) {
-                        setActiveChildIndex(realIdx);
-                        syncLoopChildId(realIdx);
-                      }
-                    }}
-                    scrollEventThrottle={16}
-                    style={styles.heroCardScrollContainer}
-                  >
-                    {loopWindow.list.map((child: any, sIdx: number) => {
-                      const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                      const isCardActive = realIdx === safeCenter;
-                      return (
-                        <StudentHeroCard
-                          key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                          child={child}
-                          isSelected={isCardActive}
-                          isSingleChild={false}
-                          showActionButtons={true}
-                          cardWidth={studentCardWidth}
-                          cardLabel="Kartu Siswa"
-                          calendarLabel="Jadwal"
-                          portalLabel="Menu"
-                          onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                          onPressCard={() => openIdCard(child)}
-                          onPressQr={() => openQrCard(child)}
-                          onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                          onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                          onPressCalendar={() => openScheduleForStudent(child)}
-                          onPressPortal={() => setSelectedMenuStudent(child)}
-                        />
-                      );
-                    })}
-                  </ScrollView>
-
-                  {/* DOT INDIKATOR SCROLL SISWA */}
-                  <View style={styles.paginationDotsRow}>
-                    {children.map((_, dotIdx) => {
-                      const isDotActive = dotIdx === safeCenter;
-                      return (
-                        <TouchableOpacity
-                          key={dotIdx}
-                          activeOpacity={0.7}
-                          onPress={() => goToLoopChild(dotIdx)}
-                          style={[
-                            styles.paginationDot,
-                            isDotActive && styles.paginationDotActive,
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
-                </>
-              )}
-            </Animated.View>
-          ) : (activeChild || studentInfo) ? (
-            <Animated.View style={[styles.containerBlock, styles.studentContainerBlock, { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] }]}>
-              <View style={styles.singleHeroCardContainer}>
-                <StudentHeroCard
-                  child={activeChild || studentInfo}
-                  isSelected={true}
-                  isSingleChild={true}
-                  showActionButtons={true}
-                  cardLabel="Kartu Siswa"
-                  calendarLabel="Jadwal"
-                  portalLabel="Menu"
-                  onPressCard={() => openIdCard(activeChild || studentInfo)}
-                  onPressQr={() => openQrCard(activeChild || studentInfo)}
-                  onPressWeeklyReport={() => setSelectedWeeklyStudent(activeChild || studentInfo)}
-                  onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                  onPressCalendar={() => openScheduleForStudent(activeChild || studentInfo)}
-                  onPressPortal={() => setSelectedMenuStudent(activeChild || studentInfo)}
-                />
-              </View>
-            </Animated.View>
-          ) : user ? (
-            <Animated.View style={[styles.containerBlock, styles.studentContainerBlock, { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] }]}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderTitleWrap}>
-                  <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                  <Text style={styles.sectionTitle}>Data Pengguna & Unit</Text>
-                </View>
-              </View>
-
-              {(() => {
-                const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
-                const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
-                const userUnit = String((user as any)?.unit_name || (user as any)?.education_unit?.name || 'Unit Sekolah');
-                const avatarUri = getProfileImageUrl(user);
-
-                return (
-                  <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.childCardHeroSizeSingle}
-                  >
-                    <View style={styles.cardDecorCircle} />
-
-                    <View style={styles.childHeroTopRow}>
-                      <View style={styles.avatarBorderWrapHero}>
-                        {avatarUri ? (
-                          <Image source={{ uri: avatarUri }} style={styles.childAvatarImgHero} resizeMode="cover" />
-                        ) : (
-                          <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
-                        )}
-                      </View>
-                      <View style={styles.childInfoCol}>
-                        <Text numberOfLines={1} style={styles.childNameHero}>
-                          {userName}
-                        </Text>
-                        <Text style={styles.childSubInfoHero}>
-                          Status: {userRole}
-                        </Text>
-                        <View style={styles.studentUnitBadge}>
-                          <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text numberOfLines={1} style={styles.studentUnitText}>
-                            {userUnit}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.selectedActionBtnRight}>
-                        <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
-                        <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.studentAttributesGrid}>
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Peran</Text>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>{userRole}</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Akses</Text>
-                        <Text numberOfLines={1} style={styles.studentAttrValue}>Resmi</Text>
-                      </View>
-                      <View style={styles.studentAttrDivider} />
-                      <View style={styles.studentAttrBox}>
-                        <Text style={styles.studentAttrLabel}>Presensi</Text>
-                        <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>
-                          {(user as any)?.attendance_today?.status || (user as any)?.attendance_status || kpiData?.attendance_status || 'Hadir'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Tahfizh Achievement Bar inside Card Pengguna */}
-                    <View style={styles.cardTahfizhStatsRow}>
-                      <View style={styles.cardTahfizhStatItem}>
-                        <View style={styles.cardTahfizhStatIconLabel}>
-                          <MaterialCommunityIcons name="book-open-page-variant" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.cardTahfizhStatLabel}>Total Ayat</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>{totalAyat} Ayat</Text>
-                      </View>
-                      <View style={styles.cardTahfizhStatDivider} />
-                      <View style={styles.cardTahfizhStatItem}>
-                        <View style={styles.cardTahfizhStatIconLabel}>
-                          <MaterialCommunityIcons name="book-multiple-outline" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.cardTahfizhStatLabel}>Total Juz</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>
-                          {Number(tahfizhAchievement?.completed_juz_count ?? tahfizhAchievement?.juz_count ?? 0)} Juz
-                        </Text>
-                      </View>
-                      <View style={styles.cardTahfizhStatDivider} />
-                      <View style={styles.cardTahfizhStatItem}>
-                        <View style={styles.cardTahfizhStatIconLabel}>
-                          <MaterialCommunityIcons name="trophy-outline" size={11} color="#A7F3D0" style={{ marginRight: 3 }} />
-                          <Text style={styles.cardTahfizhStatLabel}>Progress</Text>
-                        </View>
-                        <Text numberOfLines={1} style={styles.cardTahfizhStatVal}>{targetProgress}%</Text>
-                      </View>
-                    </View>
-                  </LinearGradient>
-                );
-              })()}
-            </Animated.View>
-          ) : null}
-
           {/* SECTION 2: RINGKASAN CAPAIAN TAHFIZH (HERO KPI GROUP CARD) */}
-          <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald]}>
+          <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald, { marginTop: 6 }]}>
             {/* Header Card Emerald */}
             <View style={[styles.tahfizhGroupCardHeaderRow, styles.tahfizhGroupCardHeaderRowEmerald]}>
               <View style={styles.tahfizhGroupCardHeaderLeft}>
@@ -3931,8 +3748,8 @@ export default function TahfizhScreen({ route, navigation }: any) {
         )}
       </View>
           </View>
-        </Animated.ScrollView>
-      </View>
+        </View>
+      </ScrollView>
 
       {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
       <StudentIdCardModal
@@ -3956,6 +3773,74 @@ export default function TahfizhScreen({ route, navigation }: any) {
         student={selectedWeeklyStudent}
         onClose={() => setSelectedWeeklyStudent(null)}
       />
+
+      {/* MODAL PEMILIH ANANDA (JIKA ORANG TUA MEMILIKI >1 ANAK) */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children.map((c, idx) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = c.name || c.nama_lengkap || c.full_name || 'Ananda';
+                const cUnit = c.unit?.name || c.unit_name || c.education_unit?.name || c.kelas?.unit_pendidikan?.name || '';
+                const cClass = c.class?.name || c.kelas?.nama_kelas || c.kelas?.name || c.class_name || '';
+                const cAvatar = c.photo_url || c.avatar_url;
+
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      goToLoopChild(idx);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={[styles.childModalItemName, isSelected && { color: '#0D6B42', fontWeight: '800' }]}>
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#0D6B42" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* DETAIL MODAL SETORAN */}
       <Modal
@@ -5264,7 +5149,211 @@ export default function TahfizhScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
-    backgroundColor: '#044E36',
+    backgroundColor: '#ECFDF5',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    ...(StyleSheet.absoluteFill as any),
+    opacity: 1,
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cleanHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  cleanScrollInner: {
+    flex: 1,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#0D6B42',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#0D6B42',
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  childModalItemSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   sheetContainer: {
     flex: 1,
@@ -5274,13 +5363,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'transparent',
   },
-  // Struktur scroll + hero statis disamakan plek dengan Tugas/Jadwal/Materi/Nilai
   mainScrollContent: {
     flexGrow: 1,
   },
   bodyContentWrapper: {
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 0,
   },
   staticTopBarWrapper: {
     width: '100%',

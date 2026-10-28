@@ -5,6 +5,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  Linking,
   Modal,
   Platform,
   RefreshControl,
@@ -26,6 +27,7 @@ import {
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
 import { useAuthStore } from '../stores/authStore';
+import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
@@ -71,13 +73,22 @@ const GRID_MENU_ITEMS: GridMenuItem[] = [
     route: 'Tagihan',
   },
   {
-    key: 'pembayaran',
-    label: 'Pembayaran',
-    icon: 'wallet',
-    iconColor: '#E11D48',
-    cardBg: '#FFF1F4',
-    borderColor: '#FFE4E8',
-    route: 'Tagihan',
+    key: 'buku-hubung',
+    label: 'Buku Hubung',
+    icon: 'book-open-page-variant',
+    iconColor: '#8B5CF6',
+    cardBg: '#F5F3FF',
+    borderColor: '#DDD6FE',
+    route: 'Komentar',
+  },
+  {
+    key: 'chat-guru',
+    label: 'Chat Guru',
+    icon: 'chat-processing-outline',
+    iconColor: '#2563EB',
+    cardBg: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    route: 'Chat',
   },
   {
     key: 'perizinan-anak',
@@ -92,19 +103,10 @@ const GRID_MENU_ITEMS: GridMenuItem[] = [
     key: 'layanan-sekolah',
     label: 'Layanan\nSekolah',
     icon: 'headset',
-    iconColor: '#059669',
-    cardBg: '#ECFDF5',
-    borderColor: '#D1FAE5',
+    iconColor: '#0D9488',
+    cardBg: '#F0FDFA',
+    borderColor: '#CCFBF1',
     action: 'service',
-  },
-  {
-    key: 'pengaturan-anak',
-    label: 'Pengaturan\nAnak',
-    icon: 'cog',
-    iconColor: '#2563EB',
-    cardBg: '#EFF6FF',
-    borderColor: '#DBEAFE',
-    route: 'Profil',
   },
   {
     key: 'bantuan',
@@ -117,10 +119,12 @@ const GRID_MENU_ITEMS: GridMenuItem[] = [
   },
 ];
 
+
 export default function ParentPortalScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
   const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 16) + 104;
   const user = useAuthStore((state) => state.user);
+  const mobileConfig = useMobileConfigStore((state) => state.config);
   const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
   const routeTab = route?.params?.tab;
   const [children, setChildren] = useState<Child[]>([]);
@@ -156,14 +160,50 @@ export default function ParentPortalScreen({ route, navigation }: any) {
     }
   }, [routeTab]);
 
+  const isUserDraggingRef = useRef<boolean>(false);
+  const isSyncingDataRef = useRef<boolean>(false);
+  const isProgrammaticScrollRef = useRef<boolean>(false);
+  const programmaticScrollTimerRef = useRef<any>(null);
+
+  const studentCardWidth = useMemo(() => {
+    return SCREEN_WIDTH - 50;
+  }, []);
+  const studentSnapInterval = useMemo(() => {
+    return SCREEN_WIDTH - 50 + 12;
+  }, []);
+
+  const scrollToActiveChild = useCallback((idx: number, animated = false): void => {
+    if (children.length <= 1) return;
+    const clamped = Math.max(0, Math.min(children.length - 1, idx));
+    isProgrammaticScrollRef.current = true;
+    if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current);
+    programmaticScrollTimerRef.current = setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 450);
+    heroScrollRef.current?.scrollTo({ x: clamped * studentSnapInterval, animated });
+  }, [children.length, studentSnapInterval]);
+
+  const lastHandledGlobalChildIdRef = useRef<string | null>(null);
+
   // Sync route params child_id / global store jika berpindah anak dari luar
   useEffect(() => {
     const nextChildId = targetChildId || globalActiveChildId;
-    if (nextChildId && String(nextChildId) !== selectedIdRef.current) {
-      selectedIdRef.current = String(nextChildId);
-      setSelectedId(String(nextChildId));
+    if (!nextChildId) return;
+    const nextStr = String(nextChildId);
+    if (nextStr === lastHandledGlobalChildIdRef.current) return;
+    lastHandledGlobalChildIdRef.current = nextStr;
+
+    if (nextStr !== selectedIdRef.current) {
+      selectedIdRef.current = nextStr;
+      setSelectedId(nextStr);
+      if (children.length > 0) {
+        const foundIdx = children.findIndex((c) => String(c.id || c.student_id) === nextStr);
+        if (foundIdx >= 0) {
+          scrollToActiveChild(foundIdx, true);
+        }
+      }
     }
-  }, [targetChildId, globalActiveChildId]);
+  }, [targetChildId, globalActiveChildId, children, scrollToActiveChild]);
 
   // Data tab Setoran / Target / Izin per anak terpilih
   const [tabLoading, setTabLoading] = useState(false);
@@ -220,6 +260,7 @@ export default function ParentPortalScreen({ route, navigation }: any) {
     const cachedChildren = await offlineCache.get<Child[]>(childCacheKey);
     let activeId: string | null | undefined = targetChildId || selectedIdRef.current || useActiveChildStore.getState().activeChildId;
     if (cachedChildren && cachedChildren.length > 0) {
+      isSyncingDataRef.current = true;
       const displayCached = isSingleChild && targetChildId
         ? cachedChildren.filter((c) => String(c.id || c.student_id) === String(targetChildId))
         : cachedChildren;
@@ -240,6 +281,17 @@ export default function ParentPortalScreen({ route, navigation }: any) {
           setDashboard(cachedDash);
           setLoading(false);
         }
+        const foundIdx = safeCached.findIndex((c) => String(c.id || c.student_id) === idStr);
+        if (foundIdx >= 0) {
+          requestAnimationFrame(() => {
+            scrollToActiveChild(foundIdx, false);
+            setTimeout(() => { isSyncingDataRef.current = false; }, 250);
+          });
+        } else {
+          setTimeout(() => { isSyncingDataRef.current = false; }, 250);
+        }
+      } else {
+        setTimeout(() => { isSyncingDataRef.current = false; }, 250);
       }
     }
 
@@ -247,6 +299,7 @@ export default function ParentPortalScreen({ route, navigation }: any) {
       const childResponse = await mobileApiService.getPortalChildren();
       const available = (unwrapApiData<Child[]>(childResponse) || []);
       if (available.length > 0) {
+        isSyncingDataRef.current = true;
         const displayAvailable = isSingleChild && targetChildId
           ? available.filter((c) => String(c.id || c.student_id) === String(targetChildId))
           : available;
@@ -268,26 +321,39 @@ export default function ParentPortalScreen({ route, navigation }: any) {
         const dashData = unwrapApiData<ParentDashboard>(dashboardResponse) || {};
         setDashboard(dashData);
         void offlineCache.set(dashKey, dashData);
+        const foundIdx = available.findIndex((c) => String(c.id || c.student_id) === idStr);
+        if (foundIdx >= 0) {
+          requestAnimationFrame(() => {
+            scrollToActiveChild(foundIdx, false);
+            setTimeout(() => { isSyncingDataRef.current = false; }, 250);
+          });
+        } else {
+          setTimeout(() => { isSyncingDataRef.current = false; }, 250);
+        }
       } else {
         setDashboard({});
+        setTimeout(() => { isSyncingDataRef.current = false; }, 250);
       }
     } catch (requestError) {
+      isSyncingDataRef.current = false;
       if (!cachedChildren) {
         setError(getApiErrorMessage(requestError, 'Data portal orang tua belum berhasil dimuat.'));
       }
     } finally {
       setLoading(false);
     }
-  }, [user?.id, targetChildId, route?.params?.single_child_only]);
+  }, [user?.id, targetChildId, route?.params?.single_child_only, scrollToActiveChild]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const selectChild = async (id: string) => {
-    selectedIdRef.current = id;
-    setSelectedId(id);
-    useActiveChildStore.getState().setActiveChildId(id);
+    const idStr = String(id);
+    lastHandledGlobalChildIdRef.current = idStr;
+    selectedIdRef.current = idStr;
+    setSelectedId(idStr);
+    useActiveChildStore.getState().setActiveChildId(idStr);
     setError('');
     const dashKey = offlineCache.buildKey('parent_portal_dashboard', user?.id, id);
     const cachedDash = await offlineCache.get<ParentDashboard>(dashKey);
@@ -351,21 +417,47 @@ export default function ParentPortalScreen({ route, navigation }: any) {
       return;
     }
     if (item.action === 'service') {
-      setFeedbackModal({
-        visible: true,
-        type: 'info',
-        title: 'Layanan Sekolah',
-        message: 'Layanan informasi & administrasi terpadu sekolah siap membantu Anda melalui WhatsApp Center resmi.',
-      });
+      const activeChild = children.find((c) => String(c.id || c.student_id) === String(selectedId)) || children[0];
+      const rawPhone =
+        (activeChild as any)?.education_unit?.phone ||
+        (activeChild as any)?.unit?.phone ||
+        (activeChild as any)?.metadata?.phone ||
+        mobileConfig?.branding?.contact?.phone ||
+        '08116661141';
+      const cleanPhone = String(rawPhone).replace(/\D/g, '').replace(/^0/, '62');
+      const unitName =
+        (activeChild as any)?.education_unit?.name ||
+        (activeChild as any)?.unit?.name ||
+        mobileConfig?.branding?.school_name ||
+        'Sekolah Terpadu';
+      const childName = activeChild?.name || (activeChild as any)?.full_name || 'Santri';
+      const message = encodeURIComponent(
+        `Assalamu'alaikum Warahmatullahi Wabarakatuh, Layanan CS & Tata Usaha ${unitName}.\nSaya wali dari ananda ${childName}, ingin berkonsultasi mengenai administrasi dan layanan sekolah.`
+      );
+      const waUrl = `whatsapp://send?phone=${cleanPhone}&text=${message}`;
+      const webWaUrl = `https://wa.me/${cleanPhone}?text=${message}`;
+
+      void (async () => {
+        try {
+          const canOpen = await Linking.canOpenURL(waUrl);
+          if (canOpen) {
+            await Linking.openURL(waUrl);
+          } else {
+            await Linking.openURL(webWaUrl);
+          }
+        } catch {
+          setFeedbackModal({
+            visible: true,
+            type: 'info',
+            title: 'Layanan Tata Usaha & CS',
+            message: `Silakan hubungi WhatsApp resmi ${unitName} di nomor +${cleanPhone}.`,
+          });
+        }
+      })();
       return;
     }
     if (item.action === 'help') {
-      setFeedbackModal({
-        visible: true,
-        type: 'info',
-        title: 'Pusat Bantuan',
-        message: 'Gunakan menu portal untuk memantau aktivitas, perizinan, mutaba\'ah, dan administrasi pendidikan ananda.',
-      });
+      navigation?.navigate('Bantuan');
       return;
     }
     if (item.route) {
@@ -468,14 +560,27 @@ export default function ParentPortalScreen({ route, navigation }: any) {
     return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
   }, []);
 
+  const goToLoopChild = useCallback((targetIndex: number, isDirectTap = false): void => {
+    if (children.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(children.length - 1, targetIndex));
+    const targetChild = children[clampedIndex];
+    if (targetChild) {
+      const targetId = String(targetChild.id || targetChild.student_id);
+      lastHandledGlobalChildIdRef.current = targetId;
+      scrollToActiveChild(clampedIndex, true);
+      void selectChild(targetId);
+    }
+  }, [children, selectChild, scrollToActiveChild]);
+
   const handleStudentScrollEnd = (e: any) => {
+    isUserDraggingRef.current = false;
+    if (isSyncingDataRef.current || isProgrammaticScrollRef.current) return;
     const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 50 + 12;
-    const index = Math.round(offsetX / cardWidth);
+    const index = Math.round(offsetX / studentSnapInterval);
     if (index >= 0 && index < children.length) {
       const targetChild = children[index];
-      if (targetChild && String(targetChild.id) !== String(selectedId)) {
-        void selectChild(String(targetChild.id));
+      if (targetChild && String(targetChild.id || targetChild.student_id) !== String(selectedId)) {
+        void selectChild(String(targetChild.id || targetChild.student_id));
       }
     }
   };
@@ -611,20 +716,6 @@ export default function ParentPortalScreen({ route, navigation }: any) {
             },
           ]}
         >
-          <View style={portalBodyStyles.sectionHeaderBetween}>
-            <View style={portalBodyStyles.sectionHeaderLeft}>
-              <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-              <Text style={portalBodyStyles.sectionTitleBold}>Data Ananda</Text>
-            </View>
-            {children.length > 1 && (
-              <View style={styles.studentCardCountBadge}>
-                <Text style={styles.studentCardCountBadgeText}>
-                  {Math.max(1, children.findIndex((c) => String(c.id || c.student_id) === selectedId) + 1)} dari {children.length} Ananda
-                </Text>
-              </View>
-            )}
-          </View>
-
           {children.length === 1 ? (
             <View style={styles.singleHeroCardContainer}>
               <StudentHeroCard
@@ -649,9 +740,13 @@ export default function ParentPortalScreen({ route, navigation }: any) {
                 ref={heroScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                snapToInterval={SCREEN_WIDTH - 50 + 12}
+                snapToInterval={studentSnapInterval}
                 decelerationRate="fast"
+                onScrollBeginDrag={() => {
+                  isUserDraggingRef.current = true;
+                }}
                 onMomentumScrollEnd={handleStudentScrollEnd}
+                onScrollEndDrag={handleStudentScrollEnd}
                 style={styles.heroCardScrollContainer}
                 contentContainerStyle={styles.heroCardScroll}
               >
@@ -662,13 +757,11 @@ export default function ParentPortalScreen({ route, navigation }: any) {
                     isSelected={String(child.id || child.student_id) === selectedId}
                     isSingleChild={false}
                     showActionButtons={true}
+                    cardWidth={studentCardWidth}
                     cardLabel="Kartu Siswa"
                     calendarLabel="Jadwal"
                     portalLabel="Menu"
-                    onSelect={() => {
-                      heroScrollRef.current?.scrollTo({ x: idx * (SCREEN_WIDTH - 50 + 12), animated: true });
-                      void selectChild(String(child.id || child.student_id));
-                    }}
+                    onSelect={() => goToLoopChild(idx, true)}
                     onPressCard={() => openIdCard(child)}
                     onPressQr={() => openQrCard(child)}
                     onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
@@ -2662,6 +2755,88 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0D9488',
     marginTop: 2,
+  },
+
+  // Student Carousel & Quick Switcher Styles
+  studentCarouselHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginBottom: 8,
+    marginTop: 4,
+    zIndex: 2,
+  },
+  studentCarouselHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  studentCarouselIconCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    backgroundColor: 'rgba(5, 150, 105, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  studentCarouselHeaderTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  studentCarouselCountBadge: {
+    backgroundColor: 'rgba(5, 150, 105, 0.1)',
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 0.8,
+    borderColor: 'rgba(5, 150, 105, 0.25)',
+  },
+  studentCarouselCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  studentSwitcherChipsContainer: {
+    marginBottom: 10,
+    zIndex: 2,
+  },
+  studentSwitcherChipsScroll: {
+    paddingHorizontal: 2,
+    gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  studentSwitcherChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 11,
+    paddingVertical: 5.5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#003822',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  studentSwitcherChipActive: {
+    backgroundColor: '#047857',
+    borderColor: '#064E3B',
+    borderWidth: 1.2,
+  },
+  studentSwitcherChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  studentSwitcherChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '900',
   },
 });
 

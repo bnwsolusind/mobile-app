@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -22,12 +23,49 @@ import { mobileApiService, unwrapApiData, unwrapCollection } from '../../service
 import { getApiErrorMessage } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { useNotificationBadgeStore } from '../../stores/notificationBadgeStore';
-import { TeacherStickyHeader } from '../TeacherStickyHeader';
+import { isTuRole } from '../../utils/roles';
 import { useStickyScroll } from '../StudentStickyHeader';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
 import { EmptyStateCard } from '../EmptyStateCard';
 
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const getSubjectMeta = (subjectName?: string) => {
+  const s = (subjectName || '').toLowerCase();
+  if (s.includes('matematika') || s.includes('mtk') || s.includes('hitung') || s.includes('aljabar')) {
+    return { icon: 'calculator-variant' as const, color: '#2563EB', bg: '#EFF6FF' };
+  }
+  if (s.includes('ipa') || s.includes('fisika') || s.includes('biologi') || s.includes('kimia') || s.includes('sains')) {
+    return { icon: 'flask-outline' as const, color: '#059669', bg: '#ECFDF5' };
+  }
+  if (s.includes('qur') || s.includes('tahfizh') || s.includes('hadits') || s.includes('pai') || s.includes('fiqih') || s.includes('akidah') || s.includes('islam') || s.includes('syariah')) {
+    return { icon: 'book-open-page-variant' as const, color: '#047857', bg: '#D1FAE5' };
+  }
+  if (s.includes('arab')) {
+    return { icon: 'translate' as const, color: '#D97706', bg: '#FEF3C7' };
+  }
+  if (s.includes('inggris') || s.includes('english')) {
+    return { icon: 'earth' as const, color: '#7C3AED', bg: '#F3E8FF' };
+  }
+  if (s.includes('indonesia') || s.includes('literasi') || s.includes('bahasa')) {
+    return { icon: 'book-outline' as const, color: '#0284C7', bg: '#E0F2FE' };
+  }
+  if (s.includes('ips') || s.includes('sejarah') || s.includes('geografi') || s.includes('pkn') || s.includes('sosial')) {
+    return { icon: 'compass-outline' as const, color: '#EA580C', bg: '#FFEDD5' };
+  }
+  if (s.includes('olahraga') || s.includes('penjas') || s.includes('pjok')) {
+    return { icon: 'soccer' as const, color: '#16A34A', bg: '#DCFCE7' };
+  }
+  if (s.includes('komputer') || s.includes('tik') || s.includes('informatika')) {
+    return { icon: 'laptop' as const, color: '#4F46E5', bg: '#EEF2FF' };
+  }
+  if (s.includes('seni') || s.includes('budaya') || s.includes('sbk') || s.includes('prakarya')) {
+    return { icon: 'palette-outline' as const, color: '#DB2777', bg: '#FCE7F3' };
+  }
+  return { icon: 'file-document-edit-outline' as const, color: '#047857', bg: '#ECFDF5' };
+};
 
 export type TeacherCbtExamItem = {
   id: string;
@@ -114,6 +152,11 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
   const navigation = propNavigation || internalNavigation;
 
   const user = useAuthStore((state) => state.user);
+  const roles = useAuthStore((state) => state.roles);
+  const userRoles = useMemo(() => (roles?.length ? roles : user?.roles || []), [roles, user?.roles]);
+  const isTu = isTuRole(userRoles);
+  const pageTitle = isTu ? 'Kelola Ujian CBT' : 'Ujian CBT Guru';
+  const pageSubtitle = isTu ? 'Pusat Evaluasi & Monitoring CBT Sekolah' : 'Pusat Evaluasi & Monitoring CBT';
   const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
   const { scrollY, handleMainScroll } = useStickyScroll();
 
@@ -816,8 +859,9 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
   }, [simulationModal.visible, simulationModal.submitted, simulationModal.timerSeconds]);
 
   const formatTimer = (secs: number) => {
-    const mins = Math.floor(secs / 60);
-    const s = secs % 60;
+    const total = Math.max(0, Math.floor(Number(secs) || 0));
+    const mins = Math.floor(total / 60);
+    const s = total % 60;
     return `${String(mins).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
@@ -838,160 +882,141 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
 
   return (
     <View style={styles.rootContainer}>
-      {/* ── Sticky Header Guru (Dengan Profil Guru Lengkap & Quick Chips) ── */}
-      <TeacherStickyHeader
-        scrollY={scrollY}
-        topInset={topInset}
-        title="Ujian CBT Guru"
-        navigation={navigation}
-        route={route}
-        equalColumns={true}
-        quickChips={[
-          {
-            id: 'cbt_list',
-            label: `Paket CBT (${exams.length})`,
-            icon: 'monitor-dashboard',
-            active: true,
-          },
-          {
-            id: 'tambah_ujian',
-            label: 'Terbitkan Ujian',
-            icon: 'plus',
-            onPress: () => handleOpenCreateModal(),
-          },
-          {
-            id: 'bank_soal',
-            label: 'Bank Soal',
-            icon: 'database-outline',
-            onPress: () => navigation?.navigate('BankSoal'),
-          },
-        ]}
-      />
-
-      <View style={styles.sheetContainer}>
-        {/* Latar Belakang Gradasi Lembut Zamrud */}
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK KALENDER & BANK SOAL) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 280 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#FFFFFF', '#F2FAF6', '#E6F7EF']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
 
+      {/* ── TOP HEADER TERPADU: TRUE ABSOLUTE CENTER TITLE (ZERO BERTUMPUK) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
+
+        <View style={styles.cleanHeaderTitleCenter}>
+          <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+            {pageTitle}
+          </Text>
+          <Text numberOfLines={1} style={styles.cleanHeaderSubtitle}>
+            {pageSubtitle}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.cleanBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Main Sheet Container ── */}
+      <View style={styles.sheetContainer}>
         <Animated.ScrollView
           style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: bottomInset + 40 }]}
+          contentContainerStyle={[
+            styles.cleanMainScrollContent,
+            { paddingBottom: Math.max(bottomInset + 76, 96) },
+          ]}
           onScroll={handleMainScroll}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#0E5C44"
+              colors={['#0E5C44', '#10B981']}
+            />
           }
         >
-          {/* Static Top Bar Header Bank Soal Style */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.staticTopBarRow}>
-              <TouchableOpacity activeOpacity={0.8} onPress={handleBack} style={styles.heroSquircleBtn}>
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
-              </TouchableOpacity>
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>Ujian CBT Guru</Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>Pusat Evaluasi & Monitoring CBT</Text>
-              </View>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
-            </View>
-          </View>
-
           {/* ══════════════════════════════════════════════════════════════
-              4 KPI STATS CARDS: SAMA RATA, RAPI, TIDAK MEMANJANG KE ATAS
+              4 KPI STATS CARDS (HEROUI 2x2 EQUAL GRID STANDAR EMAS)
              ══════════════════════════════════════════════════════════════ */}
-          <View style={styles.kpiCardsRow}>
-            {/* Card 1: Total Paket (Emerald Gradient) */}
-            <View style={[styles.kpiCardItem, styles.kpiCardEmerald]}>
-              <LinearGradient
-                colors={['#ECFDF5', '#D1FAE5']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View style={[styles.kpiIconSquircle, { backgroundColor: '#059669' }]}>
-                <MaterialCommunityIcons name="file-document-multiple-outline" size={17} color="#FFFFFF" />
+          <View style={styles.kpiGridContainer}>
+            {/* Baris 1: Total Paket & Ujian Aktif */}
+            <View style={styles.kpiGridRow}>
+              {/* Card 1: Total Paket */}
+              <View style={[styles.kpiGridCard, styles.kpiCardEmerald]}>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#DEF7EC' }]}>
+                  <MaterialCommunityIcons name="file-document-multiple-outline" size={20} color="#059669" />
+                </View>
+                <View style={styles.kpiTextCol}>
+                  <Text style={[styles.kpiValueLarge, { color: '#064E3B' }]} numberOfLines={1}>
+                    {stats.total_ujian}
+                  </Text>
+                  <Text style={[styles.kpiLabelModern, { color: '#047857' }]} numberOfLines={1}>
+                    Total Paket CBT
+                  </Text>
+                </View>
               </View>
-              <Text style={[styles.kpiValueText, { color: '#064E3B' }]} numberOfLines={1}>
-                {stats.total_ujian}
-              </Text>
-              <Text style={[styles.kpiLabelText, { color: '#047857' }]} numberOfLines={1}>
-                Total Paket
-              </Text>
+
+              {/* Card 2: Ujian Aktif */}
+              <View style={[styles.kpiGridCard, styles.kpiCardSky]}>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#E0F2FE' }]}>
+                  <MaterialCommunityIcons name="play-network-outline" size={20} color="#0284C7" />
+                </View>
+                <View style={styles.kpiTextCol}>
+                  <Text style={[styles.kpiValueLarge, { color: '#075985' }]} numberOfLines={1}>
+                    {stats.ujian_berlangsung}
+                  </Text>
+                  <Text style={[styles.kpiLabelModern, { color: '#0284C7' }]} numberOfLines={1}>
+                    Ujian Berlangsung
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            {/* Card 2: Ujian Aktif (Sky Blue Gradient) */}
-            <View style={[styles.kpiCardItem, styles.kpiCardSky]}>
-              <LinearGradient
-                colors={['#F0F9FF', '#E0F2FE']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View style={[styles.kpiIconSquircle, { backgroundColor: '#0284C7' }]}>
-                <MaterialCommunityIcons name="play-network-outline" size={17} color="#FFFFFF" />
+            {/* Baris 2: Siswa Ujian & Rata-Rata */}
+            <View style={styles.kpiGridRow}>
+              {/* Card 3: Siswa Ujian */}
+              <View style={[styles.kpiGridCard, styles.kpiCardPurple]}>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#F3E8FF' }]}>
+                  <MaterialCommunityIcons name="account-group-outline" size={20} color="#7C3AED" />
+                </View>
+                <View style={styles.kpiTextCol}>
+                  <Text style={[styles.kpiValueLarge, { color: '#581C87' }]} numberOfLines={1}>
+                    {stats.total_peserta}
+                  </Text>
+                  <Text style={[styles.kpiLabelModern, { color: '#7C3AED' }]} numberOfLines={1}>
+                    Siswa Mengikuti
+                  </Text>
+                </View>
               </View>
-              <Text style={[styles.kpiValueText, { color: '#075985' }]} numberOfLines={1}>
-                {stats.ujian_berlangsung}
-              </Text>
-              <Text style={[styles.kpiLabelText, { color: '#0284C7' }]} numberOfLines={1}>
-                Ujian Aktif
-              </Text>
-            </View>
 
-            {/* Card 3: Siswa Ujian (Purple Gradient) */}
-            <View style={[styles.kpiCardItem, styles.kpiCardPurple]}>
-              <LinearGradient
-                colors={['#FAF5FF', '#F3E8FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View style={[styles.kpiIconSquircle, { backgroundColor: '#7C3AED' }]}>
-                <MaterialCommunityIcons name="account-group-outline" size={17} color="#FFFFFF" />
+              {/* Card 4: Rata-Rata Nilai */}
+              <View style={[styles.kpiGridCard, styles.kpiCardAmber]}>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#FEF3C7' }]}>
+                  <MaterialCommunityIcons name="chart-bell-curve-cumulative" size={20} color="#D97706" />
+                </View>
+                <View style={styles.kpiTextCol}>
+                  <Text style={[styles.kpiValueLarge, { color: '#78350F' }]} numberOfLines={1}>
+                    {Number(stats.rata_rata_nilai).toFixed(1)}
+                  </Text>
+                  <Text style={[styles.kpiLabelModern, { color: '#B45309' }]} numberOfLines={1}>
+                    Rata-Rata Nilai
+                  </Text>
+                </View>
               </View>
-              <Text style={[styles.kpiValueText, { color: '#581C87' }]} numberOfLines={1}>
-                {stats.total_peserta}
-              </Text>
-              <Text style={[styles.kpiLabelText, { color: '#7C3AED' }]} numberOfLines={1}>
-                Siswa Ujian
-              </Text>
-            </View>
-
-            {/* Card 4: Rata-Rata (Amber Gradient) */}
-            <View style={[styles.kpiCardItem, styles.kpiCardAmber]}>
-              <LinearGradient
-                colors={['#FFFBEB', '#FEF3C7']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View style={[styles.kpiIconSquircle, { backgroundColor: '#D97706' }]}>
-                <MaterialCommunityIcons name="chart-bell-curve-cumulative" size={17} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.kpiValueText, { color: '#78350F' }]} numberOfLines={1}>
-                {Number(stats.rata_rata_nilai).toFixed(1)}
-              </Text>
-              <Text style={[styles.kpiLabelText, { color: '#B45309' }]} numberOfLines={1}>
-                Rata-Rata
-              </Text>
             </View>
           </View>
 
@@ -1150,13 +1175,15 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
                 const kelasName = exam.kelas?.nama_kelas || 'Seluruh Kelas';
                 const participantCount = Number(exam.total_peserta) || 0;
 
+                const subjectMeta = getSubjectMeta(mapelName);
+
                 return (
                   <View key={exam.id} style={styles.examCard}>
                     {/* Header Card: Mapel & Status Badge */}
                     <View style={styles.cardHeaderRow}>
-                      <View style={styles.subjectBadge}>
-                        <MaterialCommunityIcons name="book-open-page-variant" size={12} color="#059669" />
-                        <Text numberOfLines={1} style={styles.subjectBadgeText}>
+                      <View style={[styles.subjectBadge, { backgroundColor: subjectMeta.bg }]}>
+                        <MaterialCommunityIcons name={subjectMeta.icon} size={13} color={subjectMeta.color} />
+                        <Text numberOfLines={1} style={[styles.subjectBadgeText, { color: subjectMeta.color }]}>
                           {mapelName}
                         </Text>
                       </View>
@@ -1169,9 +1196,12 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
                     <Text style={styles.examTitle}>{exam.judul_ujian}</Text>
 
                     {/* Info Kelas & Semester */}
-                    <Text style={styles.metaClassGuru}>
-                      {kelasName} · {exam.semester?.nama_semester || 'Semester Aktif'}
-                    </Text>
+                    <View style={styles.metaClassRow}>
+                      <MaterialCommunityIcons name="google-classroom" size={13} color="#64748B" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={styles.metaClassGuru}>
+                        {kelasName} · {exam.semester?.nama_semester || 'Semester Aktif'}
+                      </Text>
+                    </View>
 
                     {/* Parameter: Durasi, KKM, Peserta */}
                     <View style={styles.attrRow}>
@@ -1204,17 +1234,27 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
                         </View>
                       )}
                       {exam.tampilkan_nilai_langsung && (
-                        <View style={styles.featurePill}>
+                        <View style={[styles.featurePill, { backgroundColor: '#ECFDF5' }]}>
                           <MaterialCommunityIcons name="eye-outline" size={11} color="#059669" />
-                          <Text style={[styles.featurePillText, { color: '#059669' }]}>Nilai Langsung</Text>
+                          <Text style={[styles.featurePillText, { color: '#059669', fontWeight: '700' }]}>Nilai Langsung</Text>
                         </View>
                       )}
                     </View>
 
                     {/* Rentang Waktu Pelaksanaan */}
                     <View style={styles.timeWindowBox}>
-                      <Text style={styles.timeWindowText}>Mulai: {formatDate(exam.waktu_mulai)}</Text>
-                      <Text style={styles.timeWindowText}>Selesai: {formatDate(exam.waktu_selesai)}</Text>
+                      <View style={styles.timeWindowItem}>
+                        <MaterialCommunityIcons name="calendar-clock" size={13} color="#059669" style={{ marginRight: 5 }} />
+                        <Text numberOfLines={1} style={styles.timeWindowText}>
+                          Mulai: {formatDate(exam.waktu_mulai)}
+                        </Text>
+                      </View>
+                      <View style={styles.timeWindowItem}>
+                        <MaterialCommunityIcons name="calendar-check" size={13} color="#E11D48" style={{ marginRight: 5 }} />
+                        <Text numberOfLines={1} style={styles.timeWindowText}>
+                          Selesai: {formatDate(exam.waktu_selesai)}
+                        </Text>
+                      </View>
                     </View>
 
                     {/* Tombol Aksi Guru: Rapi, Terstruktur 2 Baris, Tidak Terhimpit */}
@@ -2337,148 +2377,153 @@ export default function TeacherCbtWorkspace({ navigation: propNavigation, route 
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
-    backgroundColor: '#059669',
+    backgroundColor: '#ECFDF5',
   },
-  sheetContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     overflow: 'hidden',
+    zIndex: 0,
   },
-  screen: {
-    flex: 1,
-  },
-  mainScrollContent: {
-    paddingBottom: 40,
-  },
-  // ── Static Top Bar Bank Soal Style ──
-  staticTopBarWrapper: {
+  topFoliageBgImage: {
     width: '100%',
-    position: 'relative',
-    overflow: 'hidden',
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    paddingBottom: 16,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 5,
+    height: '100%',
   },
-  staticTopBarRow: {
+  cleanTopHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 4,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
+    zIndex: 10,
   },
-  heroSquircleBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  cleanHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1.5,
-    borderColor: 'rgba(5, 150, 105, 0.32)',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  heroTitleCenterCol: {
+  cleanHeaderTitleCenter: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
   },
-  heroModuleTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    fontFamily: 'Poppins_700Bold',
+  cleanHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
   },
-  heroModuleSubtitle: {
+  cleanHeaderSubtitle: {
     fontSize: 11,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontFamily: 'Nunito_600SemiBold',
+    color: '#047857',
     marginTop: 1,
   },
-  heroBellDot: {
+  cleanBellDot: {
     position: 'absolute',
-    top: 7,
-    right: 7,
+    top: 8,
+    right: 8,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
-  // ── 4 KPI Stats Cards Row: Sama Rata, Kompak, Tidak Memanjang Ke Atas ──
-  kpiCardsRow: {
+  sheetContainer: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  screen: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  cleanMainScrollContent: {
+    flexGrow: 1,
+    paddingTop: 8,
+  },
+  // ── 4 KPI Stats Cards: 2x2 Equal Grid Standar Emas SIT ──
+  kpiGridContainer: {
+    paddingHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 14,
+    gap: 10,
+  },
+  kpiGridRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  kpiGridCard: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-    paddingHorizontal: 16,
-    marginTop: 14,
-    marginBottom: 12,
-  },
-  kpiCardItem: {
-    flex: 1,
-    minWidth: 0,
-    height: 82,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1.2,
-    borderColor: '#E2E8F0',
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
     elevation: 2,
-    shadowColor: '#0E5C44',
-    shadowOffset: { width: 0, height: 1.5 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
   },
-  kpiCardEmerald: {
-    borderColor: '#6EE7B7',
-    shadowColor: '#059669',
-    shadowOpacity: 0.12,
-  },
-  kpiCardSky: {
-    borderColor: '#7DD3FC',
-    shadowColor: '#0284C7',
-    shadowOpacity: 0.12,
-  },
-  kpiCardPurple: {
-    borderColor: '#DDD6FE',
-    shadowColor: '#7C3AED',
-    shadowOpacity: 0.12,
-  },
-  kpiCardAmber: {
-    borderColor: '#FCD34D',
-    shadowColor: '#D97706',
-    shadowOpacity: 0.12,
-  },
-  kpiIconSquircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+  kpiIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 3,
   },
-  kpiValueText: {
-    fontSize: 15,
-    fontWeight: '800',
-    lineHeight: 18,
-    fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif-medium',
+  kpiTextCol: {
+    flex: 1,
+    justifyContent: 'center',
   },
-  kpiLabelText: {
-    fontSize: 9.5,
+  kpiValueLarge: {
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 22,
+    letterSpacing: -0.3,
+  },
+  kpiLabelModern: {
+    fontSize: 11,
     fontWeight: '700',
     marginTop: 1,
-    textAlign: 'center',
+  },
+  kpiCardEmerald: {
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.1,
+  },
+  kpiCardSky: {
+    borderColor: '#BAE6FD',
+    shadowColor: '#0284C7',
+    shadowOpacity: 0.1,
+  },
+  kpiCardPurple: {
+    borderColor: '#E9D5FF',
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.1,
+  },
+  kpiCardAmber: {
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOpacity: 0.1,
   },
   // ── Tombol Utama: Terbitkan Ujian & Bank Soal (Sama Rata Ukurannya) ──
   actionButtonsRow: {
@@ -2659,11 +2704,16 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     marginBottom: 4,
   },
+  metaClassRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   metaClassGuru: {
     fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
-    marginBottom: 10,
+    flex: 1,
   },
   attrRow: {
     flexDirection: 'row',
@@ -2708,14 +2758,22 @@ const styles = StyleSheet.create({
   timeWindowBox: {
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
-    padding: 8,
-    gap: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 4,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  timeWindowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   timeWindowText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: '#475569',
+    flex: 1,
   },
   cardItemActionsContainer: {
     gap: 8,

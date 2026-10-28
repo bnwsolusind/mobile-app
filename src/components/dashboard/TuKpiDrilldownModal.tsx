@@ -23,15 +23,22 @@ export type TuKpiType =
   | 'total_pegawai'
   | 'absensi_hari_ini'
   | 'siswa_incomplete'
-  | 'pegawai_incomplete';
+  | 'pegawai_incomplete'
+  | 'pengajuan_surat'
+  | 'pembayaran_hari_ini'
+  | 'tugas_menunggu'
+  | 'jadwal_kbm'
+  | 'laporan_nilai';
 
 interface TuKpiDrilldownModalProps {
-  type: TuKpiType | null;
+  type?: TuKpiType | null;
+  kpiType?: TuKpiType | null;
   visible: boolean;
   onClose: () => void;
   navigation?: any;
   initialTab?: 'siswa_hadir' | 'siswa_belum_absen' | 'pegawai';
   unitName?: string;
+  academicYear?: string;
 }
 
 interface ClassOption {
@@ -62,6 +69,36 @@ const MODAL_CONFIG: Record<
     gradient: ['#1D4ED8', '#2563EB', '#3B82F6'],
     summaryKeys: ['total', 'laki_laki', 'perempuan'],
     summaryLabels: { total: 'Total', laki_laki: 'Laki-laki', perempuan: 'Perempuan' },
+  },
+  pengajuan_surat: {
+    title: 'Pengajuan Surat Masuk',
+    subtitle: 'Daftar permohonan surat izin, dispensasi & surat santri',
+    icon: 'file-document-edit-outline',
+    iconColor: '#E11D48',
+    iconBg: '#FFF1F2',
+    gradient: ['#9F1239', '#BE123C', '#E11D48'],
+    summaryKeys: ['total', 'menunggu', 'disetujui'],
+    summaryLabels: { total: 'Total Pengajuan', menunggu: 'Menunggu', disetujui: 'Disetujui' },
+  },
+  pembayaran_hari_ini: {
+    title: 'Pembayaran Hari Ini',
+    subtitle: 'Rincian transaksi kas & penerimaan SPP/tagihan hari ini',
+    icon: 'cash-check',
+    iconColor: '#0D9488',
+    iconBg: '#F0FDFA',
+    gradient: ['#115E59', '#0D9488', '#14B8A6'],
+    summaryKeys: ['total', 'total_nominal'],
+    summaryLabels: { total: 'Transaksi Masuk', total_nominal: 'Penerimaan Hari Ini' },
+  },
+  tugas_menunggu: {
+    title: 'Tugas Menunggu',
+    subtitle: 'Kelengkapan berkas siswa, pegawai & verifikasi surat',
+    icon: 'clipboard-clock-outline',
+    iconColor: '#6366F1',
+    iconBg: '#EEF2FF',
+    gradient: ['#3730A3', '#4F46E5', '#6366F1'],
+    summaryKeys: ['total', 'siswa', 'pegawai'],
+    summaryLabels: { total: 'Total Tugas', siswa: 'Berkas Siswa', pegawai: 'Berkas Pegawai' },
   },
   total_pegawai: {
     title: 'Total Pegawai & Guru',
@@ -108,16 +145,38 @@ const MODAL_CONFIG: Record<
     summaryKeys: ['total'],
     summaryLabels: { total: 'Perlu Dilengkapi' },
   },
+  jadwal_kbm: {
+    title: 'Jadwal Pelajaran & KBM',
+    subtitle: 'Roster jadwal mengajar & pembelajaran santri aktif',
+    icon: 'calendar-clock',
+    iconColor: '#0284C7',
+    iconBg: '#F0F9FF',
+    gradient: ['#0369A1', '#0284C7', '#38BDF8'],
+    summaryKeys: ['total', 'hari_ini'],
+    summaryLabels: { total: 'Total Jadwal', hari_ini: 'Jadwal Hari Ini' },
+  },
+  laporan_nilai: {
+    title: 'Laporan Nilai & Leger',
+    subtitle: 'Rekap capaian akademik & penilaian hasil belajar santri',
+    icon: 'chart-box-outline',
+    iconColor: '#9333EA',
+    iconBg: '#FAF5FF',
+    gradient: ['#7E22CE', '#9333EA', '#C084FC'],
+    summaryKeys: ['total', 'tuntas', 'belum_tuntas'],
+    summaryLabels: { total: 'Total Nilai', tuntas: 'Tuntas', belum_tuntas: 'Remidial' },
+  },
 };
 
 export default function TuKpiDrilldownModal({
-  type,
+  type: propType,
+  kpiType,
   visible,
   onClose,
   navigation,
   initialTab,
   unitName,
 }: TuKpiDrilldownModalProps) {
+  const type = propType || kpiType || null;
   const navHook = useNavigation<any>();
   const activeNav = navigation || navHook;
 
@@ -226,6 +285,16 @@ export default function TuKpiDrilldownModal({
       case 'siswa_belum_absen':
         return 'account-clock-outline';
       case 'pegawai_hadir':
+        return 'account-tie-outline';
+      case 'menunggu':
+        return 'clock-alert-outline';
+      case 'disetujui':
+        return 'check-decagram-outline';
+      case 'total_nominal':
+        return 'cash-multiple';
+      case 'siswa':
+        return 'account-school-outline';
+      case 'pegawai':
         return 'account-tie-outline';
       default:
         return 'information-outline';
@@ -929,6 +998,369 @@ export default function TuKpiDrilldownModal({
       );
     }
 
+    // RENDER KHUSUS PENGAJUAN SURAT
+    if (type === 'pengajuan_surat') {
+      const isPending =
+        (item.status || '').toUpperCase() === 'MENUNGGU' ||
+        (item.status || '').toUpperCase() === 'PENDING';
+      return (
+        <View style={[styles.itemCard, { borderColor: isPending ? '#FECDD3' : '#E2E8F0', padding: 14 }]}>
+          <View style={styles.studentTopRow}>
+            <View style={[styles.studentAvatarBox, { backgroundColor: '#FFF1F2', borderColor: '#FECDD3' }]}>
+              <MaterialCommunityIcons name="file-document-edit-outline" size={22} color="#E11D48" />
+            </View>
+            <View style={styles.studentNameCol}>
+              <Text style={styles.studentNameText} numberOfLines={1}>
+                {item.nama || 'Santri'}
+              </Text>
+              <Text style={styles.studentSubText}>
+                {item.kelas || '-'} {item.unit ? `• ${item.unit}` : ''}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.studentStatusPill,
+                {
+                  backgroundColor: isPending ? '#FFE4E6' : '#ECFDF5',
+                  borderColor: isPending ? '#FDA4AF' : '#A7F3D0',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.studentStatusPillText,
+                  { color: isPending ? '#E11D48' : '#059669' },
+                ]}
+              >
+                {item.status || 'MENUNGGU'}
+              </Text>
+            </View>
+          </View>
+
+          <View
+            style={{
+              marginTop: 10,
+              backgroundColor: '#F8FAFC',
+              borderRadius: 10,
+              padding: 10,
+              borderWidth: 1,
+              borderColor: '#F1F5F9',
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1E293B', marginBottom: 2 }}>
+              {item.tipe_surat || 'Surat Permohonan'}
+            </Text>
+            <Text style={{ fontSize: 12, color: '#64748B', lineHeight: 17 }} numberOfLines={2}>
+              {item.alasan || '-'}
+            </Text>
+          </View>
+
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: 10,
+            }}
+          >
+            <Text style={{ fontSize: 11, color: '#94A3B8' }}>
+              Diajukan: {item.tanggal || '-'}
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                Alert.alert(
+                  'Detail Pengajuan Surat',
+                  `Nama: ${item.nama}\nKelas: ${item.kelas}\nTipe Surat: ${item.tipe_surat}\nStatus: ${item.status}\nKeterangan: ${item.alasan}`
+                );
+              }}
+              style={[styles.actionBtn, { backgroundColor: '#E11D48' }]}
+            >
+              <Text style={styles.actionBtnText}>Lihat Surat</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    // RENDER KHUSUS PEMBAYARAN HARI INI
+    if (type === 'pembayaran_hari_ini') {
+      return (
+        <View style={[styles.itemCard, { borderColor: '#CCFBF1', padding: 14 }]}>
+          <View style={styles.studentTopRow}>
+            <View style={[styles.studentAvatarBox, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}>
+              <MaterialCommunityIcons name="cash-check" size={22} color="#0D9488" />
+            </View>
+            <View style={styles.studentNameCol}>
+              <Text style={styles.studentNameText} numberOfLines={1}>
+                {item.nama || '-'}
+              </Text>
+              <Text style={styles.studentSubText}>
+                {item.kelas || '-'} {item.unit ? `• ${item.unit}` : ''}
+              </Text>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#059669' }}>
+                {item.nominal || 'Rp 0'}
+              </Text>
+              <Text style={{ fontSize: 11, color: '#0D9488', fontWeight: '600', marginTop: 2 }}>
+                Pukul {item.jam || '-'}
+              </Text>
+            </View>
+          </View>
+
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 10,
+              paddingTop: 8,
+              borderTopWidth: 1,
+              borderTopColor: '#F0FDFA',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <MaterialCommunityIcons name="receipt" size={14} color="#64748B" />
+              <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600' }}>
+                {item.pos_tagihan || 'SPP / Pendidikan'}
+              </Text>
+            </View>
+            <View
+              style={{
+                backgroundColor: '#F0FDFA',
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: '#CCFBF1',
+              }}
+            >
+              <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#0D9488' }}>
+                {item.metode || 'TUNAI'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    // RENDER KHUSUS TUGAS MENUNGGU
+    if (type === 'tugas_menunggu') {
+      const isHighPriority = item.priority === 'Tinggi';
+      return (
+        <View
+          style={[
+            styles.itemCard,
+            { borderColor: isHighPriority ? '#E0E7FF' : '#E2E8F0', padding: 14 },
+          ]}
+        >
+          <View style={styles.studentTopRow}>
+            <View
+              style={[
+                styles.studentAvatarBox,
+                {
+                  backgroundColor: isHighPriority ? '#EEF2FF' : '#F8FAFC',
+                  borderColor: isHighPriority ? '#C7D2FE' : '#E2E8F0',
+                },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={
+                  item.tipe === 'surat'
+                    ? 'file-clock-outline'
+                    : item.tipe === 'pegawai'
+                    ? 'account-tie'
+                    : 'account-alert'
+                }
+                size={22}
+                color={isHighPriority ? '#4F46E5' : '#64748B'}
+              />
+            </View>
+            <View style={styles.studentNameCol}>
+              <Text style={styles.studentNameText} numberOfLines={1}>
+                {item.nama || 'Tugas'}
+              </Text>
+              <Text style={styles.studentSubText} numberOfLines={1}>
+                {item.subjudul || '-'}
+              </Text>
+            </View>
+            <View
+              style={{
+                backgroundColor: isHighPriority ? '#EEF2FF' : '#F1F5F9',
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 8,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: '700',
+                  color: isHighPriority ? '#4338CA' : '#475569',
+                }}
+              >
+                {item.kategori || 'Tugas'}
+              </Text>
+            </View>
+          </View>
+
+          <View
+            style={{
+              marginTop: 8,
+              backgroundColor: '#FAF5FF',
+              borderRadius: 8,
+              padding: 8,
+              borderWidth: 1,
+              borderColor: '#F3E8FF',
+            }}
+          >
+            <Text style={{ fontSize: 11.5, color: '#6B21A8' }}>
+              {item.keterangan || '-'}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                onClose();
+                if (item.tipe === 'surat') {
+                  navigation?.navigate('Lainnya');
+                } else if (item.tipe === 'pegawai') {
+                  navigation?.navigate('Data', { initialResource: 'employees' });
+                } else {
+                  navigation?.navigate('Data', { initialResource: 'students' });
+                }
+              }}
+              style={[styles.actionBtn, { backgroundColor: '#4F46E5' }]}
+            >
+              <Text style={styles.actionBtnText}>Tindak Lanjuti</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    // RENDER KHUSUS JADWAL PELAJARAN & KBM
+    if (type === 'jadwal_kbm') {
+      return (
+        <View style={[styles.itemCard, { borderColor: '#BAE6FD', padding: 14 }]}>
+          <View style={styles.studentTopRow}>
+            <View style={[styles.studentAvatarBox, { backgroundColor: '#F0F9FF', borderColor: '#BAE6FD' }]}>
+              <MaterialCommunityIcons name="calendar-clock" size={22} color="#0284C7" />
+            </View>
+            <View style={styles.studentNameCol}>
+              <Text style={styles.studentNameText} numberOfLines={1}>
+                {item.mapel || 'Pelajaran'}
+              </Text>
+              <Text style={styles.studentSubText}>
+                {item.hari} • {item.jam}
+              </Text>
+            </View>
+            <View style={[styles.studentStatusPill, { backgroundColor: '#F0F9FF', borderColor: '#BAE6FD' }]}>
+              <Text style={[styles.studentStatusPillText, { color: '#0369A1' }]}>
+                {item.ruang || 'Kelas'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.studentBadgeRow}>
+            <View style={styles.studentKelasBadge}>
+              <MaterialCommunityIcons name="google-classroom" size={13} color="#0D9488" />
+              <Text style={styles.studentKelasBadgeText}>{item.kelas}</Text>
+            </View>
+            <View style={[styles.studentMetaBadge, { backgroundColor: '#F8FAFC' }]}>
+              <MaterialCommunityIcons name="account-tie" size={13} color="#475569" style={{ marginRight: 4 }} />
+              <Text style={styles.studentMetaBadgeVal}>{item.guru}</Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    // RENDER KHUSUS LAPORAN NILAI & LEGER
+    if (type === 'laporan_nilai') {
+      const isTuntas = (item.status || '').toUpperCase() === 'TUNTAS';
+      return (
+        <View style={[styles.itemCard, { borderColor: isTuntas ? '#E9D5FF' : '#FECDD3', padding: 14 }]}>
+          <View style={styles.studentTopRow}>
+            <View
+              style={[
+                styles.studentAvatarBox,
+                {
+                  backgroundColor: isTuntas ? '#FAF5FF' : '#FFF1F2',
+                  borderColor: isTuntas ? '#E9D5FF' : '#FECDD3',
+                },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={isTuntas ? 'check-decagram' : 'alert-decagram-outline'}
+                size={22}
+                color={isTuntas ? '#9333EA' : '#E11D48'}
+              />
+            </View>
+            <View style={styles.studentNameCol}>
+              <Text style={styles.studentNameText} numberOfLines={1}>
+                {item.nama || 'Santri'}
+              </Text>
+              <Text style={styles.studentSubText}>
+                {item.kelas} {item.nis ? `• NIS: ${item.nis}` : ''}
+              </Text>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 16, fontWeight: '900', color: isTuntas ? '#7E22CE' : '#E11D48' }}>
+                  {item.nilai_akhir}
+                </Text>
+                <View
+                  style={{
+                    backgroundColor: isTuntas ? '#F3E8FF' : '#FFE4E6',
+                    paddingHorizontal: 6,
+                    paddingVertical: 1,
+                    borderRadius: 4,
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: isTuntas ? '#7E22CE' : '#BE123C' }}>
+                    {item.predikat}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontWeight: '700',
+                  color: isTuntas ? '#059669' : '#DC2626',
+                  marginTop: 2,
+                }}
+              >
+                {item.status}
+              </Text>
+            </View>
+          </View>
+
+          <View style={[styles.studentBadgeRow, { marginTop: 8 }]}>
+            <View style={[styles.studentKelasBadge, { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF' }]}>
+              <MaterialCommunityIcons name="book-open-page-variant" size={13} color="#9333EA" />
+              <Text style={[styles.studentKelasBadgeText, { color: '#7E22CE' }]}>{item.mapel}</Text>
+            </View>
+            <View style={styles.studentMetaBadge}>
+              <Text style={styles.studentMetaBadgeLabel}>Tugas: </Text>
+              <Text style={styles.studentMetaBadgeVal}>{item.nilai_tugas}</Text>
+            </View>
+            <View style={styles.studentMetaBadge}>
+              <Text style={styles.studentMetaBadgeLabel}>UTS: </Text>
+              <Text style={styles.studentMetaBadgeVal}>{item.nilai_uts}</Text>
+            </View>
+            <View style={styles.studentMetaBadge}>
+              <Text style={styles.studentMetaBadgeLabel}>UAS: </Text>
+              <Text style={styles.studentMetaBadgeVal}>{item.nilai_uas}</Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
     // FALLBACK GENERIC JIKA ADA TIPE LAIN
     const cardContent = (
       <View style={styles.itemMainRow}>
@@ -1037,7 +1469,9 @@ export default function TuKpiDrilldownModal({
                       />
                       <Text style={styles.summaryBadgeLabel}>{label}:</Text>
                       <Text style={styles.summaryBadgeVal}>
-                        {Number(val).toLocaleString('id-ID')}
+                        {typeof val === 'number'
+                          ? Number(val).toLocaleString('id-ID')
+                          : String(val)}
                       </Text>
                     </View>
                   );

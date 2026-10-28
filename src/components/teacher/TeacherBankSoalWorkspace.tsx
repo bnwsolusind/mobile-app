@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -23,10 +24,13 @@ import { getApiErrorMessage } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import { useNotificationBadgeStore } from '../../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
+import { isTuRole } from '../../utils/roles';
 import { TeacherStickyHeader } from '../TeacherStickyHeader';
 import { TeacherHeroCard } from '../TeacherHeroCard';
 import { useStickyScroll } from '../StudentStickyHeader';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
+
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -91,7 +95,14 @@ export default function TeacherBankSoalWorkspace({
   const navigation = propNavigation || internalNavigation;
 
   const user = useAuthStore((state) => state.user);
-  const teacherDisplayName: string = String((user as any)?.name || (user as any)?.username || 'Guru Pengajar');
+  const roles = useAuthStore((state) => state.roles);
+  const userRoles = useMemo(() => (roles?.length ? roles : user?.roles || []), [roles, user?.roles]);
+  const isTu = isTuRole(userRoles);
+  const pageTitle = isTu ? 'Kelola Bank Soal CBT' : 'Bank Soal CBT Guru';
+  const pageSubtitle = isTu ? 'Pusat Bank Soal & Kisi-Kisi Sekolah' : 'Pusat Pengelolaan Butir Soal Guru';
+  const teacherDisplayName: string = String(
+    (user as any)?.name || (user as any)?.username || (isTu ? 'Staf Tata Usaha' : 'Guru Pengajar')
+  );
   const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
   const { scrollY, handleMainScroll } = useStickyScroll();
 
@@ -929,39 +940,53 @@ export default function TeacherBankSoalWorkspace({
 
   return (
     <View style={styles.container}>
-      {/* ── Sticky Header Guru ── */}
-      <TeacherStickyHeader
-        scrollY={scrollY}
-        topInset={topInset}
-        title="Bank Soal CBT"
-        navigation={navigation}
-        route={route}
-        equalColumns={true}
-        quickChips={[
-          {
-            id: 'total_soal',
-            label: `Bank Soal (${questions.length})`,
-            icon: 'database-outline',
-            active: true,
-          },
-          {
-            id: 'tambah_soal',
-            label: 'Tambah Soal',
-            icon: 'plus',
-            onPress: () => handleOpenCreateModal(),
-          },
-        ]}
-      />
+      {/* ── Background Foliage Header Identik Standard Emas Sekolah ── */}
+      <View style={[styles.topFoliageWrapper, { height: topInset + 64 }]}>
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={['rgba(236, 253, 245, 0.40)', 'rgba(209, 250, 229, 0.60)', '#ECFDF5']}
+          locations={[0, 0.5, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── Top Bar Header Bersih (Satu Baris, Tanpa Tumpuk) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 4 }]}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
+
+        <View style={styles.cleanHeaderTitleCenter}>
+          <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+            {pageTitle}
+          </Text>
+          <Text numberOfLines={1} style={styles.cleanHeaderSubtitle}>
+            {pageSubtitle}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.cleanBellDot} />}
+        </TouchableOpacity>
+      </View>
 
       {/* ── Main Scroll View ── */}
       <View style={styles.sheetContainer}>
-        <LinearGradient
-          colors={['#FFFFFF', '#F4FAF7', '#EAF7F0']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-
         <Animated.ScrollView
           style={styles.screen}
           contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
@@ -978,84 +1003,70 @@ export default function TeacherBankSoalWorkspace({
             />
           }
         >
-          {/* Static Top Bar */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.staticTopBarRow}>
-              <TouchableOpacity activeOpacity={0.8} onPress={handleBack} style={styles.heroSquircleBtn}>
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
-              </TouchableOpacity>
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>Bank Soal CBT</Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>Pusat Pengelolaan Butir Soal Guru</Text>
-              </View>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
-            </View>
-          </View>
-
           <View style={styles.bodyContentWrapper}>
-            {/* 3 KPI Metric Cards: Total Santri, Mapel, Kisi-kisi Aktif Berwarna */}
-            <View style={styles.kpiCardsRow}>
-              {/* Card 1: Total Santri (Emerald Gradient) */}
-              <View style={[styles.kpiCardItem, styles.kpiCardEmerald]}>
-                <LinearGradient
-                  colors={['#ECFDF5', '#D1FAE5']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={[styles.kpiIconSquircle, { backgroundColor: '#059669' }]}>
-                  <MaterialCommunityIcons name="account-group" size={19} color="#FFFFFF" />
+            {/* ── 4 KPI Stats Cards: 2x2 Equal Grid Standar Emas ── */}
+            <View style={styles.kpiGridContainer}>
+              {/* Row 1: Butir Soal (Emerald) & Mapel (Sky) */}
+              <View style={styles.kpiGridRow}>
+                <View style={[styles.kpiGridCard, styles.kpiCardEmerald]}>
+                  <View style={[styles.kpiIconBox, { backgroundColor: '#ECFDF5' }]}>
+                    <MaterialCommunityIcons name="database-outline" size={22} color="#059669" />
+                  </View>
+                  <View style={styles.kpiTextCol}>
+                    <Text style={[styles.kpiValueLarge, { color: '#064E3B' }]}>{questions.length}</Text>
+                    <Text style={[styles.kpiLabelModern, { color: '#047857' }]} numberOfLines={1}>
+                      Butir Soal
+                    </Text>
+                  </View>
                 </View>
-                <Text style={[styles.kpiValueText, { color: '#064E3B' }]}>{totalSantriCount}</Text>
-                <Text style={[styles.kpiLabelText, { color: '#047857' }]} numberOfLines={1}>Total Santri</Text>
+
+                <View style={[styles.kpiGridCard, styles.kpiCardSky]}>
+                  <View style={[styles.kpiIconBox, { backgroundColor: '#F0F9FF' }]}>
+                    <MaterialCommunityIcons name="book-open-page-variant" size={22} color="#0284C7" />
+                  </View>
+                  <View style={styles.kpiTextCol}>
+                    <Text style={[styles.kpiValueLarge, { color: '#075985' }]}>
+                      {teacherOptions.subjects.length}
+                    </Text>
+                    <Text style={[styles.kpiLabelModern, { color: '#0284C7' }]} numberOfLines={1}>
+                      Mata Pelajaran
+                    </Text>
+                  </View>
+                </View>
               </View>
 
-              {/* Card 2: Mapel (Sky Blue Gradient) */}
-              <View style={[styles.kpiCardItem, styles.kpiCardSky]}>
-                <LinearGradient
-                  colors={['#F0F9FF', '#E0F2FE']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={[styles.kpiIconSquircle, { backgroundColor: '#0284C7' }]}>
-                  <MaterialCommunityIcons name="book-open-page-variant" size={19} color="#FFFFFF" />
-                </View>
-                <Text style={[styles.kpiValueText, { color: '#075985' }]}>{teacherOptions.subjects.length}</Text>
-                <Text style={[styles.kpiLabelText, { color: '#0284C7' }]} numberOfLines={1}>Mapel</Text>
-              </View>
+              {/* Row 2: Kisi-kisi CBT (Amber) & Total Siswa (Purple) */}
+              <View style={styles.kpiGridRow}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => navigation?.navigate('KisiKisi')}
+                  style={[styles.kpiGridCard, styles.kpiCardAmber]}
+                >
+                  <View style={[styles.kpiIconBox, { backgroundColor: '#FFFBEB' }]}>
+                    <MaterialCommunityIcons name="clipboard-text-outline" size={22} color="#D97706" />
+                  </View>
+                  <View style={styles.kpiTextCol}>
+                    <Text style={[styles.kpiValueLarge, { color: '#78350F' }]}>
+                      {teacherOptions.kisi_kisi.length}
+                    </Text>
+                    <Text style={[styles.kpiLabelModern, { color: '#B45309' }]} numberOfLines={1}>
+                      Kisi-kisi Aktif
+                    </Text>
+                  </View>
+                </TouchableOpacity>
 
-              {/* Card 3: Kisi-kisi Aktif (Amber Gold Gradient) - Tappable untuk lompat ke Kisi-kisi */}
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={() => navigation?.navigate('KisiKisi')}
-                style={[styles.kpiCardItem, styles.kpiCardAmber]}
-              >
-                <LinearGradient
-                  colors={['#FFFBEB', '#FEF3C7']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={[styles.kpiIconSquircle, { backgroundColor: '#D97706' }]}>
-                  <MaterialCommunityIcons name="clipboard-text" size={19} color="#FFFFFF" />
+                <View style={[styles.kpiGridCard, styles.kpiCardPurple]}>
+                  <View style={[styles.kpiIconBox, { backgroundColor: '#F5F3FF' }]}>
+                    <MaterialCommunityIcons name="account-group-outline" size={22} color="#7C3AED" />
+                  </View>
+                  <View style={styles.kpiTextCol}>
+                    <Text style={[styles.kpiValueLarge, { color: '#4C1D95' }]}>{totalSantriCount}</Text>
+                    <Text style={[styles.kpiLabelModern, { color: '#7C3AED' }]} numberOfLines={1}>
+                      Siswa Terdaftar
+                    </Text>
+                  </View>
                 </View>
-                <Text style={[styles.kpiValueText, { color: '#78350F' }]}>{teacherOptions.kisi_kisi.length}</Text>
-                <Text style={[styles.kpiLabelText, { color: '#B45309' }]} numberOfLines={1}>Kisi-kisi Aktif</Text>
-              </TouchableOpacity>
+              </View>
             </View>
 
             {/* Active Kisi-kisi Prefill Banner (jika diarahkan dari halaman Kisi-Kisi) */}
@@ -2343,130 +2354,145 @@ const styles = StyleSheet.create({
   mainScrollContent: {
     flexGrow: 1,
   },
-  staticTopBarWrapper: {
+  topFoliageWrapper: {
     width: '100%',
-    position: 'relative',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     overflow: 'hidden',
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    paddingBottom: 16,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 5,
+    zIndex: 1,
   },
-  staticTopBarRow: {
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    opacity: 0.22,
+  },
+  cleanTopHeader: {
+    position: 'relative',
+    zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 4,
+    paddingBottom: 12,
   },
-  heroSquircleBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  cleanHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1.5,
-    borderColor: 'rgba(5, 150, 105, 0.32)',
+    shadowColor: '#0E5C44',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.10,
+    shadowRadius: 5,
+    elevation: 3,
+    borderWidth: 1.2,
+    borderColor: 'rgba(14, 92, 68, 0.12)',
   },
-  heroTitleCenterCol: {
+  cleanHeaderTitleCenter: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
   },
-  heroModuleTitle: {
+  cleanHeaderTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    fontFamily: 'Poppins_700Bold',
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    textAlign: 'center',
   },
-  heroModuleSubtitle: {
+  cleanHeaderSubtitle: {
     fontSize: 11,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontFamily: 'Nunito_600SemiBold',
+    color: '#0A6847',
     marginTop: 1,
+    textAlign: 'center',
+    opacity: 0.9,
   },
-  heroBellDot: {
+  cleanBellDot: {
     position: 'absolute',
-    top: 7,
-    right: 7,
+    top: 9,
+    right: 9,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
   bodyContentWrapper: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 8,
   },
-  // ── KPI Cards Row (Total Santri, Mapel, Kisi-kisi Aktif) ──
-  kpiCardsRow: {
+  // ── 2x2 Equal Grid KPI Stats Cards ──
+  kpiGridContainer: {
+    gap: 10,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  kpiGridRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  kpiGridCard: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginTop: 8,
-    marginBottom: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 10,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 5,
+    elevation: 2,
   },
-  kpiCardItem: {
+  kpiIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kpiTextCol: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#0E5C44',
-    shadowOffset: { width: 0, height: 1.5 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-    overflow: 'hidden',
+  },
+  kpiValueLarge: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  kpiLabelModern: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 1,
   },
   kpiCardEmerald: {
-    borderColor: '#6EE7B7',
+    borderColor: '#A7F3D0',
     shadowColor: '#059669',
-    shadowOpacity: 0.14,
+    shadowOpacity: 0.12,
   },
   kpiCardSky: {
-    borderColor: '#7DD3FC',
+    borderColor: '#BAE6FD',
     shadowColor: '#0284C7',
-    shadowOpacity: 0.14,
+    shadowOpacity: 0.12,
   },
   kpiCardAmber: {
-    borderColor: '#FCD34D',
+    borderColor: '#FDE68A',
     shadowColor: '#D97706',
-    shadowOpacity: 0.14,
+    shadowOpacity: 0.12,
   },
-  kpiIconSquircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  kpiValueText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
-    fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif-medium',
-  },
-  kpiLabelText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 1,
-    textAlign: 'center',
+  kpiCardPurple: {
+    borderColor: '#DDD6FE',
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.12,
   },
 
   activeKisiBanner: {

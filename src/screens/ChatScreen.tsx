@@ -45,12 +45,16 @@ import AppFeedbackModal, { FeedbackType } from '../components/AppFeedbackModal';
 import EmptyStateCard from '../components/EmptyStateCard';
 import {
   getProfileImageUrl,
+  getStudentAvatarSource,
   DEFAULT_PARENT_AVATAR,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
 } from '../utils/profile';
-import { isTeacherRole, isParentRole, isStaffRole, isTuRole, isPrincipalRole } from '../utils/roles';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
+import { isTeacherRole, isParentRole, isStaffRole, isTuRole, isPrincipalRole, isStudentRole } from '../utils/roles';
 import TeacherChatWorkspace from '../components/teacher/TeacherChatWorkspace';
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -111,6 +115,7 @@ function ParentChatScreen({ navigation, route }: any) {
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 16);
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 16);
   const user = useAuthStore((state) => state.user);
+  const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
 
   const [children, setChildren] = useState<any[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string>(() => {
@@ -171,6 +176,48 @@ function ParentChatScreen({ navigation, route }: any) {
     }
     return (user as any)?.student || user || null;
   }, [children, selectedChildId, user]);
+
+  const studentFullName = useMemo(() => {
+    return (
+      (typeof headerStudent?.name === 'string' && headerStudent.name) ||
+      (typeof headerStudent?.nama_lengkap === 'string' && headerStudent.nama_lengkap) ||
+      (typeof headerStudent?.full_name === 'string' && headerStudent.full_name) ||
+      'Ananda'
+    );
+  }, [headerStudent]);
+
+  const studentUnit = useMemo(() => {
+    return (
+      headerStudent?.educationUnit?.name ||
+      headerStudent?.education_unit?.name ||
+      headerStudent?.unit_name ||
+      headerStudent?.education_unit_name ||
+      headerStudent?.kelas?.unitPendidikan?.name ||
+      (typeof headerStudent?.unit === 'string' ? headerStudent.unit : '') ||
+      ''
+    );
+  }, [headerStudent]);
+
+  const studentClass = useMemo(() => {
+    return (
+      headerStudent?.kelas?.nama_kelas ||
+      headerStudent?.kelas?.name ||
+      headerStudent?.class?.name ||
+      headerStudent?.class_name ||
+      (typeof headerStudent?.kelas === 'string' ? headerStudent.kelas : '') ||
+      ''
+    );
+  }, [headerStudent]);
+
+  const studentAvatarSource = useMemo(() => {
+    return getStudentAvatarSource(headerStudent);
+  }, [headerStudent]);
+
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(headerStudent);
+  }, [headerStudent]);
+
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -205,9 +252,9 @@ function ParentChatScreen({ navigation, route }: any) {
   const messagesCacheRef = useRef<Record<string, Message[]>>({});
 
   const loadContacts = useCallback(async (targetChildId?: string, silent = false) => {
-    // Guard: hanya role Orang Tua/Wali yang boleh memanggil endpoint portal children & chat contacts
+    // Guard: hanya role Orang Tua/Wali & Siswa yang memanggil endpoint portal children & chat contacts
     const currentRoles = useAuthStore.getState().roles;
-    if (!isParentRole(currentRoles)) {
+    if (!isParentRole(currentRoles) && !isStudentRole(currentRoles)) {
       if (!silent) setLoading(false);
       return;
     }
@@ -217,13 +264,20 @@ function ParentChatScreen({ navigation, route }: any) {
       // 1. Only fetch children list if not already cached in memory
       let availableChildren = childrenCacheRef.current;
       if (availableChildren.length === 0) {
-        const childRes = await mobileApiService.getPortalChildren();
-        availableChildren = unwrap<any[]>(childRes) || [];
+        if (isParentRole(currentRoles)) {
+          const childRes = await mobileApiService.getPortalChildren();
+          availableChildren = unwrap<any[]>(childRes) || [];
+        } else if (isStudentRole(currentRoles)) {
+          const me = useAuthStore.getState().user;
+          const st = (me as any)?.student || me;
+          availableChildren = st ? [st] : [];
+        }
         childrenCacheRef.current = availableChildren;
         setChildren(availableChildren);
       }
 
-      const activeChildId = targetChildId || selectedChildIdRef.current || availableChildren[0]?.id;
+      const globalActiveId = useActiveChildStore.getState().activeChildId;
+      const activeChildId = targetChildId || selectedChildIdRef.current || globalActiveId || availableChildren[0]?.id;
       if (activeChildId) {
         const activeChildIdStr = String(activeChildId);
         if (selectedChildIdRef.current !== activeChildIdStr) {
@@ -243,6 +297,16 @@ function ParentChatScreen({ navigation, route }: any) {
             role.includes('pembina') ||
             role.includes('pembimbing') ||
             role.includes('ustadz') ||
+            role.includes('ustazah') ||
+            role.includes('ustad') ||
+            role.includes('pengajar') ||
+            role.includes('pendidik') ||
+            role.includes('pengasuh') ||
+            type.includes('wali') ||
+            type.includes('guru') ||
+            type.includes('musyrif') ||
+            type.includes('tahfizh') ||
+            type.includes('bk') ||
             type === 'wali_kelas' ||
             type === 'guru_mapel' ||
             type === 'guru_tahfizh' ||
@@ -250,8 +314,10 @@ function ParentChatScreen({ navigation, route }: any) {
           );
         });
 
+        const finalContacts = filtered.length > 0 ? filtered : rawList;
+
         // Sort so Wali Kelas appears first, followed by other teachers
-        filtered.sort((a, b) => {
+        finalContacts.sort((a, b) => {
           const isAWali = a.teacher_type === 'wali_kelas' || (a.role || '').toLowerCase().includes('wali');
           const isBWali = b.teacher_type === 'wali_kelas' || (b.role || '').toLowerCase().includes('wali');
           if (isAWali && !isBWali) return -1;
@@ -259,7 +325,7 @@ function ParentChatScreen({ navigation, route }: any) {
           return (a.name || '').localeCompare(b.name || '');
         });
 
-        setContacts(filtered);
+        setContacts(finalContacts);
 
         const totalUnread = filtered.reduce((sum, c) => sum + (c.unread_count || 0), 0);
         useChatBadgeStore.getState().setUnreadChatCount(totalUnread);
@@ -1133,296 +1199,264 @@ function ParentChatScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.rootContainer} onLayout={handleRootLayout}>
-      {/* 0. STICKY HEADER BERSAMA (top bar + card siswa, sama dengan halaman lain) */}
-      <StudentStickyHeader
-        scrollY={scrollY}
-        topInset={topInset}
-        title="Chat Guru"
-        navigation={navigation}
-        route={route}
-        student={headerStudent}
-        user={user}
-        childrenList={children}
-        selectedChildId={selectedChildId}
-        onSelectChild={(cid) => {
-          const idx = children.findIndex((c: any) => String(c.id || c.student_id) === String(cid));
-          if (idx >= 0) {
-            heroScrollRef.current?.scrollTo({ x: idx * (SCREEN_WIDTH - 50 + 12), animated: true });
-          }
-          handleSelectChild(cid);
-          useActiveChildStore.getState().setActiveChildId(cid);
-        }}
-        middleAction={{
-          label: 'Jadwal',
-          icon: 'calendar-clock',
-          onPress: () => openScheduleForStudent(headerStudent),
-        }}
-        onOpenIdCard={(s) => openIdCard(s)}
-        onOpenQr={(s) => openQrCard(s)}
-        onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-        onOpenMenu={(s) => setSelectedMenuStudent(s)}
-      />
-      {/* 1. STANDAR HEADER KONSISTEN DENGAN HALAMAN LAINNYA */}
-      <View style={styles.headerWrapper}>
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH DENGAN GRADASI EMERALD BERSIH ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image source={PARENT_HOME_BG} style={styles.topFoliageBgImage} resizeMode="cover" />
         <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.headerGradient, { paddingTop: topInset + 6 }]}
-        >
-          {/* Organic Background Shapes */}
-          <View style={styles.decorWave} />
-          <View style={styles.decorCircle} />
-
-          {/* Top Bar Navigation Row */}
-          <View style={styles.headerNavRow}>
-            {/* Roundcube Back Button */}
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleBackPress}
-              accessibilityRole="button"
-              accessibilityLabel="Kembali"
-              style={styles.roundcubeBtn}
-            >
-              <MaterialCommunityIcons name="arrow-left" size={20} color="#18A165" />
-            </TouchableOpacity>
-
-            {/* Header Titles */}
-            <View style={styles.headerCenterInfo}>
-              <Text style={styles.headerEyebrow}>KOMUNIKASI PENDIDIK</Text>
-              <Text numberOfLines={1} style={styles.headerMainTitle}>Komunikasi Guru</Text>
-            </View>
-
-            {/* Roundcube Bell Button */}
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleNotificationPress}
-              accessibilityRole="button"
-              accessibilityLabel="Notifikasi"
-              style={styles.roundcubeBtn}
-            >
-              <MaterialCommunityIcons name="bell-outline" size={20} color="#18A165" />
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
-      </View>
-
-      {/* 2. BODY DENGAN SHEET CONTAINER & PASTEL GRADIENT (TIDAK FULLSCREEN) */}
-      <View style={styles.sheetContainer}>
-        <LinearGradient
-          colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
 
-        {/* ================= LIST KONTAK GURU ================= */}
-        <View style={styles.contentWrapper}>
-            {/* Kartu Siswa Standar (sama dengan halaman lain) */}
-            {children.length > 0 && (
-              <View style={[styles.studentSectionWrapper]}>
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                    <Text style={styles.sectionTitle}>Data Ananda</Text>
-                  </View>
-                  {children.length > 1 && (
-                    <View style={styles.studentCardCountBadge}>
-                      <Text style={styles.studentCardCountBadgeText}>
-                        {Math.max(1, children.findIndex((c) => String(c.id) === selectedChildId) + 1)} dari {children.length} Ananda
+      {/* ── TOP HEADER IDENTIK HALAMAN UTAMA & TAGIHAN ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBackPress}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
+
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Komunikasi Guru
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleNotificationPress}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.cleanBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* ── 2. BODY DENGAN SHEET CONTAINER ── */}
+      <View style={styles.sheetContainer}>
+        <FlatList
+          data={contacts}
+          keyExtractor={(item) => String(item.user_id)}
+          contentContainerStyle={[styles.listContainer, { paddingBottom: Math.max(bottomInset + 76, 112) }]}
+          showsVerticalScrollIndicator={false}
+          onScroll={handleChatScroll}
+          scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl
+              refreshing={loading}
+              onRefresh={() => loadContacts(selectedChildId, false)}
+              tintColor="#059669"
+              colors={['#059669', '#10B981']}
+            />
+          }
+          ListHeaderComponent={
+            <View style={styles.listHeaderWrapper}>
+              {/* ── 0. STUDENT PROFILE SECTION (PERSIS MENIRU HALAMAN JADWAL PELAJARAN) ── */}
+              <View style={styles.studentProfileRow}>
+                {/* Circular Avatar dengan mint ring (Klik untuk Buka KTS Siswa) */}
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedIdCardStudent(headerStudent)}
+                  style={styles.studentAvatarRing}
+                  accessibilityRole="button"
+                  accessibilityLabel="Lihat Kartu Pelajar"
+                >
+                  <Image
+                    source={studentAvatarSource}
+                    style={styles.studentAvatarImg}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+
+                {/* Profile Info */}
+                <View style={styles.studentProfileInfoCol}>
+                  <TouchableOpacity
+                    activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                    onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                    style={styles.studentNameRow}
+                  >
+                    <Text numberOfLines={1} style={styles.studentProfileName}>
+                      {studentFullName}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Baris 2: Unit Pendidikan */}
+                  {studentUnit ? (
+                    <View style={styles.studentMetaRow}>
+                      <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                        {studentUnit}
                       </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Baris 3: Kelas Siswa tepat di bawah Unit Pendidikan */}
+                  {studentClass ? (
+                    <View style={styles.studentMetaRow}>
+                      <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                        {studentClass}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran di Sebelahnya */}
+                  <View style={styles.studentActionBadgeRow}>
+                    {children && children.length > 1 && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => setShowChildSelectorModal(true)}
+                        style={styles.parentGantiAnakBtn}
+                        accessibilityRole="button"
+                        accessibilityLabel="Ganti Siswa"
+                      >
+                        <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                        <MaterialCommunityIcons name="chevron-down" size={15} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    )}
+
+                    <View
+                      style={[
+                        styles.attendanceStatusBadge,
+                        { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={attendanceStatus.icon}
+                        size={12}
+                        color={attendanceStatus.color}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                        {attendanceStatus.label}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              {/* ── 1. CARD DAFTAR GURU PENGAJAR & WALI KELAS: UKURAN LEBAR SAMA PERSIS DENGAN CARD KONTAK ── */}
+              <View style={styles.contactsSectionHeader}>
+                <View style={styles.contactsSectionIconBox}>
+                  <MaterialCommunityIcons name="chat-processing-outline" size={20} color="#004D32" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.contactsSectionTitle}>Daftar Guru Pengajar & Wali Kelas</Text>
+                  <Text style={styles.contactsSectionSub}>
+                    Pilih pendidik untuk memulai konsultasi & komunikasi langsung perihal ananda.
+                  </Text>
+                </View>
+              </View>
+            </View>
+          }
+          ListEmptyComponent={
+            <EmptyStateCard
+              icon="account-search-outline"
+              title="Belum Ada Kontak Guru"
+              description="Kontak wali kelas dan guru mata pelajaran untuk ananda sedang diselaraskan dengan jadwal akademik."
+              actionLabel="Muat Ulang"
+              onAction={() => loadContacts(selectedChildId, false)}
+              style={{ marginTop: 24, marginHorizontal: 16 }}
+            />
+          }
+          renderItem={({ item }) => {
+            const isWali = item.teacher_type === 'wali_kelas' || item.role.toLowerCase().includes('wali');
+            const isOnline = Boolean(item.is_online);
+            const photoUrl = getProfileImageUrl(item);
+            const teacherPhotoSource = photoUrl ? { uri: photoUrl } : DEFAULT_PARENT_AVATAR;
+            const unread = Number(item.unread_count || 0);
+
+            return (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[
+                  styles.contactCard,
+                  isWali ? styles.contactCardWali : styles.contactCardMapel,
+                  unread > 0 && styles.contactCardUnread,
+                ]}
+                onPress={() => setSelectedContact(item)}
+              >
+                {/* Teacher Avatar Box with Squircle & Online/Offline Dot Indicator */}
+                <View style={styles.avatarContainer}>
+                  <View style={[styles.avatarBox, isWali ? styles.avatarBoxWali : styles.avatarBoxMapel]}>
+                    <Image
+                      source={teacherPhotoSource}
+                      style={styles.avatarImg}
+                      resizeMode="cover"
+                    />
+                  </View>
+                  <View style={[styles.statusDot, isOnline ? styles.dotOnline : styles.dotOffline]} />
+                </View>
+
+                {/* Contact Info (Clean 3-row hierarchy with vibrant semantic colors) */}
+                <View style={styles.contactInfo}>
+                  {/* Baris 1: Nama Guru & Badge Peran (Wali Kelas / Guru Mapel) */}
+                  <View style={styles.contactNameRow}>
+                    <Text numberOfLines={1} style={[styles.contactName, isWali ? styles.contactNameWali : styles.contactNameMapel, unread > 0 && styles.contactNameUnread]}>
+                      {item.name}
+                    </Text>
+                    {isWali ? (
+                      <View style={styles.waliBadge}>
+                        <MaterialCommunityIcons name="star" size={11} color="#FFFFFF" style={{ marginRight: 3 }} />
+                        <Text style={styles.waliBadgeText}>Wali Kelas</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.mapelBadge}>
+                        <MaterialCommunityIcons name="book-education-outline" size={11} color="#FFFFFF" style={{ marginRight: 3 }} />
+                        <Text style={styles.mapelBadgeText}>Guru Mapel</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Baris 2: Mata Pelajaran & Kelas */}
+                  <View style={styles.contactMetaRow}>
+                    <MaterialCommunityIcons
+                      name="book-open-variant"
+                      size={13}
+                      color={isWali ? '#059669' : '#0284C7'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text numberOfLines={1} style={[styles.contactSubject, isWali ? styles.contactSubjectWali : styles.contactSubjectMapel]}>
+                      {item.subject || 'Mata Pelajaran'} • {item.class_name || 'Kelas'}{item.unit_name && item.unit_name !== '-' ? ` • ${item.unit_name}` : ''}
+                    </Text>
+                  </View>
+
+                  {/* Baris 3: Cuplikan Pesan Terakhir */}
+                  <View style={styles.contactBottomRow}>
+                    <Text
+                      style={[styles.lastMsg, unread > 0 ? styles.lastMsgUnread : null]}
+                      numberOfLines={1}
+                    >
+                      {item.last_message || 'Belum ada pesan. Ketuk untuk mulai konsultasi.'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Right Action: Unread Count Badge or Vibrant Colored Chevron Action Box */}
+                <View style={styles.contactRightCol}>
+                  {unread > 0 ? (
+                    <View style={styles.contactUnreadBadge}>
+                      <Text style={styles.contactUnreadBadgeText}>{unread > 99 ? '99+' : unread}</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.contactChevronBox, isWali ? styles.contactChevronBoxWali : styles.contactChevronBoxMapel]}>
+                      <MaterialCommunityIcons
+                        name="chat-outline"
+                        size={15}
+                        color={isWali ? '#D97706' : '#0284C7'}
+                      />
                     </View>
                   )}
                 </View>
-
-                {children.length === 1 ? (
-                  <View style={styles.singleHeroCardContainer}>
-                    <StudentHeroCard
-                      child={children[0]}
-                      isSelected={true}
-                      isSingleChild={true}
-                      showActionButtons={true}
-                      cardLabel="Kartu Siswa"
-                      calendarLabel="Jadwal"
-                      portalLabel="Menu"
-                      onPressCard={() => openIdCard(children[0])}
-                      onPressQr={() => openQrCard(children[0])}
-                      onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                      onPressCalendar={() => openScheduleForStudent(children[0])}
-                      onPressPortal={() => setSelectedMenuStudent(children[0])}
-                    />
-                  </View>
-                ) : (
-                  <>
-                    <ScrollView
-                      ref={heroScrollRef}
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      snapToInterval={SCREEN_WIDTH - 50 + 12}
-                      decelerationRate="fast"
-                      onMomentumScrollEnd={handleStudentScrollEnd}
-                      style={styles.heroCardScrollContainer}
-                      contentContainerStyle={styles.heroCardScroll}
-                    >
-                      {children.map((child, idx) => (
-                        <StudentHeroCard
-                          key={String(child.id || idx)}
-                          child={child}
-                          isSelected={String(child.id) === selectedChildId}
-                          isSingleChild={false}
-                          showActionButtons={true}
-                          cardLabel="Kartu Siswa"
-                          calendarLabel="Jadwal"
-                          portalLabel="Menu"
-                          onSelect={() => {
-                            heroScrollRef.current?.scrollTo({ x: idx * (SCREEN_WIDTH - 50 + 12), animated: true });
-                            handleSelectChild(String(child.id));
-                          }}
-                          onPressCard={() => openIdCard(child)}
-                          onPressQr={() => openQrCard(child)}
-                          onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                          onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                          onPressCalendar={() => openScheduleForStudent(child)}
-                          onPressPortal={() => setSelectedMenuStudent(child)}
-                        />
-                      ))}
-                    </ScrollView>
-
-                    {/* DOT INDIKATOR SCROLL SISWA */}
-                    <View style={styles.paginationDotsRow}>
-                      {children.map((c, i) => {
-                        const isDotActive = String(c.id) === selectedChildId;
-                        return (
-                          <TouchableOpacity
-                            key={String(c.id || i)}
-                            onPress={() => {
-                              heroScrollRef.current?.scrollTo({ x: i * (SCREEN_WIDTH - 50 + 12), animated: true });
-                              handleSelectChild(String(c.id));
-                            }}
-                            style={[
-                              styles.paginationDot,
-                              isDotActive && styles.paginationDotActive,
-                            ]}
-                          />
-                        );
-                      })}
-                    </View>
-                  </>
-                )}
-              </View>
-            )}
-
-            {/* List of Guru Contacts with Teacher Avatars */}
-            <FlatList
-              data={contacts}
-              keyExtractor={(item) => String(item.user_id)}
-              contentContainerStyle={[styles.listContainer, { paddingBottom: Math.max(bottomInset + 76, 112) }]}
-              showsVerticalScrollIndicator={false}
-              onScroll={handleChatScroll}
-              scrollEventThrottle={16}
-              refreshControl={
-                <RefreshControl
-                  refreshing={loading}
-                  onRefresh={() => loadContacts(selectedChildId, false)}
-                  tintColor="#18A165"
-                  colors={['#18A165']}
-                />
-              }
-              ListEmptyComponent={
-                <EmptyStateCard
-                  icon="account-search-outline"
-                  title="Belum Ada Kontak Guru"
-                  description="Kontak wali kelas dan guru mata pelajaran untuk ananda sedang diselaraskan dengan jadwal akademik."
-                  actionLabel="Muat Ulang"
-                  onAction={() => loadContacts(selectedChildId, false)}
-                  style={{ marginTop: 24, marginHorizontal: 16 }}
-                />
-              }
-              renderItem={({ item }) => {
-                const isWali = item.teacher_type === 'wali_kelas' || item.role.toLowerCase().includes('wali');
-                const isOnline = Boolean(item.is_online);
-                const photoUrl = getProfileImageUrl(item);
-                const teacherPhotoSource = photoUrl ? { uri: photoUrl } : DEFAULT_PARENT_AVATAR;
-                const unread = Number(item.unread_count || 0);
-
-                return (
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    style={[
-                      styles.contactCard,
-                      isWali && styles.contactCardWali,
-                      unread > 0 && styles.contactCardUnread,
-                    ]}
-                    onPress={() => setSelectedContact(item)}
-                  >
-                    {/* Teacher Avatar Box with Squircle & Online/Offline Dot Indicator */}
-                    <View style={styles.avatarContainer}>
-                      <View style={[styles.avatarBox, isWali && styles.avatarBoxWali]}>
-                        <Image
-                          source={teacherPhotoSource}
-                          style={styles.avatarImg}
-                          resizeMode="cover"
-                        />
-                      </View>
-                      <View style={[styles.statusDot, isOnline ? styles.dotOnline : styles.dotOffline]} />
-                    </View>
-
-                    {/* Contact Info (Clean 3-row hierarchy without cramming) */}
-                    <View style={styles.contactInfo}>
-                      {/* Baris 1: Nama Guru & Badge Peran (Wali Kelas / Guru Mapel) */}
-                      <View style={styles.contactNameRow}>
-                        <Text numberOfLines={1} style={[styles.contactName, unread > 0 && styles.contactNameUnread]}>
-                          {item.name}
-                        </Text>
-                        {isWali ? (
-                          <View style={styles.waliBadge}>
-                            <MaterialCommunityIcons name="star" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
-                            <Text style={styles.waliBadgeText}>Wali Kelas</Text>
-                          </View>
-                        ) : (
-                          <View style={styles.mapelBadge}>
-                            <Text style={styles.mapelBadgeText}>Guru Mapel</Text>
-                          </View>
-                        )}
-                      </View>
-
-                      {/* Baris 2: Mata Pelajaran & Kelas */}
-                      <View style={styles.contactMetaRow}>
-                        <MaterialCommunityIcons name="book-open-variant" size={12} color="#059669" style={{ marginRight: 4 }} />
-                        <Text numberOfLines={1} style={styles.contactSubject}>
-                          {item.subject || 'Mata Pelajaran'} • {item.class_name || 'Kelas'}{item.unit_name && item.unit_name !== '-' ? ` • ${item.unit_name}` : ''}
-                        </Text>
-                      </View>
-
-                      {/* Baris 3: Cuplikan Pesan Terakhir */}
-                      <View style={styles.contactBottomRow}>
-                        <Text
-                          style={[styles.lastMsg, unread > 0 ? styles.lastMsgUnread : null]}
-                          numberOfLines={1}
-                        >
-                          {item.last_message || 'Belum ada pesan. Ketuk untuk mulai konsultasi.'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Right Action: Unread Count Badge or Subtle Chevron */}
-                    <View style={styles.contactRightCol}>
-                      {unread > 0 ? (
-                        <View style={styles.contactUnreadBadge}>
-                          <Text style={styles.contactUnreadBadgeText}>{unread > 99 ? '99+' : unread}</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.contactChevronBox}>
-                          <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
-                        </View>
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                );
-              }}
+              </TouchableOpacity>
+            );
+          }}
             />
-          </View>
         </View>
       {/* ATTACHMENT ACTION SHEET MODAL */}
       <Modal
@@ -1515,6 +1549,92 @@ function ParentChatScreen({ navigation, route }: any) {
         </View>
       </Modal>
 
+      {/* MODAL PILIH ANANDA */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children.map((c: any, idx: number) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName =
+                  (typeof c.name === 'string' && c.name) ||
+                  (typeof c.nama_lengkap === 'string' && c.nama_lengkap) ||
+                  (typeof c.full_name === 'string' && c.full_name) ||
+                  'Ananda';
+                const cUnit =
+                  c.educationUnit?.name ||
+                  c.education_unit?.name ||
+                  c.unit_name ||
+                  c.education_unit_name ||
+                  c.kelas?.unitPendidikan?.name ||
+                  '';
+                const cClass =
+                  c.kelas?.nama_kelas ||
+                  c.kelas?.name ||
+                  c.class?.name ||
+                  c.class_name ||
+                  '';
+
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      handleSelectChild(cId);
+                      useActiveChildStore.getState().setActiveChildId(cId);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text
+                        style={[
+                          styles.childModalItemName,
+                          isSelected && { color: '#004D32', fontWeight: '800' },
+                        ]}
+                      >
+                        {cName}
+                      </Text>
+                      <Text style={styles.childModalItemSub}>
+                        {cUnit ? `${cUnit} • ` : ''}{cClass || 'Siswa'}
+                      </Text>
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#004D32" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
       <StudentIdCardModal
         visible={Boolean(selectedIdCardStudent)}
@@ -1573,7 +1693,282 @@ export default function ChatScreen({ navigation, route }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+    backgroundColor: '#ECFDF5',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  cleanHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cleanHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanBellDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  listHeaderWrapper: {
+    width: '100%',
+    paddingTop: 4,
+    paddingBottom: 6,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 12,
+    marginBottom: 4,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  contactsSectionHeader: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 13,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  contactsSectionIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#D1FAE5',
+  },
+  contactsSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  contactsSectionSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  childModalCloseBtn: {
+    padding: 4,
+  },
+  childModalScroll: {
+    maxHeight: 320,
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#004D32',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+  },
+  childModalItemInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  childModalItemSub: {
+    fontSize: 11.5,
+    color: '#047857',
+    marginTop: 2,
+  },
+  childModalCheckCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#004D32',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerWrapper: {
     backgroundColor: '#FFFFFF',
@@ -1698,72 +2093,6 @@ const styles = StyleSheet.create({
   contentWrapper: {
     flex: 1,
   },
-  // Section kartu siswa standar (sama dengan halaman lain)
-  studentSectionWrapper: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    marginBottom: 18,
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  sectionHeaderTitleWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  sectionTitle: {
-    fontSize: 13.5,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: -0.2,
-  },
-  studentCardCountBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#6EE7B7',
-  },
-  studentCardCountBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#065F46',
-  },
-  singleHeroCardContainer: {
-    width: '100%',
-    alignSelf: 'stretch',
-  },
-  heroCardScrollContainer: {
-    marginHorizontal: -16,
-  },
-  heroCardScroll: {
-    paddingHorizontal: 16,
-    gap: 12,
-    paddingBottom: 4,
-  },
-  paginationDotsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 10,
-  },
-  paginationDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#CBD5E1',
-  },
-  paginationDotActive: {
-    width: 18,
-    borderRadius: 3,
-    backgroundColor: '#18A165',
-  },
   listContainer: {
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -1796,26 +2125,33 @@ const styles = StyleSheet.create({
   contactCard: {
     flexDirection: 'row',
     padding: 13,
-    backgroundColor: '#FFFFFF',
     marginBottom: 10,
     borderRadius: 18,
     alignItems: 'center',
     gap: 12,
-    borderWidth: 1.2,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
+    borderWidth: 1.5,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
   contactCardWali: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#FAFCFA',
+    backgroundColor: '#F0FDF4', // Soft emerald mint tint
+    borderColor: '#10B981',
+    shadowColor: '#059669',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+  },
+  contactCardMapel: {
+    backgroundColor: '#F0F9FF', // Soft sapphire sky blue tint
+    borderColor: '#BAE6FD',
+    shadowColor: '#0284C7',
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
   },
   contactCardUnread: {
-    borderColor: '#6EE7B7',
-    backgroundColor: '#F0FDF4',
+    borderColor: '#059669',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 2,
+    shadowOpacity: 0.18,
   },
   avatarContainer: {
     position: 'relative',
@@ -1824,15 +2160,19 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 15,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarBoxWali: {
-    borderColor: '#059669',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 2,
+    borderColor: '#F59E0B',
+  },
+  avatarBoxMapel: {
+    backgroundColor: '#E0F2FE',
+    borderWidth: 1.8,
+    borderColor: '#0284C7',
   },
   avatarImg: {
     width: '100%',
@@ -1869,8 +2209,15 @@ const styles = StyleSheet.create({
   contactName: {
     fontSize: 13.5,
     fontWeight: '800',
-    color: '#0F172A',
     flex: 1,
+  },
+  contactNameWali: {
+    color: '#064E3B',
+    fontWeight: '900',
+  },
+  contactNameMapel: {
+    color: '#0F172A',
+    fontWeight: '800',
   },
   contactNameUnread: {
     color: '#064E3B',
@@ -1879,30 +2226,40 @@ const styles = StyleSheet.create({
   waliBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#059669',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 7,
+    backgroundColor: '#D97706',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
     flexShrink: 0,
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 1,
   },
   waliBadgeText: {
-    fontSize: 9.5,
+    fontSize: 10,
     fontWeight: '800',
     color: '#FFFFFF',
   },
   mapelBadge: {
-    backgroundColor: '#F0F9FF',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
     flexShrink: 0,
+    shadowColor: '#0284C7',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 1,
   },
   mapelBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '700',
-    color: '#0284C7',
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   contactMetaRow: {
     flexDirection: 'row',
@@ -1911,9 +2268,16 @@ const styles = StyleSheet.create({
   },
   contactSubject: {
     fontSize: 11,
-    color: '#64748B',
     fontWeight: '600',
     flex: 1,
+  },
+  contactSubjectWali: {
+    color: '#047857',
+    fontWeight: '700',
+  },
+  contactSubjectMapel: {
+    color: '#0369A1',
+    fontWeight: '700',
   },
   contactBottomRow: {
     flexDirection: 'row',
@@ -1921,7 +2285,7 @@ const styles = StyleSheet.create({
   },
   lastMsg: {
     fontSize: 11.5,
-    color: '#94A3B8',
+    color: '#64748B',
     flex: 1,
     lineHeight: 16,
   },
@@ -1935,12 +2299,20 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   contactChevronBox: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#F8FAFC',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+  },
+  contactChevronBoxWali: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  contactChevronBoxMapel: {
+    backgroundColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
   },
   contactUnreadBadge: {
     backgroundColor: '#EF4444',

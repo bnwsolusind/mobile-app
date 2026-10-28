@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -23,6 +24,7 @@ import AppFeedbackModal, { FeedbackType } from '../AppFeedbackModal';
 import EmptyStateCard from '../EmptyStateCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 // Standard assessment weights (Formatif 40% [Tugas 20%, Kuis 20%], Sumatif 60% [UTS 30%, UAS 30%])
 const GRADE_WEIGHTS = {
@@ -563,351 +565,249 @@ export default function TeacherGradeWorkspace({
 
   return (
     <View style={styles.container}>
-      {/* ── 1. STICKY HEADER (Muncul hanya saat di-scroll) ── */}
-      <Animated.View
-        pointerEvents={isStickyActive ? 'auto' : 'none'}
-        style={[
-          styles.stickyHeaderContainer,
-          {
-            paddingTop: insets.top + 6,
-            opacity: stickyOpacity,
-            transform: [{ translateY: stickyTranslateY }],
-          },
-        ]}
-      >
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK BUKU PENGHUBUNG & HALAMAN UTAMA) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={styles.stickyDecorCircle1} />
-        <View style={styles.stickyDecorCircle2} />
+      </View>
 
-        {/* Baris Atas Sticky: Tombol Back, Judul & Mini Counter, Tombol Simpan */}
-        <View style={styles.stickyTopRow}>
-          <View style={styles.stickyTitleGroup}>
-            {onBack && (
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={onBack}
-                style={styles.stickySquircleBtn}
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={18} color="#059669" />
-              </TouchableOpacity>
-            )}
-            <View style={styles.stickyTitleTextCol}>
-              <Text numberOfLines={1} style={styles.stickyTitle}>
-                Buku Nilai & Rapor
-              </Text>
-              <Text numberOfLines={1} style={styles.stickySubtitle}>
-                {currentFilterScheduleLabel} · {gradeRows.length} Santri
+      {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG & DATA SISWA ── */}
+      <View style={[styles.headerContainer, { paddingTop: insets.top + 6 }]}>
+        <View style={styles.headerTopRow}>
+          {onBack && (
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={onBack}
+              style={styles.backButton}
+              accessibilityLabel="Kembali"
+            >
+              <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
+            </TouchableOpacity>
+          )}
+
+          <View style={styles.headerTitleWrap}>
+            <View style={styles.headerBadge}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                GURU • BUKU NILAI & RAPOR SANTRI
               </Text>
             </View>
+            <Text style={styles.headerMainTitle} numberOfLines={1}>
+              Buku Nilai & Rapor Santri
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              Kelola asesmen formatif, sumatif & capaian santri
+            </Text>
           </View>
 
           <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={handleSaveAll}
-            disabled={saving || gradeRows.length === 0}
-            style={[styles.stickyCreateBtn, (saving || gradeRows.length === 0) && { opacity: 0.6 }]}
-            accessibilityLabel="Simpan Nilai"
+            activeOpacity={0.75}
+            onPress={() => {
+              setRefreshing(true);
+              void onRefresh();
+            }}
+            style={styles.refreshButton}
+            accessibilityLabel="Muat Ulang"
           >
-            {saving ? (
-              <ActivityIndicator size="small" color="#047857" />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="content-save" size={16} color="#047857" />
-                <Text style={styles.stickyCreateBtnText}>Simpan</Text>
-              </>
-            )}
+            <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
           </TouchableOpacity>
         </View>
 
-        {/* Tab Switcher Sticky */}
-        <View style={styles.stickyTabBarContainer}>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => setActiveTab('grades')}
-            style={[
-              styles.stickyTabButton,
-              activeTab === 'grades' && styles.stickyTabButtonActive,
-            ]}
-          >
-            <MaterialCommunityIcons
-              name="clipboard-text-outline"
-              size={14}
-              color={activeTab === 'grades' ? '#047857' : '#D1FAE5'}
-              style={{ marginRight: 6 }}
-            />
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.stickyTabButtonText,
-                activeTab === 'grades' && styles.stickyTabButtonTextActive,
-              ]}
-            >
-              Daftar Nilai ({gradeRows.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => setActiveTab('analysis')}
-            style={[
-              styles.stickyTabButton,
-              activeTab === 'analysis' && styles.stickyTabButtonActive,
-            ]}
-          >
-            <MaterialCommunityIcons
-              name="chart-box-outline"
-              size={14}
-              color={activeTab === 'analysis' ? '#047857' : '#D1FAE5'}
-              style={{ marginRight: 6 }}
-            />
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.stickyTabButtonText,
-                activeTab === 'analysis' && styles.stickyTabButtonTextActive,
-              ]}
-            >
-              Rekap & Analisis
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </Animated.View>
-
-      {/* ── 2. SCROLLVIEW UTAMA ── */}
-      <Animated.ScrollView
-        style={styles.screen}
-        contentContainerStyle={[
-          styles.mainScrollContent,
-          { paddingBottom: Math.max(insets.bottom + 80, 100) },
-        ]}
-        onScroll={handleMainScroll}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
-        }
-      >
-        {/* 2a. Header Statis Workspace (di paling atas saat belum scroll) — TANPA TAB */}
-        <View style={[styles.staticTopBarWrapper, { paddingTop: insets.top + 8 }]}>
-          <LinearGradient
-            colors={['#047857', '#059669', '#10B981']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
+        {/* Search Bar langsung di Header identik Buku Penghubung */}
+        <View style={styles.searchBar}>
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Cari santri berdasarkan nama atau NIS..."
+            placeholderTextColor="#94A3B8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            returnKeyType="search"
           />
-          <View style={styles.staticDecorCircle1} />
-          <View style={styles.staticDecorCircle2} />
-
-          <View style={styles.staticTopBarRow}>
-            {onBack && (
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={onBack}
-                style={styles.staticSquircleBackBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
-            )}
-            <View style={styles.staticTitleCol}>
-              <Text numberOfLines={1} style={styles.staticTitle}>
-                Buku Nilai & Rapor Santri
-              </Text>
-              <Text numberOfLines={1} style={styles.staticSubtitle}>
-                Kelola asesmen formatif, sumatif, dan capaian kompetensi santri
-              </Text>
-            </View>
-          </View>
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* 2b. Badan Halaman Konten (Body) */}
-        <View style={styles.bodyContentWrapper}>
-          {/* 3 KPI Multi-Cards Row (Harmonisasi Baseline Presensi) */}
-          <View style={styles.kpiCardsRow}>
-            {/* Card 1: Rata-Rata Kelas */}
-            <View style={[styles.kpiBox, { borderColor: 'rgba(5, 150, 105, 0.22)' }]}>
-              <LinearGradient colors={['#FFFFFF', '#ECFDF5']} style={styles.kpiBoxGradient}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconSquare, { backgroundColor: '#059669' }]}>
-                    <MaterialCommunityIcons name="chart-line" size={14} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiVal, { color: '#059669' }]}>{stats.avg}</Text>
+        {/* 3 KPI Cards Row Terpadu */}
+        <View style={styles.kpiCardsRow}>
+          {/* Card 1: Rata-Rata Kelas */}
+          <View style={[styles.kpiBox, { borderColor: '#A7F3D0' }]}>
+            <LinearGradient colors={['#FFFFFF', '#F0FDF4']} style={styles.kpiBoxGradient}>
+              <View style={styles.kpiHeaderRow}>
+                <View style={[styles.kpiIconSquare, { backgroundColor: '#047857' }]}>
+                  <MaterialCommunityIcons name="chart-line" size={14} color="#FFFFFF" />
                 </View>
-                <Text style={[styles.kpiLbl, { color: '#059669' }]} numberOfLines={1}>Rata-Rata</Text>
-                <Text style={styles.kpiSub} numberOfLines={1}>Nilai Kelas</Text>
-              </LinearGradient>
-            </View>
-
-            {/* Card 2: Tuntas KKM */}
-            <View style={[styles.kpiBox, { borderColor: 'rgba(37, 99, 235, 0.18)' }]}>
-              <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={styles.kpiBoxGradient}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconSquare, { backgroundColor: '#2563EB' }]}>
-                    <MaterialCommunityIcons name="check-decagram" size={14} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiVal, { color: '#2563EB' }]}>
-                    {activeKKM !== null ? stats.passed : '-'}
-                    {activeKKM !== null && (
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#60A5FA' }}>/{stats.total}</Text>
-                    )}
-                  </Text>
-                </View>
-                <Text style={[styles.kpiLbl, { color: '#2563EB' }]} numberOfLines={1}>
-                  {activeKKM !== null ? `Tuntas KKM (${activeKKM})` : 'Standar KKM: -'}
-                </Text>
-                <Text style={styles.kpiSub} numberOfLines={1}>
-                  {activeKKM !== null ? `${stats.passPercentage}% Tuntas` : 'KKM Belum Ditetapkan'}
-                </Text>
-              </LinearGradient>
-            </View>
-
-            {/* Card 3: Total Santri */}
-            <View style={[styles.kpiBox, { borderColor: 'rgba(217, 119, 6, 0.22)' }]}>
-              <LinearGradient colors={['#FFFFFF', '#FFFBEB']} style={styles.kpiBoxGradient}>
-                <View style={styles.kpiHeaderRow}>
-                  <View style={[styles.kpiIconSquare, { backgroundColor: '#D97706' }]}>
-                    <MaterialCommunityIcons name="account-group" size={14} color="#FFFFFF" />
-                  </View>
-                  <Text style={[styles.kpiVal, { color: '#D97706' }]}>{stats.total}</Text>
-                </View>
-                <Text style={[styles.kpiLbl, { color: '#D97706' }]} numberOfLines={1}>Total Santri</Text>
-                <Text style={styles.kpiSub} numberOfLines={1}>Rombel Aktif</Text>
-              </LinearGradient>
-            </View>
-          </View>
-
-          {/* Tab Selector di Bodi (Daftar Nilai vs Rekap & Analisis) */}
-          <View style={styles.bodyTabBarContainer}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => setActiveTab('grades')}
-              style={[
-                styles.bodyTabButton,
-                activeTab === 'grades' && styles.bodyTabButtonActive,
-              ]}
-            >
-              <MaterialCommunityIcons
-                name="clipboard-text-outline"
-                size={16}
-                color={activeTab === 'grades' ? '#047857' : '#64748B'}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.bodyTabButtonText,
-                  activeTab === 'grades' && styles.bodyTabButtonTextActive,
-                ]}
-              >
-                Daftar Nilai ({gradeRows.length})
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => setActiveTab('analysis')}
-              style={[
-                styles.bodyTabButton,
-                activeTab === 'analysis' && styles.bodyTabButtonActive,
-              ]}
-            >
-              <MaterialCommunityIcons
-                name="chart-box-outline"
-                size={16}
-                color={activeTab === 'analysis' ? '#047857' : '#64748B'}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.bodyTabButtonText,
-                  activeTab === 'analysis' && styles.bodyTabButtonTextActive,
-                ]}
-              >
-                Rekap & Analisis
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Filter Section: Pencarian, Tombol Simpan, dan Dropdown Rombel & Mapel */}
-          <View style={styles.filterSection}>
-            <View style={styles.searchRow}>
-              <View style={styles.searchBar}>
-                <MaterialCommunityIcons name="magnify" size={20} color="#64748B" style={{ marginRight: 8 }} />
-                <TextInput
-                  placeholder="Cari santri berdasarkan nama atau NIS..."
-                  placeholderTextColor="#94A3B8"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  style={styles.searchInput}
-                />
-                {searchQuery ? (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                  </TouchableOpacity>
-                ) : null}
+                <Text style={[styles.kpiVal, { color: '#047857' }]}>{stats.avg}</Text>
               </View>
+              <Text style={[styles.kpiLbl, { color: '#047857' }]} numberOfLines={1}>Rata-Rata</Text>
+              <Text style={styles.kpiSub} numberOfLines={1}>Nilai Kelas</Text>
+            </LinearGradient>
+          </View>
+
+          {/* Card 2: Tuntas KKM */}
+          <View style={[styles.kpiBox, { borderColor: '#BFDBFE' }]}>
+            <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={styles.kpiBoxGradient}>
+              <View style={styles.kpiHeaderRow}>
+                <View style={[styles.kpiIconSquare, { backgroundColor: '#2563EB' }]}>
+                  <MaterialCommunityIcons name="check-decagram" size={14} color="#FFFFFF" />
+                </View>
+                <Text style={[styles.kpiVal, { color: '#2563EB' }]}>
+                  {activeKKM !== null ? stats.passed : '-'}
+                  {activeKKM !== null && (
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#60A5FA' }}>/{stats.total}</Text>
+                  )}
+                </Text>
+              </View>
+              <Text style={[styles.kpiLbl, { color: '#2563EB' }]} numberOfLines={1}>
+                {activeKKM !== null ? `Tuntas (${activeKKM})` : 'KKM: -'}
+              </Text>
+              <Text style={styles.kpiSub} numberOfLines={1}>
+                {activeKKM !== null ? `${stats.passPercentage}% Tuntas` : 'Belum Ada KKM'}
+              </Text>
+            </LinearGradient>
+          </View>
+
+          {/* Card 3: Total Santri / Tertinggi */}
+          <View style={[styles.kpiBox, { borderColor: '#FDE68A' }]}>
+            <LinearGradient colors={['#FFFFFF', '#FFFBEB']} style={styles.kpiBoxGradient}>
+              <View style={styles.kpiHeaderRow}>
+                <View style={[styles.kpiIconSquare, { backgroundColor: '#D97706' }]}>
+                  <MaterialCommunityIcons name="trophy-outline" size={14} color="#FFFFFF" />
+                </View>
+                <Text style={[styles.kpiVal, { color: '#D97706' }]}>
+                  {stats.highest !== '-' ? stats.highest : stats.total}
+                </Text>
+              </View>
+              <Text style={[styles.kpiLbl, { color: '#D97706' }]} numberOfLines={1}>
+                {stats.highest !== '-' ? 'Tertinggi' : 'Total Santri'}
+              </Text>
+              <Text style={styles.kpiSub} numberOfLines={1}>
+                {stats.highestStudent !== '-' ? stats.highestStudent : 'Rombel Aktif'}
+              </Text>
+            </LinearGradient>
+          </View>
+        </View>
+      </View>
+
+      {/* ── SHEET CONTAINER & MAIN SCROLL CONTENT ── */}
+      <View style={styles.sheetContainer}>
+        <Animated.ScrollView
+          style={styles.screen}
+          contentContainerStyle={[
+            styles.cleanMainScrollContent,
+            { paddingBottom: Math.max(insets.bottom + 80, 100) },
+          ]}
+          onScroll={handleMainScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
+          }
+        >
+          <View style={styles.bodyContentWrapper}>
+            {/* TAB SWITCHER IDENTIK DUAL ROLE PILL BUKU PENGHUBUNG */}
+            <View style={styles.dualRolePillContainer}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.dualRolePill, activeTab === 'grades' && styles.dualRolePillActive]}
+                onPress={() => setActiveTab('grades')}
+              >
+                <MaterialCommunityIcons
+                  name="clipboard-text-outline"
+                  size={16}
+                  color={activeTab === 'grades' ? '#FFFFFF' : '#047857'}
+                />
+                <Text style={[styles.dualRolePillText, activeTab === 'grades' && styles.dualRolePillTextActive]}>
+                  Daftar Nilai ({gradeRows.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.dualRolePill, activeTab === 'analysis' && styles.dualRolePillActive]}
+                onPress={() => setActiveTab('analysis')}
+              >
+                <MaterialCommunityIcons
+                  name="chart-box-outline"
+                  size={16}
+                  color={activeTab === 'analysis' ? '#FFFFFF' : '#047857'}
+                />
+                <Text style={[styles.dualRolePillText, activeTab === 'analysis' && styles.dualRolePillTextActive]}>
+                  Rekap & Analisis
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* ACTION & FILTER BAR: DROPDOWN ROMBEL & MAPEL + TOMBOL SIMPAN */}
+            <View style={styles.filterActionBar}>
+              {schedules.length > 0 && (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setShowFilterScheduleDropdown(true)}
+                  style={styles.filterDropdownTrigger}
+                >
+                  <View style={styles.filterDropdownTriggerLeft}>
+                    <View style={styles.dropdownIconCircle}>
+                      <MaterialCommunityIcons
+                        name="google-classroom"
+                        size={16}
+                        color="#047857"
+                      />
+                    </View>
+                    <View style={styles.dropdownLabelCol}>
+                      <Text style={styles.dropdownSubLabel}>Rombel & Mapel</Text>
+                      <Text style={styles.dropdownMainLabel} numberOfLines={1}>
+                        {currentFilterScheduleLabel}
+                      </Text>
+                    </View>
+                  </View>
+                  <MaterialCommunityIcons
+                    name="chevron-down"
+                    size={20}
+                    color="#047857"
+                  />
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={handleSaveAll}
                 disabled={saving || gradeRows.length === 0}
-                style={[styles.createTaskBtn, (saving || gradeRows.length === 0) && { opacity: 0.6 }]}
+                style={[styles.saveAllBtn, (saving || gradeRows.length === 0) && { opacity: 0.6 }]}
+                accessibilityLabel="Simpan Nilai"
               >
                 {saving ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <>
-                    <MaterialCommunityIcons name="content-save" size={18} color="#FFFFFF" />
-                    <Text style={styles.createTaskBtnText}>Simpan</Text>
+                    <MaterialCommunityIcons name="content-save" size={17} color="#FFFFFF" />
+                    <Text style={styles.saveAllBtnText}>Simpan</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
-
-            {/* Dropdown Pemilihan Rombel & Mapel Filter (Pop-up Modal, Bukan Expand) */}
-            {schedules.length > 0 && (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setShowFilterScheduleDropdown(true)}
-                style={styles.filterDropdownTrigger}
-              >
-                <View style={styles.filterDropdownTriggerLeft}>
-                  <View style={styles.dropdownIconCircle}>
-                    <MaterialCommunityIcons
-                      name="google-classroom"
-                      size={16}
-                      color="#047857"
-                    />
-                  </View>
-                  <View style={styles.dropdownLabelCol}>
-                    <Text style={styles.dropdownSubLabel}>Rombel & Mata Pelajaran</Text>
-                    <Text style={styles.dropdownMainLabel} numberOfLines={1}>
-                      {currentFilterScheduleLabel}
-                    </Text>
-                  </View>
-                </View>
-                <MaterialCommunityIcons
-                  name="chevron-down"
-                  size={20}
-                  color="#047857"
-                />
-              </TouchableOpacity>
-            )}
 
             {/* Dynamic Academic Year & Semester Pill */}
             <View style={styles.academicInfoPill}>
               <MaterialCommunityIcons name="calendar-range" size={13} color="#059669" />
               <Text style={styles.academicInfoText}>Tahun Ajaran: {academicInfo}</Text>
             </View>
-          </View>
 
           {/* List Card Data Berdasarkan Tab Aktif */}
           {loading ? (
@@ -1195,6 +1095,7 @@ export default function TeacherGradeWorkspace({
           )}
         </View>
       </Animated.ScrollView>
+    </View>
 
       {/* ── 3. MODAL POP-UP PICKER JADWAL/ROMBEL (Matching TeacherAssignmentWorkspace) ── */}
       <Modal
@@ -1446,213 +1347,137 @@ export default function TeacherGradeWorkspace({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
   },
-  // ── Sticky Header Styles (Matching TeacherAssignmentWorkspace) ──
-  stickyHeaderContainer: {
+  topFoliageWrapper: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 99,
-    paddingBottom: 10,
-    paddingHorizontal: 14,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
+    zIndex: 0,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 8,
   },
-  stickyDecorCircle1: {
-    position: 'absolute',
-    top: -20,
-    right: -20,
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
   },
-  stickyDecorCircle2: {
-    position: 'absolute',
-    bottom: -15,
-    left: 40,
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+
+  /* ── Header Clean Top Bar Terpadu (Identik Buku Penghubung & Data Siswa) ── */
+  headerContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
   },
-  stickyTopRow: {
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: 10,
   },
-  stickyTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 10,
-  },
-  stickySquircleBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
-    shadowRadius: 2,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  stickyTitleTextCol: {
+  headerTitleWrap: {
     flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
   },
-  stickyTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  stickySubtitle: {
-    fontSize: 10.5,
-    fontWeight: '600',
-    color: '#A7F3D0',
-    marginTop: 1,
-  },
-  stickyCreateBtn: {
+  headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    gap: 4,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 20,
+    marginBottom: 2,
+    maxWidth: '100%',
   },
-  stickyCreateBtnText: {
-    fontSize: 11.5,
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+    marginRight: 5,
+  },
+  headerBadgeText: {
+    fontSize: 9.5,
     fontWeight: '800',
     color: '#047857',
+    letterSpacing: 0.5,
+    flexShrink: 1,
   },
-  stickyTabBarContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0, 0, 0, 0.16)',
-    borderRadius: 12,
-    padding: 3,
-    gap: 4,
-  },
-  stickyTabButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 6,
-    borderRadius: 9,
-  },
-  stickyTabButtonActive: {
-    backgroundColor: '#FFFFFF',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  stickyTabButtonText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#D1FAE5',
-  },
-  stickyTabButtonTextActive: {
-    color: '#047857',
-    fontWeight: '900',
-  },
-
-  // ── Main Scroll & Static Top Bar ──
-  screen: {
-    flex: 1,
-  },
-  mainScrollContent: {
-    flexGrow: 1,
-  },
-  staticTopBarWrapper: {
-    paddingBottom: 18,
-    paddingHorizontal: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
-    elevation: 4,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-  },
-  staticDecorCircle1: {
-    position: 'absolute',
-    top: -25,
-    right: -25,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  staticDecorCircle2: {
-    position: 'absolute',
-    bottom: -35,
-    left: 20,
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  staticTopBarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  staticSquircleBackBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  staticTitleCol: {
-    flex: 1,
-  },
-  staticTitle: {
+  headerMainTitle: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
+    letterSpacing: -0.3,
   },
-  staticSubtitle: {
-    fontSize: 11.5,
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#047857',
     fontWeight: '600',
-    color: '#D1FAE5',
-    marginTop: 2,
+    marginTop: 1,
+  },
+  refreshButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    height: 44,
+    marginTop: 12,
+    gap: 8,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#064E3B',
+    fontWeight: '600',
   },
 
-  // ── Body Content Wrapper ──
-  bodyContentWrapper: {
-    paddingHorizontal: 14,
-    paddingTop: 12,
-  },
-
-  // ── 3 KPI Cards Row (Harmonisasi Baseline Presensi) ──
+  /* ── 3 KPI Cards Row Terpadu ── */
   kpiCardsRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginTop: 12,
   },
   kpiBox: {
     flex: 1,
@@ -1660,9 +1485,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
+    shadowColor: '#064E3B',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 1,
   },
@@ -1697,108 +1522,90 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // ── Body Tab Bar Switcher ──
-  bodyTabBarContainer: {
+  /* ── Sheet Container (Body White Sheet) ── */
+  sheetContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: 'hidden',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 6,
+    marginTop: 8,
+  },
+  screen: {
+    flex: 1,
+  },
+  cleanMainScrollContent: {
+    flexGrow: 1,
+  },
+  bodyContentWrapper: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+
+  /* ── Tab Switcher Dual Role Pill ── */
+  dualRolePillContainer: {
     flexDirection: 'row',
     backgroundColor: '#E2E8F0',
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 4,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    gap: 4,
+    gap: 6,
   },
-  bodyTabButton: {
+  dualRolePill: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 9,
-    paddingHorizontal: 8,
-    borderRadius: 12,
+    borderRadius: 10,
+    gap: 6,
   },
-  bodyTabButtonActive: {
-    backgroundColor: '#FFFFFF',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-  },
-  bodyTabButtonText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  bodyTabButtonTextActive: {
-    color: '#047857',
-    fontWeight: '900',
-  },
-
-  // ── Filter Section ──
-  filterSection: {
-    paddingHorizontal: 0,
-    paddingTop: 2,
-    paddingBottom: 4,
-    backgroundColor: 'transparent',
-    marginBottom: 8,
-  },
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  searchBar: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    height: 44,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 12.5,
-    color: '#0F172A',
-  },
-  createTaskBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  dualRolePillActive: {
     backgroundColor: '#059669',
-    paddingHorizontal: 14,
-    height: 44,
-    borderRadius: 14,
-    gap: 4,
-    elevation: 2,
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
+    elevation: 3,
   },
-  createTaskBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
+  dualRolePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#064E3B',
+  },
+  dualRolePillTextActive: {
     color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  /* ── Filter & Action Bar ── */
+  filterActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
   },
   filterDropdownTrigger: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     borderRadius: 14,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
     shadowRadius: 3,
-    elevation: 1,
+    elevation: 2,
   },
   filterDropdownTriggerLeft: {
     flexDirection: 'row',
@@ -1807,31 +1614,50 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   dropdownIconCircle: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 10,
     backgroundColor: '#ECFDF5',
     borderWidth: 1,
     borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 8,
   },
   dropdownLabelCol: {
     flex: 1,
   },
   dropdownSubLabel: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '700',
     color: '#059669',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
   dropdownMainLabel: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#0F172A',
     marginTop: 1,
+  },
+  saveAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 14,
+    height: 48,
+    borderRadius: 14,
+    gap: 5,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  saveAllBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   academicInfoPill: {
     flexDirection: 'row',
@@ -1842,7 +1668,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    marginTop: 6,
+    marginTop: 2,
+    marginBottom: 8,
     gap: 6,
     alignSelf: 'flex-start',
   },

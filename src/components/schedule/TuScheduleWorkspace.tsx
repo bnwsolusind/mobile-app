@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -18,8 +19,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApiService, unwrapApiData } from '../../services/mobileApiService';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
+import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 const DAY_OPTIONS = [
   { id: 1, name: 'Senin', short: 'Sen', icon: 'calendar-today' },
@@ -975,39 +978,69 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
   };
 
   return (
-    <View style={styles.screen}>
-      {/* ── HEADER HALAMAN (GAYA IDENTIK DENGAN DATA MASTER / DATA SISWA) ── */}
-      <LinearGradient
-        colors={THEME.headerColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.headerContainer, { paddingTop: topInset + 6 }]}
-      >
+    <View style={styles.rootContainer}>
+      {/* ── Background Mosque & School (Identik Halaman Utama, Data Siswa & Buku Penghubung) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Buku Penghubung & Halaman Utama */}
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG & DATA SISWA ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
         <View style={styles.headerTopRow}>
           <TouchableOpacity
-            activeOpacity={0.7}
+            activeOpacity={0.75}
             onPress={() => {
-              if (navigation?.canGoBack?.()) navigation.goBack();
-              else navigation?.navigate('Beranda');
+              const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+              if (handled) return;
+              const navState = navigation?.getState?.();
+              const canPop = navState && typeof navState.index === 'number' && navState.index > 0;
+              if (canPop && navigation?.canGoBack?.()) {
+                try {
+                  navigation.goBack();
+                  return;
+                } catch {}
+              }
+              navigation?.navigate('Beranda' as any);
             }}
             style={styles.backButton}
+            accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
 
           <View style={styles.headerTitleWrap}>
             <View style={styles.headerBadge}>
-              <MaterialCommunityIcons name="database-check" size={12} color="#D1FAE5" />
-              <Text style={styles.headerBadgeText}>PUSAT AKADEMIK & KBM TERPADU</Text>
+              <View style={styles.pulseDot} />
+              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                TATA USAHA • JADWAL & KBM
+              </Text>
             </View>
             <Text style={styles.headerMainTitle} numberOfLines={1}>
-              {workspaceTab === 'schedule' ? 'Jadwal Pelajaran & Kegiatan' : 'Jadwal Ujian (PTS/PAS/PAT)'}
+              {workspaceTab === 'schedule' ? 'Jadwal Pelajaran & KBM' : 'Jadwal Ujian (PTS/PAS/PAT)'}
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              {workspaceTab === 'schedule' ? 'Monitoring KBM, Ruang, & Guru Unit' : 'Monitoring Pengawas, Sesi, & Ruang'}
             </Text>
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={() => {
                 if (selectedClassId !== 'all') {
                   setPrintKelasId(selectedClassId);
@@ -1019,11 +1052,11 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
               style={styles.refreshButton}
               accessibilityLabel="Cetak Jadwal Pelajaran"
             >
-              <MaterialCommunityIcons name="printer-outline" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="printer-outline" size={20} color="#064E3B" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={() => {
                 setRefreshing(true);
                 if (workspaceTab === 'exam') {
@@ -1033,15 +1066,16 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
                 }
               }}
               style={styles.refreshButton}
+              accessibilityLabel="Muat Ulang"
             >
-              <MaterialCommunityIcons name="refresh" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Search Bar langsung di Header Gradient */}
+        {/* Search Bar langsung di Header identik Buku Penghubung */}
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#64748B" />
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
           <TextInput
             style={styles.searchInput}
             placeholder={
@@ -1082,159 +1116,148 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
             </View>
           ))}
         </View>
-      </LinearGradient>
 
-      {/* ── TAB SWITCHER UTAMA TU: JADWAL KBM & RUTINITAS vs JADWAL UJIAN (PTS/PAS/PAT) ── */}
-      <View style={styles.workspaceTabBar}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[
-            styles.workspaceTabItem,
-            workspaceTab === 'schedule' && styles.workspaceTabItemActiveKbm,
-          ]}
-          onPress={() => setWorkspaceTab('schedule')}
-        >
-          <MaterialCommunityIcons
-            name="calendar-clock"
-            size={17}
-            color={workspaceTab === 'schedule' ? '#FFFFFF' : '#64748B'}
-          />
-          <Text
-            style={[
-              styles.workspaceTabText,
-              workspaceTab === 'schedule' && styles.workspaceTabTextActive,
-            ]}
-            numberOfLines={1}
+        {/* Sub-Tabs / Kategori Segmented Scroll (Identik Buku Penghubung tuSegmentContainer) */}
+        <View style={styles.tuSegmentContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tuSegmentScroll}
           >
-            KBM & Rutinitas
-          </Text>
-          <View
-            style={[
-              styles.workspaceTabBadge,
-              workspaceTab === 'schedule'
-                ? { backgroundColor: 'rgba(255,255,255,0.25)' }
-                : { backgroundColor: '#E2E8F0' },
-            ]}
-          >
-            <Text
-              style={[
-                styles.workspaceTabBadgeText,
-                workspaceTab === 'schedule' ? { color: '#FFFFFF' } : { color: '#475569' },
-              ]}
-            >
-              {schedules.length}
-            </Text>
-          </View>
-        </TouchableOpacity>
+            {workspaceTab === 'schedule' ? (
+              <>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedDay('all')}
+                  style={[styles.segmentBtn, selectedDay === 'all' && styles.segmentBtnActive]}
+                >
+                  <MaterialCommunityIcons
+                    name="calendar-range"
+                    size={15}
+                    color={selectedDay === 'all' ? '#FFFFFF' : '#047857'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.segmentBtnText, selectedDay === 'all' && styles.segmentBtnTextActive]}>
+                    Semua Hari ({schedules.length})
+                  </Text>
+                </TouchableOpacity>
 
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[
-            styles.workspaceTabItem,
-            workspaceTab === 'exam' && styles.workspaceTabItemActiveExam,
-          ]}
-          onPress={() => {
-            setWorkspaceTab('exam');
-            if (examSchedules.length === 0) {
-              void fetchExamData(false);
-            }
-          }}
-        >
-          <MaterialCommunityIcons
-            name="file-document-edit-outline"
-            size={17}
-            color={workspaceTab === 'exam' ? '#FFFFFF' : '#64748B'}
-          />
-          <Text
-            style={[
-              styles.workspaceTabText,
-              workspaceTab === 'exam' && styles.workspaceTabTextActive,
-            ]}
-            numberOfLines={1}
-          >
-            Jadwal Ujian
-          </Text>
-          <View
-            style={[
-              styles.workspaceTabBadge,
-              workspaceTab === 'exam'
-                ? { backgroundColor: 'rgba(255,255,255,0.25)' }
-                : { backgroundColor: '#E2E8F0' },
-            ]}
-          >
-            <Text
-              style={[
-                styles.workspaceTabBadgeText,
-                workspaceTab === 'exam' ? { color: '#FFFFFF' } : { color: '#475569' },
-              ]}
-            >
-              {examSchedules.length}
-            </Text>
-          </View>
-        </TouchableOpacity>
+                {DAY_OPTIONS.map((item) => {
+                  const isSel = selectedDay === item.id;
+                  const count = schedules.filter((s) => Number(s.day_of_week) === item.id).length;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      activeOpacity={0.8}
+                      onPress={() => setSelectedDay(item.id)}
+                      style={[styles.segmentBtn, isSel && styles.segmentBtnActive]}
+                    >
+                      <MaterialCommunityIcons
+                        name="calendar-today"
+                        size={14}
+                        color={isSel ? '#FFFFFF' : '#047857'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={[styles.segmentBtnText, isSel && styles.segmentBtnTextActive]}>
+                        {item.name} ({count})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedExamCategoryId('all')}
+                  style={[styles.segmentBtn, selectedExamCategoryId === 'all' && styles.segmentBtnActive]}
+                >
+                  <MaterialCommunityIcons
+                    name="file-document-multiple-outline"
+                    size={15}
+                    color={selectedExamCategoryId === 'all' ? '#FFFFFF' : '#047857'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.segmentBtnText, selectedExamCategoryId === 'all' && styles.segmentBtnTextActive]}>
+                    Semua Ujian ({examSchedules.length})
+                  </Text>
+                </TouchableOpacity>
+
+                {examCategories.map((cat) => {
+                  const isSel = selectedExamCategoryId === String(cat.id);
+                  const count = examSchedules.filter((e) => String(e.exam_category_id) === String(cat.id)).length;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      activeOpacity={0.8}
+                      onPress={() => setSelectedExamCategoryId(String(cat.id))}
+                      style={[styles.segmentBtn, isSel && styles.segmentBtnActive]}
+                    >
+                      <Text style={[styles.segmentBtnText, isSel && styles.segmentBtnTextActive]}>
+                        {cat.name || cat.nama_kategori || 'Ujian'} ({count})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </>
+            )}
+          </ScrollView>
+        </View>
       </View>
 
-      {/* ── KONTEN TAB 1: JADWAL KBM & RUTINITAS ── */}
-      {workspaceTab === 'schedule' ? (
-        <>
-          {/* ── SEGMENTED SUB-TABS (HARI KBM) DI BAWAH HEADER ── */}
-          <View style={styles.segmentContainer}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.segmentScroll}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => setSelectedDay('all')}
-                style={[
-                  styles.segmentBtn,
-                  selectedDay === 'all' && { backgroundColor: THEME.primary },
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name="calendar-range"
-                  size={16}
-                  color={selectedDay === 'all' ? '#FFFFFF' : '#64748B'}
-                />
-                <Text style={[styles.segmentBtnText, selectedDay === 'all' && styles.segmentBtnTextActive]}>
-                  Semua Hari ({schedules.length})
-                </Text>
-              </TouchableOpacity>
-
-              {DAY_OPTIONS.map((item) => {
-                const isSel = selectedDay === item.id;
-                const count = schedules.filter((s) => Number(s.day_of_week) === item.id).length;
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedDay(item.id)}
-                    style={[
-                      styles.segmentBtn,
-                      isSel && { backgroundColor: THEME.primary },
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name="calendar-today"
-                      size={15}
-                      color={isSel ? '#FFFFFF' : '#64748B'}
-                    />
-                    <Text style={[styles.segmentBtnText, isSel && styles.segmentBtnTextActive]}>
-                      {item.name} ({count})
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {/* ── KONTEN UTAMA SCROLLVIEW JADWAL KBM ── */}
+      {/* ── SHEET CONTAINER & MAIN SCROLL CONTENT (IDENTIK BUKU PENGHUBUNG) ── */}
+      <View style={styles.sheetContainer}>
+        {workspaceTab === 'schedule' ? (
           <ScrollView
-            contentContainerStyle={[styles.mainScroll, { paddingBottom: bottomInset + 80 }]}
+            style={styles.screen}
+            contentContainerStyle={[
+              styles.cleanMainScrollContent,
+              { paddingBottom: Math.max(bottomInset + 72, 94) },
+            ]}
             showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[THEME.primary]} />
             }
           >
-            {/* ACTION BAR: TAMBAH JADWAL & RESET FILTER */}
-            <View style={styles.subActionBar}>
+            <View style={styles.bodyContentWrapper}>
+              {/* TAB SWITCHER IDENTIK DUAL ROLE PILL BUKU PENGHUBUNG */}
+              <View style={styles.dualRolePillContainer}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[styles.dualRolePill, styles.dualRolePillActive]}
+                  onPress={() => setWorkspaceTab('schedule')}
+                >
+                  <MaterialCommunityIcons
+                    name="calendar-clock"
+                    size={16}
+                    color="#FFFFFF"
+                  />
+                  <Text style={[styles.dualRolePillText, styles.dualRolePillTextActive]}>
+                    KBM & Rutinitas ({schedules.length})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.dualRolePill}
+                  onPress={() => {
+                    setWorkspaceTab('exam');
+                    if (examSchedules.length === 0) void fetchExamData(false);
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name="file-document-edit-outline"
+                    size={16}
+                    color="#047857"
+                  />
+                  <Text style={styles.dualRolePillText}>
+                    Jadwal Ujian ({examSchedules.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* ACTION BAR: TAMBAH JADWAL & RESET FILTER */}
+              <View style={styles.subActionBar}>
               <View style={styles.primaryActionRow}>
                 <TouchableOpacity
                   activeOpacity={0.85}
@@ -1744,67 +1767,58 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
             })
           )}
         </View>
-      </ScrollView>
-    </>
+      </View>
+    </ScrollView>
   ) : (
     /* ── KONTEN TAB 2: JADWAL UJIAN (PTS/PAS/PAT) ── */
-    <>
-      {/* SEGMENTED SUB-TABS KATEGORI UJIAN */}
-      <View style={styles.segmentContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.segmentScroll}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[
+        styles.cleanMainScrollContent,
+        { paddingBottom: Math.max(bottomInset + 72, 94) },
+      ]}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563EB']} />
+      }
+    >
+      <View style={styles.bodyContentWrapper}>
+        {/* TAB SWITCHER IDENTIK DUAL ROLE PILL BUKU PENGHUBUNG */}
+        <View style={styles.dualRolePillContainer}>
           <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => setSelectedExamCategoryId('all')}
-            style={[
-              styles.segmentBtn,
-              selectedExamCategoryId === 'all' && { backgroundColor: '#2563EB' },
-            ]}
+            activeOpacity={0.85}
+            style={styles.dualRolePill}
+            onPress={() => setWorkspaceTab('schedule')}
           >
             <MaterialCommunityIcons
-              name="file-document-multiple-outline"
-              size={15}
-              color={selectedExamCategoryId === 'all' ? '#FFFFFF' : '#64748B'}
+              name="calendar-clock"
+              size={16}
+              color="#047857"
             />
-            <Text style={[styles.segmentBtnText, selectedExamCategoryId === 'all' && styles.segmentBtnTextActive]}>
-              Semua Ujian ({examSchedules.length})
+            <Text style={styles.dualRolePillText}>
+              KBM & Rutinitas ({schedules.length})
             </Text>
           </TouchableOpacity>
 
-          {examCategories.map((cat) => {
-            const isSel = selectedExamCategoryId === String(cat.id);
-            const count = examSchedules.filter((e) => String(e.exam_category_id) === String(cat.id)).length;
-            return (
-              <TouchableOpacity
-                key={cat.id}
-                activeOpacity={0.8}
-                onPress={() => setSelectedExamCategoryId(String(cat.id))}
-                style={[
-                  styles.segmentBtn,
-                  isSel && { backgroundColor: '#2563EB' },
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name="file-document-edit-outline"
-                  size={15}
-                  color={isSel ? '#FFFFFF' : '#64748B'}
-                />
-                <Text style={[styles.segmentBtnText, isSel && styles.segmentBtnTextActive]}>
-                  {cat.name} ({count})
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[styles.dualRolePill, styles.dualRolePillActive]}
+            onPress={() => {
+              setWorkspaceTab('exam');
+              if (examSchedules.length === 0) void fetchExamData(false);
+            }}
+          >
+            <MaterialCommunityIcons
+              name="file-document-edit-outline"
+              size={16}
+              color="#FFFFFF"
+            />
+            <Text style={[styles.dualRolePillText, styles.dualRolePillTextActive]}>
+              Jadwal Ujian ({examSchedules.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-      {/* KONTEN UTAMA SCROLLVIEW JADWAL UJIAN */}
-      <ScrollView
-        contentContainerStyle={[styles.mainScroll, { paddingBottom: bottomInset + 80 }]}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563EB']} />
-        }
-      >
         {/* ACTION BAR: TAMBAH UJIAN & RESET FILTER */}
         <View style={styles.subActionBar}>
           <View style={styles.primaryActionRow}>
@@ -2066,9 +2080,10 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
             })
           )}
         </View>
-      </ScrollView>
-    </>
+      </View>
+    </ScrollView>
   )}
+</View>
 
       {/* ── FLOATING ACTION BUTTON (FAB) DINAMIS ── */}
       <TouchableOpacity
@@ -3647,72 +3662,185 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
 }
 
 const styles = StyleSheet.create({
+  rootContainer: {
+    flex: 1,
+    backgroundColor: '#F0FDF4',
+  },
   screen: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: 'transparent',
   },
-  /* ── Header Container (Matching Data Siswa / Data Management) ── */
+  sheetContainer: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  bodyContentWrapper: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  /* ── Dual Role Pill Container (Tab Switcher Identik Buku Penghubung) ── */
+  dualRolePillContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 16,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginBottom: 12,
+    gap: 4,
+  },
+  dualRolePill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  dualRolePillActive: {
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  dualRolePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  dualRolePillTextActive: {
+    color: '#FFFFFF',
+  },
+  /* ── Background Mosque & School (Identik Halaman Utama & Data Siswa) ── */
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 480,
+    width: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
+  },
+  /* ── Header Halaman Jadwal (Clean Floating Top Bar Identik Buku Penghubung) ── */
   headerContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 6,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
+  },
+  /* ── Sub-Tabs Kategori / Hari Segmented Scroll (Identik Buku Penghubung tuSegmentContainer) ── */
+  tuSegmentContainer: {
+    marginTop: 10,
+    marginHorizontal: -16,
+  },
+  tuSegmentScroll: {
+    paddingHorizontal: 16,
+    gap: 8,
   },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 12,
   },
   backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   headerTitleWrap: {
     flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
   },
   headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 20,
+    marginBottom: 2,
+    maxWidth: '100%',
+  },
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+    marginRight: 5,
   },
   headerBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
-    color: 'rgba(255, 255, 255, 0.85)',
-    letterSpacing: 0.6,
+    color: '#047857',
+    letterSpacing: 0.5,
+    flexShrink: 1,
   },
   headerMainTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
+    color: '#064E3B',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+    marginTop: 1,
   },
   refreshButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
-    height: 42,
+    height: 44,
     marginTop: 12,
     gap: 8,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
@@ -3731,10 +3859,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1.2,
     overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
   },
   kpiBoxGradient: {
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    padding: 9,
   },
   kpiHeaderRow: {
     flexDirection: 'row',
@@ -3749,16 +3877,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   kpiVal: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '900',
   },
   kpiLbl: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     marginTop: 4,
   },
   kpiSub: {
-    fontSize: 9.5,
+    fontSize: 9,
     color: '#64748B',
     fontWeight: '600',
     marginTop: 1,
@@ -3767,7 +3895,7 @@ const styles = StyleSheet.create({
   /* ── Tab Switcher Utama TU (KBM vs Ujian) ── */
   workspaceTabBar: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderBottomWidth: 1,
@@ -3933,7 +4061,7 @@ const styles = StyleSheet.create({
 
   /* ── Segmented Sub-Tabs Bar (Identik Data Siswa) ── */
   segmentContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
     paddingVertical: 8,
@@ -3946,16 +4074,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 13,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     gap: 6,
   },
+  segmentBtnActive: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+  },
   segmentBtnText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#065F46',
   },
   segmentBtnTextActive: {
     color: '#FFFFFF',
@@ -4139,25 +4273,27 @@ const styles = StyleSheet.create({
   /* ── Mutation Card Item (Gaya Identik Data Siswa) ── */
   mutationCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     padding: 13,
     marginBottom: 12,
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
+    shadowColor: '#004D32',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
     shadowRadius: 6,
     elevation: 2,
   },
   cardTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 11,
   },
   avatarCircle: {
     width: 44,
     height: 44,
-    borderRadius: 12,
+    borderRadius: 14,
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
   },

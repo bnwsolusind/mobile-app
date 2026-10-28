@@ -36,6 +36,7 @@ interface ActiveChildState {
   setChildren: (children: Child[]) => void;
   getActiveChild: () => Child | null;
   updateChildBadge: (childId: string | number, count?: number) => void;
+  updateChildAttendance: (childId: string | number, attendanceData: any) => void;
   clear: () => void;
 }
 
@@ -52,18 +53,36 @@ export const useActiveChildStore = create<ActiveChildState>((set, get) => ({
     const state = get();
     let nextActiveId = state.activeChildId;
 
-    if (list.length > 0) {
-      const exists = list.some(
+    // Preservasi data presensi real-time yang sudah ada di memori jika list baru belum menyertakannya
+    const mergedList = list.map((newChild) => {
+      const targetId = String(newChild.id || newChild.student_id || '');
+      const oldChild = state.children.find((c) => String(c.id || c.student_id || '') === targetId);
+      if (oldChild && (oldChild.attendance_today || oldChild.presensi_hari_ini || oldChild.attendance_status)) {
+        return {
+          ...oldChild,
+          ...newChild,
+          attendance_today: newChild.attendance_today ?? oldChild.attendance_today,
+          presensi_hari_ini: newChild.presensi_hari_ini ?? oldChild.presensi_hari_ini,
+          attendance_status: newChild.attendance_status ?? oldChild.attendance_status,
+          status_kehadiran: newChild.status_kehadiran ?? oldChild.status_kehadiran,
+          is_holiday: newChild.is_holiday ?? oldChild.is_holiday,
+        };
+      }
+      return newChild;
+    });
+
+    if (mergedList.length > 0) {
+      const exists = mergedList.some(
         (c) => String(c.id || c.student_id) === String(nextActiveId)
       );
       if (!exists || !nextActiveId) {
-        nextActiveId = String(list[0].id || list[0].student_id || '');
+        nextActiveId = String(mergedList[0].id || mergedList[0].student_id || '');
       }
     } else {
       nextActiveId = null;
     }
 
-    set({ children: list, activeChildId: nextActiveId });
+    set({ children: mergedList, activeChildId: nextActiveId });
   },
   getActiveChild: () => {
     const { children, activeChildId } = get();
@@ -82,6 +101,23 @@ export const useActiveChildStore = create<ActiveChildState>((set, get) => ({
           ? { ...c, unread_notifications_count: count, unread_count: count }
           : c
       ),
+    }));
+  },
+  updateChildAttendance: (childId: string | number, attendanceData: any) => {
+    const sid = String(childId);
+    set((state) => ({
+      children: state.children.map((c) => {
+        if (String(c.id || c.student_id) === sid) {
+          return {
+            ...c,
+            attendance_today: attendanceData,
+            presensi_hari_ini: attendanceData,
+            attendance_status: typeof attendanceData === 'object' && attendanceData !== null ? (attendanceData.status_label || attendanceData.label || attendanceData.status) : attendanceData,
+            status_kehadiran: typeof attendanceData === 'object' && attendanceData !== null ? (attendanceData.status_label || attendanceData.label || attendanceData.status) : attendanceData,
+          };
+        }
+        return c;
+      }),
     }));
   },
 }));

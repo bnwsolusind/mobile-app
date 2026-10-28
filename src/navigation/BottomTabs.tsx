@@ -29,6 +29,7 @@ import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
+  isGirlStudent,
 } from '../utils/profile';
 import HomeScreen from '../screens/HomeScreen';
 import AbsensiScreen from '../screens/AbsensiScreen';
@@ -56,6 +57,7 @@ import CbtExamsScreen from '../screens/CbtExamsScreen';
 import QuranScreen from '../screens/QuranScreen';
 import DoaDzikirScreen from '../screens/DoaDzikirScreen';
 import ParentBillsScreen from '../screens/ParentBillsScreen';
+import StaffStudentBillsScreen from '../screens/StaffStudentBillsScreen';
 import StudentAttendanceReportScreen from '../screens/StudentAttendanceReportScreen';
 import GateAttendanceTerminalScreen from '../screens/GateAttendanceTerminalScreen';
 import SubstituteKbmAttendanceScreen from '../screens/SubstituteKbmAttendanceScreen';
@@ -64,11 +66,12 @@ import PrincipalDashboardScreen from '../screens/PrincipalDashboardScreen';
 import MasterSiswaScreen from '../screens/MasterSiswaScreen';
 import MutasiSiswaScreen from '../screens/MutasiSiswaScreen';
 import PantauKelasScreen from '../screens/PantauKelasScreen';
+import BantuanScreen from '../screens/BantuanScreen';
 import AccessDeniedScreen from '../components/AccessDeniedScreen';
 import { useAuthStore } from '../stores/authStore';
 import { mobileApiService } from '../services/mobileApiService';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
-import { isFoundationRole } from '../utils/roles';
+import { isFoundationRole, isTuRole, isOperatorRole, isParentRole } from '../utils/roles';
 import { canAccessScreen, canAccessBilling, ScreenKey } from '../utils/accessControl';
 
 const Tab = createBottomTabNavigator();
@@ -124,8 +127,7 @@ function ModuleHeader({
   }, [children, targetId, user]);
 
   const studentName = activeStudent?.name || activeStudent?.full_name || activeStudent?.nama_lengkap || user?.name || 'Siswa';
-  const studentGender = activeStudent?.gender || activeStudent?.jenis_kelamin || (user as any)?.gender || 'L';
-  const isGirl = studentGender === 'P' || studentGender === 'female' || studentGender === 'perempuan';
+  const isGirl = isGirlStudent(activeStudent || user);
   const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
   const avatarUrl = getProfileImageUrl(activeStudent);
 
@@ -133,9 +135,20 @@ function ModuleHeader({
     ? (activeStudent?.kelas?.nama_kelas || activeStudent?.kelas?.name)
     : (activeStudent?.class_name || activeStudent?.kelas || '-');
 
-  const studentUnit = typeof activeStudent?.education_unit === 'object'
-    ? (activeStudent?.education_unit?.name || activeStudent?.education_unit?.nama)
-    : (activeStudent?.unit_name || (user as any)?.unit_name || 'Unit Pendidikan');
+  const studentUnit =
+    activeStudent?.education_unit?.name ||
+    activeStudent?.education_unit?.nama ||
+    activeStudent?.educationUnit?.name ||
+    activeStudent?.educationUnit?.nama ||
+    activeStudent?.unit?.name ||
+    activeStudent?.unit?.nama ||
+    activeStudent?.unit_name ||
+    activeStudent?.kelas?.unit_pendidikan?.nama ||
+    activeStudent?.kelas?.unit_pendidikan?.name ||
+    activeStudent?.kelas?.unitPendidikan?.nama ||
+    activeStudent?.kelas?.unitPendidikan?.name ||
+    (user as any)?.unit_name ||
+    'Unit Pendidikan';
 
   const studentNis = activeStudent?.nisn || activeStudent?.nis || '-';
 
@@ -618,6 +631,9 @@ export default function BottomTabs() {
     try {
       const currentRoute = (navigationRef as any)?.getCurrentRoute?.();
       if (currentRoute?.name) {
+        if (currentRoute.name === 'Chat' || currentRoute.name === 'Chat Guru') {
+          useChatBadgeStore.getState().clearUnread();
+        }
         useNavigationHistoryStore.getState().pushRoute({
           name: currentRoute.name,
           params: currentRoute.params as Record<string, any> | undefined,
@@ -957,10 +973,27 @@ export default function BottomTabs() {
         {(access.parent || access.billing) && (
           <Tab.Screen
             name="Tagihan"
-            component={ParentBillsScreen}
-            options={moduleOptions('Tagihan & Pembayaran SPP', theme)}
+            component={
+              (isTuRole(user?.roles || []) || isOperatorRole(user?.roles || [])) && !isParentRole(user?.roles || [])
+                ? StaffStudentBillsScreen
+                : ParentBillsScreen
+            }
+            options={{
+              headerShown: false,
+              tabBarButton: () => null,
+              tabBarItemStyle: { display: 'none' as const },
+            }}
           />
         )}
+        <Tab.Screen
+          name="StaffStudentBills"
+          component={StaffStudentBillsScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
         <Tab.Screen
           name="KisiKisi"
           component={ExamGridsScreen}
@@ -991,12 +1024,20 @@ export default function BottomTabs() {
         <Tab.Screen
           name="Quran"
           component={QuranScreen}
-          options={moduleOptions("Al-Qur'an Al-Karim", theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="DoaDzikir"
           component={DoaDzikirScreen}
-          options={moduleOptions('Doa & Dzikir Harian', theme)}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
         />
         <Tab.Screen
           name="Notifikasi"
@@ -1125,6 +1166,15 @@ export default function BottomTabs() {
         <Tab.Screen
           name="PantauKelas"
           component={PantauKelasScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="Bantuan"
+          component={BantuanScreen}
           options={{
             headerShown: false,
             tabBarButton: () => null,

@@ -22,6 +22,8 @@ import { useAuthStore } from '../stores/authStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 import { getProfileImageUrl, DEFAULT_STUDENT_BOY_AVATAR } from '../utils/profile';
 
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
+
 let CameraViewComponent: any = null;
 let useCameraPermissionsHook: any = null;
 try {
@@ -537,26 +539,41 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
 
   return (
     <View style={s.container}>
-      {/* ── TOP HERO HEADER ── */}
-      <View style={[s.topHeader, { paddingTop: topInset + 6 }]}>
+      {/* ── Background Image & Gradient Identik Halaman Data Siswa (Layer Belakang) ── */}
+      <View style={s.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={s.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Halaman Data Siswa */}
         <LinearGradient
-          colors={['#047857', '#059669', '#10B981']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
+
+      {/* ── TOP HERO HEADER (FLOATING CLEAN DI ATAS BACKGROUND MASJID) ── */}
+      <View style={[s.topHeader, { paddingTop: topInset + 6 }]}>
         <View style={s.topHeaderRow}>
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => navigation?.goBack?.() || navigation?.navigate('Beranda')}
             style={s.headerSquircleBtn}
+            accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
           <View style={s.headerTitleCol}>
             <View style={s.roleTag}>
               <View style={s.pulseDot} />
-              <Text style={s.roleTagText}>TERMINAL GERBANG SEKOLAH</Text>
+              <Text style={s.roleTagText}>TERMINAL GERBANG TERPADU</Text>
             </View>
             <Text style={s.headerTitle} numberOfLines={1}>Absensi Gerbang</Text>
             <Text style={s.headerSubtitle} numberOfLines={1}>
@@ -566,12 +583,13 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setIsTorchOn(!isTorchOn)}
-            style={[s.headerSquircleBtn, isTorchOn && { backgroundColor: '#FDE68A' }]}
+            style={[s.headerSquircleBtn, isTorchOn && s.headerSquircleBtnActive]}
+            accessibilityLabel="Lampu Senter"
           >
             <MaterialCommunityIcons
               name={isTorchOn ? 'flashlight' : 'flashlight-off'}
               size={20}
-              color={isTorchOn ? '#B45309' : '#059669'}
+              color={isTorchOn ? '#B45309' : '#047857'}
             />
           </TouchableOpacity>
         </View>
@@ -586,7 +604,7 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
             <MaterialCommunityIcons
               name="door-open"
               size={17}
-              color={gateMode === 'in' ? '#047857' : '#FFFFFF'}
+              color={gateMode === 'in' ? '#FFFFFF' : '#047857'}
               style={{ marginRight: 6 }}
             />
             <Text style={[s.modeToggleText, gateMode === 'in' && s.modeToggleTextActiveIn]}>
@@ -602,7 +620,7 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
             <MaterialCommunityIcons
               name="door-closed"
               size={17}
-              color={gateMode === 'out' ? '#B45309' : '#FFFFFF'}
+              color={gateMode === 'out' ? '#FFFFFF' : '#B45309'}
               style={{ marginRight: 6 }}
             />
             <Text style={[s.modeToggleText, gateMode === 'out' && s.modeToggleTextActiveOut]}>
@@ -1228,78 +1246,145 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F0FDF4' },
+
+  /* ── Background Backdrop Masjid & Gradien Identik Data Siswa ── */
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 480,
+    width: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
+  },
+
+  /* ── Header Halaman (Floating Clean di atas Background Masjid) ── */
   topHeader: {
     paddingHorizontal: 16,
     paddingBottom: 14,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    overflow: 'hidden',
   },
   topHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   headerSquircleBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 2,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  headerTitleCol: { flex: 1, marginHorizontal: 10 },
-  roleTag: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-  pulseDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#34D399', marginRight: 5 },
-  roleTagText: { fontSize: 9.5, fontWeight: '800', color: '#D1FAE5', letterSpacing: 0.5 },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
-  headerSubtitle: { fontSize: 11, color: '#E6FFFA', fontWeight: '600' },
+  headerSquircleBtnActive: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  headerTitleCol: { flex: 1, marginHorizontal: 12 },
+  roleTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 20,
+    marginBottom: 4,
+  },
+  pulseDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#059669', marginRight: 5 },
+  roleTagText: { fontSize: 9.5, fontWeight: '800', color: '#047857', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 18, fontWeight: '900', color: '#064E3B', letterSpacing: -0.3 },
+  headerSubtitle: { fontSize: 11.5, color: '#047857', fontWeight: '600', marginTop: 1 },
 
+  /* ── Segmented Switch Mode Gerbang ── */
   modeToggleBox: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    borderRadius: 14,
-    padding: 3,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 4,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
   modeToggleBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 11,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
-  modeToggleBtnActiveIn: { backgroundColor: '#FFFFFF' },
-  modeToggleBtnActiveOut: { backgroundColor: '#FFFFFF' },
-  modeToggleText: { fontSize: 11.5, fontWeight: '700', color: '#FFFFFF' },
-  modeToggleTextActiveIn: { color: '#047857' },
-  modeToggleTextActiveOut: { color: '#B45309' },
+  modeToggleBtnActiveIn: {
+    backgroundColor: '#047857',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  modeToggleBtnActiveOut: {
+    backgroundColor: '#B45309',
+    shadowColor: '#B45309',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  modeToggleText: { fontSize: 12, fontWeight: '700', color: '#065F46' },
+  modeToggleTextActiveIn: { color: '#FFFFFF', fontWeight: '800' },
+  modeToggleTextActiveOut: { color: '#FFFFFF', fontWeight: '800' },
 
-  scrollContent: { padding: 14 },
+  scrollContent: { padding: 14, paddingTop: 4 },
 
   earlyNoticeBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFBEB',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#FDE68A',
-    borderRadius: 14,
-    padding: 10,
-    marginBottom: 12,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 14,
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  earlyNoticeTitle: { fontSize: 12, fontWeight: '800', color: '#B45309' },
-  earlyNoticeSub: { fontSize: 10.5, color: '#92400E', marginTop: 1 },
+  earlyNoticeTitle: { fontSize: 12.5, fontWeight: '800', color: '#B45309' },
+  earlyNoticeSub: { fontSize: 11, color: '#92400E', marginTop: 2, lineHeight: 15 },
 
   scannerCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    marginBottom: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   scannerHeaderRow: {
     flexDirection: 'row',
@@ -1435,11 +1520,16 @@ const s = StyleSheet.create({
   // Manual Attendance Section Card
   manualCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    marginBottom: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   manualHeaderRow: {
     flexDirection: 'row',
@@ -1470,19 +1560,20 @@ const s = StyleSheet.create({
   searchBoxContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    height: 40,
-    marginBottom: 10,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    height: 44,
+    paddingHorizontal: 10,
+    marginBottom: 12,
   },
   searchInput: {
     flex: 1,
     fontSize: 12,
     color: '#0F172A',
     paddingHorizontal: 8,
-    height: 40,
+    height: 44,
   },
 
   // Class Filter Dropdown
@@ -1670,10 +1761,16 @@ const s = StyleSheet.create({
 
   recentCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    marginBottom: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   recentHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   recentHeaderTitle: { fontSize: 13, fontWeight: '800', color: '#0F172A', marginLeft: 6, flex: 1 },

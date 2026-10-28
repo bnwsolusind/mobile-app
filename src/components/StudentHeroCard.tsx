@@ -13,6 +13,8 @@ import {
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
   getProfileImageUrl,
+  getStudentAvatarSource,
+  isGirlStudent,
 } from '../utils/profile';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 
@@ -68,28 +70,27 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
   const sNisn = child.nisn || child.student_nisn || '';
   const sUnit =
     child.kelas?.unit_pendidikan?.name ||
+    child.kelas?.unit_pendidikan?.nama ||
     child.kelas?.unitPendidikan?.name ||
     child.education_unit?.name ||
     child.unit_name ||
-    child.unit ||
+    (typeof child.unit === 'string' ? child.unit : (child.unit?.name || child.unit?.nama || '')) ||
     'Unit Sekolah';
   const sKelas =
-    child.kelas?.nama_kelas ||
-    child.kelas?.name ||
+    (typeof child.kelas === 'object' && child.kelas !== null
+      ? child.kelas?.nama_kelas || child.kelas?.name || child.kelas?.kode_kelas
+      : '') ||
+    (typeof child.kelas === 'string' ? child.kelas : '') ||
     child.class_name ||
     child.kelas_name ||
     'Kelas Aktif';
   const sJenjang =
-    child.kelas?.jenjang ||
-    child.education_unit?.level ||
-    child.jenjang ||
+    (typeof child.kelas?.jenjang === 'string' ? child.kelas.jenjang : '') ||
+    (typeof child.education_unit?.level === 'string' ? child.education_unit.level : '') ||
+    (typeof child.jenjang === 'string' ? child.jenjang : '') ||
     'Terpadu';
 
-  const isGirl =
-    child?.gender === 'female' ||
-    child?.jenis_kelamin === 'P' ||
-    child?.jenis_kelamin === 'female' ||
-    child?.gender === 'P';
+  const isGirl = isGirlStudent(child);
 
   const avatarUri = getProfileImageUrl(child);
   const [imageError, setImageError] = useState(false);
@@ -98,28 +99,73 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
     setImageError(false);
   }, [avatarUri]);
 
-  // Status Presensi & Warna Semantik persis HomeScreen
-  const rawPresensi =
+  // Status Presensi Dinamis & Bebas Hardcode
+  const attendanceObj = child.attendance_today || child.presensi_hari_ini || null;
+  const rawStatus = String(
     child.attendance_status ||
     child.presensi_status ||
     child.status_presensi ||
-    'Hadir';
+    attendanceObj?.status_label ||
+    attendanceObj?.label ||
+    attendanceObj?.status ||
+    ''
+  ).trim();
 
-  let presensiDotColor = '#34D399';
-  let presensiTextColor = '#DEF7EC';
-  const lowerPresensi = String(rawPresensi).toLowerCase();
-  if (lowerPresensi.includes('hadir') || lowerPresensi.includes('masuk')) {
-    presensiDotColor = '#34D399';
+  const isWeekendToday = (() => {
+    const day = new Date().getDay();
+    return day === 0 || day === 6; // 0 = Minggu, 6 = Sabtu
+  })();
+
+  const isHoliday = Boolean(
+    child.is_holiday ||
+    attendanceObj?.is_holiday ||
+    rawStatus.toLowerCase().includes('libur')
+  );
+
+  // Tentukan label presensi yang tampil
+  let displayPresensi = rawStatus;
+  if (!displayPresensi || displayPresensi === '-') {
+    if (isHoliday || isWeekendToday) {
+      displayPresensi = 'Libur';
+    } else {
+      displayPresensi = 'Belum Presensi';
+    }
+  }
+
+  // Jika teks dari backend "Libur Akhir Pekan", kita ringkas jadi "Libur" agar elegan di kotak kecil
+  if (displayPresensi.toLowerCase() === 'libur akhir pekan') {
+    displayPresensi = 'Libur';
+  }
+
+  // Alias untuk kompatibilitas Fast Refresh / Metro cache
+  const rawPresensi = displayPresensi;
+
+  // Mapping Warna Semantik Elegan & Akurat
+  let presensiDotColor = '#94A3B8'; // Default Abu-abu netral (Belum Presensi)
+  let presensiTextColor = '#E2E8F0';
+
+  const lowerPresensi = displayPresensi.toLowerCase();
+  if (lowerPresensi.includes('hadir') || lowerPresensi.includes('masuk') || lowerPresensi.includes('present')) {
+    presensiDotColor = '#34D399'; // Emerald Green (Hadir)
     presensiTextColor = '#DEF7EC';
-  } else if (lowerPresensi.includes('terlambat')) {
-    presensiDotColor = '#FBBF24';
+  } else if (lowerPresensi.includes('terlambat') || lowerPresensi.includes('late')) {
+    presensiDotColor = '#FBBF24'; // Amber (Terlambat)
     presensiTextColor = '#FEF3C7';
-  } else if (lowerPresensi.includes('sakit') || lowerPresensi.includes('izin')) {
-    presensiDotColor = '#60A5FA';
+  } else if (lowerPresensi.includes('libur') || lowerPresensi.includes('holiday')) {
+    presensiDotColor = '#F59E0B'; // Vivid Amber / Orange (Libur)
+    presensiTextColor = '#FEF3C7';
+  } else if (lowerPresensi.includes('sakit') || lowerPresensi.includes('sick')) {
+    presensiDotColor = '#38BDF8'; // Sky Blue (Sakit)
+    presensiTextColor = '#E0F2FE';
+  } else if (lowerPresensi.includes('izin') || lowerPresensi.includes('permit')) {
+    presensiDotColor = '#60A5FA'; // Soft Blue (Izin)
     presensiTextColor = '#DBEAFE';
-  } else if (lowerPresensi.includes('alpa') || lowerPresensi.includes('absen') || lowerPresensi.includes('belum')) {
-    presensiDotColor = '#F87171';
+  } else if (lowerPresensi.includes('alpa') || lowerPresensi.includes('alpha') || lowerPresensi.includes('tidak hadir') || lowerPresensi.includes('absen') || lowerPresensi.includes('absent')) {
+    presensiDotColor = '#F87171'; // Rose Red (Tidak Hadir)
     presensiTextColor = '#FEE2E2';
+  } else if (lowerPresensi.includes('belum')) {
+    presensiDotColor = '#94A3B8'; // Slate Neutral (Belum Presensi)
+    presensiTextColor = '#E2E8F0';
   }
 
   const shouldShowButtons = Boolean(showActionButtons && !hideActionButton);
@@ -257,7 +303,7 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
                 />
               ) : (
                 <Image
-                  source={isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR}
+                  source={getStudentAvatarSource(child)}
                   style={styles.childAvatarImgHero}
                   resizeMode="cover"
                 />
@@ -303,7 +349,7 @@ export const StudentHeroCard: React.FC<StudentHeroCardProps> = ({
               </View>
               <View style={styles.studentPresensiValueRow}>
                 <Text numberOfLines={1} style={[styles.studentAttrValue, { color: presensiTextColor }]}>
-                  {rawPresensi}
+                  {displayPresensi}
                 </Text>
                 <View style={[styles.presensiGreenDot, { backgroundColor: presensiDotColor }]} />
               </View>

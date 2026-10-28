@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
+  Image,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -8,11 +10,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuthStore } from '../stores/authStore';
+import { useActiveChildStore } from '../stores/activeChildStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { navigationHistory } from '../stores/navigationHistoryStore';
 import { mobileApiService } from '../services/mobileApiService';
 import AppFeedbackModal, { FeedbackType } from '../components/AppFeedbackModal';
 import {
@@ -26,6 +31,8 @@ import {
   isTuRole,
 } from '../utils/roles';
 import { canAccessScreen, canAccessBilling } from '../utils/accessControl';
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 type CategoryKey = 'all' | 'kbm' | 'ujian' | 'keagamaan' | 'info' | 'akun';
 
@@ -108,11 +115,15 @@ const CATEGORY_CONFIGS: Record<string, CategoryConfig> = {
 };
 
 export default function MoreScreen({ navigation }: any) {
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 12);
+
   const user = useAuthStore((s) => s.user);
   const roles = useAuthStore((s) => s.roles);
   const mobileConfig = useMobileConfigStore((s) => s.config);
-
   const clearSession = useAuthStore((s) => s.clearSession);
+
+  const unreadNotificationCount = useNotificationBadgeStore((s) => s.unreadNotificationCount);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<CategoryKey>('all');
@@ -125,6 +136,19 @@ export default function MoreScreen({ navigation }: any) {
     cancelText?: string;
     onConfirm?: () => void;
   } | null>(null);
+
+  const handleBack = () => {
+    const handled = navigationHistory.goBackDynamic(navigation);
+    if (!handled) {
+      if (typeof navigation?.goBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+        return;
+      }
+      if (typeof navigation?.navigate === 'function') {
+        navigation.navigate('Beranda');
+      }
+    }
+  };
 
   const handleLogout = () => {
     setFeedbackModal({
@@ -298,136 +322,131 @@ export default function MoreScreen({ navigation }: any) {
         category: 'keagamaan',
         allowedRoles: ['teacher', 'tu', 'admin'],
       });
-      list.push({
-        id: 'tahfizh_quran',
-        label: 'Tahfizh Al-Qur’an',
-        desc: 'Setoran hafalan, mutaba’ah tahfizh, dan riwayat juz santri',
-        tag: 'Tahfizh',
-        icon: 'book-marker',
-        color: '#2563EB',
-        bg: '#EFF6FF',
-        route: 'Tahfizh',
-        category: 'keagamaan',
-        allowedRoles: ['teacher', 'student', 'parent'],
-      });
-      list.push({
-        id: 'mutabaah_santri',
-        label: 'Mutaba’ah Yaumiyyah',
-        desc: 'Evaluasi sholat berjamaah, tilawah, dan ibadah harian santri',
-        tag: 'Amalan',
-        icon: 'clipboard-check',
-        color: '#D97706',
-        bg: '#FEF3C7',
-        route: 'Mutabaah',
-        category: 'keagamaan',
-        allowedRoles: ['teacher', 'student', 'parent'],
-      });
-      list.push({
-        id: 'al_quran_digital',
-        label: 'Al-Qur’an Digital',
-        desc: 'Membaca mushaf 30 juz lengkap dengan tajwid dan terjemahan',
-        tag: 'Al-Qur’an',
-        icon: 'book-open-variant',
-        color: '#059669',
-        bg: '#F0FDF4',
-        route: 'Quran',
-        category: 'keagamaan',
-      });
-      list.push({
-        id: 'doa_dzikir',
-        label: 'Doa & Dzikir Harian',
-        desc: 'Kumpulan doa harian, dzikir pagi petang, dan hadits pilihan',
-        tag: 'Doa',
-        icon: 'hands-pray',
-        color: '#F97316',
-        bg: '#FFF7ED',
-        route: 'DoaDzikir',
-        category: 'keagamaan',
-      });
     }
 
-    // --- KOMUNIKASI & INFORMASI ---
+    // Mutaba'ah Yaumiyyah
     list.push({
-      id: 'buku_hubung',
-      label: 'Buku Penghubung',
-      desc: 'Komunikasi dan pesan terarah langsung dengan wali murid santri',
-      tag: 'Chat Ortu',
+      id: 'mutabaah_ibadah',
+      label: 'Mutaba’ah Yaumiyyah',
+      desc: 'Pemantauan ibadah harian santri, sholat, dan amalan yaumiyyah',
+      tag: 'Ibadah',
+      icon: 'checkbox-marked-circle-outline',
+      color: '#059669',
+      bg: '#DCFCE7',
+      route: 'Mutabaah',
+      category: 'keagamaan',
+    });
+
+    // Tahfizh Al-Qur'an
+    list.push({
+      id: 'tahfizh_quran',
+      label: 'Setoran Tahfizh Qur’an',
+      desc: 'Pencatatan ziyadah, muraja’ah hafalan santri, serta capaian juz',
+      tag: 'Tahfizh',
       icon: 'book-open-page-variant',
-      color: '#8B5CF6',
-      bg: '#F5F3FF',
-      route: 'Chat',
-      category: 'info',
-      allowedRoles: ['teacher', 'parent'],
+      color: '#0D9488',
+      bg: '#E6FFFA',
+      route: 'Tahfizh',
+      category: 'keagamaan',
     });
+
+    // Mushaf Al-Qur'an Digital
     list.push({
-      id: 'kalender_akademik',
-      label: 'Kalender Akademik',
-      desc: 'Agenda tahun ajaran, jadwal libur, dan jadwal kegiatan sekolah',
-      tag: 'Agenda',
-      icon: 'calendar-month',
-      color: '#0284C7',
-      bg: '#F0F9FF',
-      route: 'Kalender',
-      category: 'info',
+      id: 'mushaf_quran',
+      label: 'Al-Qur’an Al-Karim',
+      desc: 'Mushaf digital 30 juz lengkap dengan terjemahan dan audio',
+      tag: 'Al-Qur’an',
+      icon: 'book-open-variant',
+      color: '#059669',
+      bg: '#ECFDF5',
+      route: 'Quran',
+      category: 'keagamaan',
     });
+
+    // Kumpulan Doa & Dzikir
     list.push({
-      id: 'informasi_warta',
+      id: 'doa_dzikir',
+      label: 'Doa & Dzikir Harian',
+      desc: 'Dzikir pagi petang, doa harian, dan tuntunan ibadah sunnah',
+      tag: 'Doa',
+      icon: 'hands-pray',
+      color: '#D97706',
+      bg: '#FEF3C7',
+      route: 'DoaDzikir',
+      category: 'keagamaan',
+    });
+
+    // --- KOMUNIKASI & WARTA SEKOLAH ---
+    list.push({
+      id: 'informasi_sekolah',
       label: 'Warta & Pengumuman',
-      desc: 'Berita resmi sekolah, pengumuman penting, dan surat edaran',
-      tag: 'Pengumuman',
-      icon: 'bullhorn',
+      desc: 'Pengumuman resmi yayasan, artikel kegiatan, dan berita sekolah',
+      tag: 'Warta',
+      icon: 'bullhorn-outline',
       color: '#E11D48',
       bg: '#FFF1F2',
       route: 'Informasi',
       category: 'info',
     });
 
-    // --- DATA MASTER (Khusus Admin / Pimpinan / Yayasan / Tata Usaha) ---
-    if (canData || isTu) {
+    list.push({
+      id: 'kalender_akademik',
+      label: 'Kalender Pendidikan',
+      desc: 'Agenda akademik tahunan, libur sekolah, dan jadwal ujian terpadu',
+      tag: 'Agenda',
+      icon: 'calendar-month-outline',
+      color: '#2563EB',
+      bg: '#EFF6FF',
+      route: 'Kalender',
+      category: 'info',
+    });
+
+    // Pusat Bantuan & FAQ
+    list.push({
+      id: 'pusat_bantuan_faq',
+      label: 'Pusat Bantuan & Panduan FAQ',
+      desc: 'Pertanyaan umum, solusi kendala akun, panduan aplikasi & kontak admin',
+      tag: 'Panduan FAQ',
+      icon: 'frequently-asked-questions',
+      color: '#059669',
+      bg: '#DCFCE7',
+      route: 'Bantuan',
+      category: 'info',
+    });
+
+    // Data Master Terpadu (Akses Pimpinan, TU, Admin)
+    if (canData || isLeader || isTu) {
       list.push({
         id: 'data_master',
-        label: 'Data Master Terpadu',
-        desc: 'Kelola data guru, siswa, rombel, dan unit sekolah',
-        tag: 'Pusat Data',
-        icon: 'database-outline',
-        color: '#059669',
-        bg: '#E6F4EA',
-        route: 'Data',
-        category: 'akun',
-        allowedRoles: ['admin', 'tu', 'staff'],
-      });
-      list.push({
-        id: 'kelola_alumni',
-        label: 'Kelola Alumni & Mutasi',
-        desc: 'Penelusuran kelulusan siswa, mutasi masuk/keluar, dan tracer study',
-        tag: 'Alumni',
-        icon: 'account-switch',
+        label: 'Data Master Pendidikan',
+        desc: 'Database rombel, data santri, identitas pegawai, dan statistik sekolah',
+        tag: 'Master Data',
+        icon: 'database-cog-outline',
         color: '#7C3AED',
         bg: '#F5F3FF',
-        route: 'MutasiSiswa',
-        params: { tab: 'alumni' },
-        category: 'akun',
-        allowedRoles: ['admin', 'tu', 'staff'],
+        route: 'Data',
+        category: 'info',
+        allowedRoles: ['admin', 'tu'],
       });
     }
 
-    // --- PORTAL ORANG TUA (Hanya jika akun memang wali murid / bukan guru murni) ---
-    if (canParent && isParent && !isTeacher && !isTu) {
+    // Portal Orang Tua Wali
+    if (canParent && isParent) {
       list.push({
-        id: 'portal_ortu',
-        label: 'Portal Orang Tua',
-        desc: 'Layanan terpadu khusus kebutuhan wali murid santri',
-        tag: 'Wali Murid',
-        icon: 'account-group',
+        id: 'portal_wali',
+        label: 'Portal Orang Tua / Wali',
+        desc: 'Akses pemantauan ananda, laporan terpadu, dan komunikasi madrasah',
+        tag: 'Wali Santri',
+        icon: 'account-child-circle',
         color: '#059669',
-        bg: '#ECFDF5',
+        bg: '#DCFCE7',
         route: 'Orang Tua',
         category: 'akun',
         allowedRoles: ['parent'],
       });
     }
 
-    // --- TAGIHAN & KEUANGAN (Orang Tua & TU / Bendahara) ---
+    // Tagihan & Keuangan (Orang Tua & TU / Bendahara)
     if (canBilling || (canParent && isParent && !isTeacher)) {
       list.push({
         id: 'tagihan_spp',
@@ -443,7 +462,7 @@ export default function MoreScreen({ navigation }: any) {
       });
     }
 
-    // --- PORTAL SISWA (Hanya jika akun memang siswa / bukan guru) ---
+    // Portal Siswa (Hanya jika akun siswa murni)
     if (canStudent && isStudent && !isTeacher && !isTu) {
       list.push({
         id: 'portal_siswa',
@@ -459,7 +478,7 @@ export default function MoreScreen({ navigation }: any) {
       });
     }
 
-    // --- PENGATURAN & AKUN ---
+    // Profil & Pengaturan Akun
     list.push({
       id: 'profil_akun',
       label: 'Profil & Pengaturan Akun',
@@ -471,6 +490,8 @@ export default function MoreScreen({ navigation }: any) {
       route: 'Profil',
       category: 'akun',
     });
+
+    // Keluar Akun
     list.push({
       id: 'keluar_akun',
       label: 'Keluar dari Akun (Logout)',
@@ -501,7 +522,7 @@ export default function MoreScreen({ navigation }: any) {
   // STRICT FILTERING: Sembunyikan menu yang bukan role akses pengguna saat login
   const filteredServices = useMemo(() => {
     return allServices.filter((item) => {
-      // 1. Jika pengguna adalah Guru murni (bukan TU), sembunyikan menu khusus orang tua dan siswa
+      // 1. Jika guru murni (bukan TU), sembunyikan menu khusus orang tua dan siswa
       if (isTeacher && !isTu) {
         if (item.allowedRoles?.includes('parent') && !item.allowedRoles?.includes('teacher')) {
           return false;
@@ -517,17 +538,39 @@ export default function MoreScreen({ navigation }: any) {
         }
       }
 
-      // 2. Jika bukan admin/yayasan/TU, jangan tampilkan data master
+      // 2. Jika siswa murni: Hapus menu yang sudah ada di menu utama siswa agar tidak redundan
+      if (isStudent && !isTeacher && !isParent && !isTu) {
+        const studentPrimaryMenuIds = [
+          'portal_siswa',
+          'jadwal_kbm',
+          'bahan_ajar',
+          'tugas_lms',
+          'presensi_kbm',
+          'guru_workspace',
+          'input_nilai',
+          'bank_soal',
+          'kisi_kisi',
+          'absensi_kbm',
+        ];
+        if (studentPrimaryMenuIds.includes(item.id)) {
+          return false;
+        }
+        if (item.route === 'Orang Tua' || item.route === 'Siswa' || item.route === 'Tagihan' || item.route === 'Data') {
+          return false;
+        }
+      }
+
+      // 3. Jika bukan admin/yayasan/TU, jangan tampilkan data master
       if (!isLeader && !canData && !isTu && item.route === 'Data') {
         return false;
       }
 
-      // 3. Filter berdasarkan kategori terpilih
+      // 4. Filter berdasarkan kategori terpilih
       if (selectedCategory !== 'all' && item.category !== selectedCategory) {
         return false;
       }
 
-      // 4. Filter berdasarkan pencarian nama, deskripsi, atau tag
+      // 5. Filter berdasarkan pencarian nama, deskripsi, atau tag
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const matchesLabel = item.label.toLowerCase().includes(query);
@@ -538,7 +581,7 @@ export default function MoreScreen({ navigation }: any) {
 
       return true;
     });
-  }, [allServices, isTeacher, isLeader, isTu, canData, canBilling, selectedCategory, searchQuery]);
+  }, [allServices, isTeacher, isParent, isStudent, isLeader, isTu, canData, canBilling, selectedCategory, searchQuery]);
 
   // Kelompokkan menu ke dalam kategori
   const groupedCategories = useMemo(() => {
@@ -558,8 +601,36 @@ export default function MoreScreen({ navigation }: any) {
       return;
     }
     try {
-      if (service.params) {
-        navigation.navigate(service.route, service.params);
+      const activeChildId = useActiveChildStore.getState().activeChildId;
+      const isGeneral =
+        service.route === 'Quran' ||
+        service.route === 'DoaDzikir' ||
+        service.route === 'Profil' ||
+        service.route === 'Informasi' ||
+        service.route === 'Kalender' ||
+        service.route === 'Bantuan' ||
+        service.route === 'Data';
+
+      let finalParams = service.params ? { ...service.params } : undefined;
+      if (isParent && activeChildId && !isGeneral) {
+        finalParams = {
+          ...finalParams,
+          child_id: String(activeChildId),
+          student_id: String(activeChildId),
+        };
+      } else if (isStudent && !isGeneral) {
+        const studentId = (user as any)?.student?.id || (user as any)?.student_id || user?.id;
+        if (studentId) {
+          finalParams = {
+            ...finalParams,
+            child_id: String(studentId),
+            student_id: String(studentId),
+          };
+        }
+      }
+
+      if (finalParams) {
+        navigation.navigate(service.route, finalParams);
       } else {
         navigation.navigate(service.route);
       }
@@ -578,233 +649,280 @@ export default function MoreScreen({ navigation }: any) {
   ];
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#044E36" />
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <View style={styles.rootContainer}>
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
-        {/* FULL BLEED LUSH EMERALD HERO HEADER */}
-        <View style={styles.heroContainer}>
-          <LinearGradient
-            colors={['#022C22', '#064E3B', '#047857', '#059669', '#10B981']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={styles.decorCircle1} />
-          <View style={styles.decorCircle2} />
-          <View style={styles.decorCircle3} />
+      {/* ── BACKGROUND ILUSTRASI SEKOLAH IDENTIK HALAMAN MUTABA’AH ── */}
+      <View style={styles.topFoliageWrapper} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
 
-          {/* Top Badges */}
-          <View style={styles.roleBadgeRow}>
-            <View style={styles.roleTagPill}>
-              <MaterialCommunityIcons name="shield-check" size={13} color="#059669" style={{ marginRight: 5 }} />
-              <Text style={styles.roleTagText}>{roleLabel(roles).toUpperCase()}</Text>
-            </View>
-            <View style={styles.totalPill}>
-              <View style={styles.activeDotPulse} />
-              <Text style={styles.totalPillText}>{filteredServices.length} Modul Tersedia</Text>
-            </View>
-          </View>
+      {/* ── TOP HEADER IDENTIK HALAMAN MUTABA’AH ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
 
-          <Text style={styles.heroTitle}>Layanan Lainnya</Text>
-          <Text style={styles.heroSubtitle}>
-            {isTeacher
-              ? 'Pusat navigasi modul KBM, asesmen, tahfizh, dan administrasi resmi pendidik.'
-              : 'Daftar modul operasional terpadu yang dapat diakses sesuai peran akun Anda.'}
-          </Text>
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Layanan & Modul Lainnya
+        </Text>
 
-          {/* KPI METRICS ROW */}
-          <View style={styles.kpiRow}>
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiValue}>{groupedCategories.length}</Text>
-              <Text style={styles.kpiLabel}>Kategori</Text>
-            </View>
-            <View style={styles.kpiDivider} />
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiValue}>{filteredServices.length}</Text>
-              <Text style={styles.kpiLabel}>Menu Aktif</Text>
-            </View>
-            <View style={styles.kpiDivider} />
-            <View style={styles.kpiItem}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <MaterialCommunityIcons name="check-decagram" size={14} color="#34D399" />
-                <Text style={styles.kpiValue}>Resmi</Text>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* ── BODY SCROLL CONTAINER ── */}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* 1. HERO GROUP CARD IDENTIK TAHFIZH GROUP CARD MUTABA'AH */}
+        <View style={styles.heroSectionWrap}>
+          <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald]}>
+            {/* Header Box di dalam Group Card */}
+            <View style={[styles.tahfizhGroupCardHeaderRow, styles.tahfizhGroupCardHeaderRowEmerald]}>
+              <View style={styles.tahfizhGroupCardHeaderLeft}>
+                <View style={[styles.tahfizhGroupHeaderIconBox, styles.tahfizhGroupHeaderIconBoxEmerald]}>
+                  <MaterialCommunityIcons name="apps-box" size={16} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={[styles.tahfizhGroupCardTitle, { color: '#064E3B' }]}>
+                    Pusat Layanan & Modul Terpadu
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.tahfizhGroupCardSub, { color: '#059669' }]}>
+                    Sistem Manajemen Sekolah Terpadu
+                  </Text>
+                </View>
               </View>
-              <Text style={styles.kpiLabel}>Akses Guru</Text>
-            </View>
-          </View>
 
-          {/* SEARCH INPUT */}
-          <View style={styles.searchBox}>
-            <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Cari modul KBM, ujian, tahfizh, jadwal..."
-              placeholderTextColor="#94A3B8"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={styles.searchClearBtn}
-              >
-                <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-              </TouchableOpacity>
-            )}
+              <View style={[styles.tahfizhGroupActionBadge, styles.tahfizhGroupActionBadgeEmerald]}>
+                <View style={styles.activeDotPulse} />
+                <Text style={[styles.tahfizhGroupActionBadgeText, { color: '#047857' }]}>
+                  {roleLabel(roles).toUpperCase()}
+                </Text>
+              </View>
+            </View>
+
+            {/* Inner Content: Subtitle, KPI Stats, dan Search Box */}
+            <View style={styles.heroCardBody}>
+              <Text style={styles.heroCardSubtitle}>
+                {isTeacher
+                  ? 'Pusat navigasi modul KBM, asesmen CBT, setoran tahfizh, dan administrasi resmi pendidik.'
+                  : 'Daftar modul operasional terpadu yang dapat diakses langsung sesuai dengan peran akun Anda.'}
+              </Text>
+
+              {/* KPI STATS ROW 3 KOLOM */}
+              <View style={styles.kpiRow}>
+                <View style={styles.kpiItem}>
+                  <Text style={styles.kpiValue}>{groupedCategories.length}</Text>
+                  <Text style={styles.kpiLabel}>Kategori</Text>
+                </View>
+                <View style={styles.kpiDivider} />
+                <View style={styles.kpiItem}>
+                  <Text style={styles.kpiValue}>{filteredServices.length}</Text>
+                  <Text style={styles.kpiLabel}>Modul Aktif</Text>
+                </View>
+                <View style={styles.kpiDivider} />
+                <View style={styles.kpiItem}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <MaterialCommunityIcons name="check-decagram" size={13} color="#059669" />
+                    <Text style={styles.kpiValue}>Resmi</Text>
+                  </View>
+                  <Text style={styles.kpiLabel}>Akses Aktif</Text>
+                </View>
+              </View>
+
+              {/* SEARCH INPUT */}
+              <View style={styles.searchBox}>
+                <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Cari modul KBM, ujian, tahfizh, jadwal, FAQ..."
+                  placeholderTextColor="#94A3B8"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setSearchQuery('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.searchClearBtn}
+                  >
+                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
           </View>
         </View>
 
-        {/* BODY CONTAINER */}
-        <View style={styles.bodyContainer}>
+        {/* 2. CATEGORY FILTER CHIPS */}
+        <View style={styles.filterBarContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+            {filterTabs.map((tab) => {
+              const isSelected = selectedCategory === tab.id;
+              return (
+                <TouchableOpacity
+                  key={tab.id}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedCategory(tab.id)}
+                  style={[styles.filterChip, isSelected && styles.filterChipActive]}
+                >
+                  <MaterialCommunityIcons
+                    name={tab.icon}
+                    size={14}
+                    color={isSelected ? '#FFFFFF' : '#059669'}
+                    style={{ marginRight: 5 }}
+                  />
+                  <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
+                    {tab.label}
+                  </Text>
+                  {isSelected && (
+                    <View style={styles.filterCheckDot}>
+                      <MaterialCommunityIcons name="check" size={9} color="#059669" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
 
-          {/* INTERACTIVE CATEGORY FILTER CHIPS */}
-          <View style={styles.filterBarContainer}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-              {filterTabs.map((tab) => {
-                const isSelected = selectedCategory === tab.id;
+        {/* 3. CATEGORIZED SERVICE CARDS */}
+        {groupedCategories.map((cat) => (
+          <View key={cat.key} style={[styles.categoryCardWrapper, { borderColor: cat.borderColor }]}>
+            {/* Category Top Banner */}
+            <View style={[styles.categoryHeaderRow, { backgroundColor: cat.accentBg }]}>
+              <View style={[styles.categoryIconSquare, { backgroundColor: cat.primaryColor }]}>
+                <MaterialCommunityIcons name={cat.icon} size={17} color="#FFFFFF" />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.categoryHeaderTitle, { color: cat.primaryColor }]}>{cat.title}</Text>
+                  <View style={[styles.categoryPillCount, { backgroundColor: '#FFFFFF', borderColor: cat.borderColor }]}>
+                    <Text style={[styles.categoryPillCountText, { color: cat.primaryColor }]}>{cat.items.length}</Text>
+                  </View>
+                </View>
+                <Text style={styles.categoryHeaderDesc} numberOfLines={1}>{cat.subtitle}</Text>
+              </View>
+            </View>
+
+            {/* Items List */}
+            <View style={styles.itemsListContainer}>
+              {cat.items.map((item, idx) => {
+                const isLast = idx === cat.items.length - 1;
                 return (
                   <TouchableOpacity
-                    key={tab.id}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedCategory(tab.id)}
-                    style={[styles.filterChip, isSelected && styles.filterChipActive]}
+                    key={item.id}
+                    activeOpacity={0.78}
+                    style={[styles.serviceRowItem, isLast && styles.serviceRowItemLast]}
+                    onPress={() => handleNavigate(item)}
                   >
-                    <MaterialCommunityIcons
-                      name={tab.icon}
-                      size={14}
-                      color={isSelected ? '#FFFFFF' : '#059669'}
-                      style={{ marginRight: 5 }}
-                    />
-                    <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
-                      {tab.label}
-                    </Text>
-                    {isSelected && (
-                      <View style={styles.filterCheckDot}>
-                        <MaterialCommunityIcons name="check" size={9} color="#059669" />
+                    {/* Squircle 3D Icon Badge */}
+                    <View style={[styles.iconSquircle, { backgroundColor: item.bg }]}>
+                      <MaterialCommunityIcons name={item.icon} size={22} color={item.color} />
+                    </View>
+
+                    {/* Text Description */}
+                    <View style={styles.textCol}>
+                      <View style={styles.titleRow}>
+                        <Text style={styles.serviceTitle} numberOfLines={1}>
+                          {item.label}
+                        </Text>
+                        <View style={[styles.tagPill, { backgroundColor: item.bg }]}>
+                          <Text style={[styles.tagPillText, { color: item.color }]}>{item.tag}</Text>
+                        </View>
                       </View>
-                    )}
+                      <Text style={styles.serviceDesc} numberOfLines={2}>
+                        {item.desc}
+                      </Text>
+                    </View>
+
+                    {/* Squircle Arrow Chevron */}
+                    <View style={[styles.arrowSquircle, { borderColor: cat.borderColor }]}>
+                      <MaterialCommunityIcons name="chevron-right" size={18} color={cat.primaryColor} />
+                    </View>
                   </TouchableOpacity>
                 );
               })}
-            </ScrollView>
+            </View>
           </View>
+        ))}
 
-          {/* CATEGORIZED SECTIONS */}
-          {groupedCategories.map((cat) => (
-            <View key={cat.key} style={[styles.categoryCardWrapper, { borderColor: cat.borderColor }]}>
-              {/* Category Top Banner */}
-              <View style={[styles.categoryHeaderRow, { backgroundColor: cat.accentBg }]}>
-                <View style={[styles.categoryIconSquare, { backgroundColor: cat.primaryColor }]}>
-                  <MaterialCommunityIcons name={cat.icon} size={18} color="#FFFFFF" />
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={[styles.categoryHeaderTitle, { color: cat.primaryColor }]}>{cat.title}</Text>
-                    <View style={[styles.categoryPillCount, { backgroundColor: '#FFFFFF', borderColor: cat.borderColor }]}>
-                      <Text style={[styles.categoryPillCountText, { color: cat.primaryColor }]}>{cat.items.length}</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.categoryHeaderDesc} numberOfLines={1}>{cat.subtitle}</Text>
-                </View>
-              </View>
-
-              {/* Items List */}
-              <View style={styles.itemsListContainer}>
-                {cat.items.map((item, idx) => {
-                  const isLast = idx === cat.items.length - 1;
-                  return (
-                    <TouchableOpacity
-                      key={item.id}
-                      activeOpacity={0.78}
-                      style={[styles.serviceRowItem, isLast && styles.serviceRowItemLast]}
-                      onPress={() => handleNavigate(item)}
-                    >
-                      {/* Squircle 3D Icon Badge */}
-                      <View style={[styles.iconSquircle, { backgroundColor: item.bg }]}>
-                        <MaterialCommunityIcons name={item.icon} size={22} color={item.color} />
-                      </View>
-
-                      {/* Text Description */}
-                      <View style={styles.textCol}>
-                        <View style={styles.titleRow}>
-                          <Text style={styles.serviceTitle} numberOfLines={1}>
-                            {item.label}
-                          </Text>
-                          <View style={[styles.tagPill, { backgroundColor: item.bg }]}>
-                            <Text style={[styles.tagPillText, { color: item.color }]}>{item.tag}</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.serviceDesc} numberOfLines={2}>
-                          {item.desc}
-                        </Text>
-                      </View>
-
-                      {/* Squircle Arrow Chevron */}
-                      <View style={[styles.arrowSquircle, { borderColor: cat.borderColor }]}>
-                        <MaterialCommunityIcons name="chevron-right" size={18} color={cat.primaryColor} />
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+        {/* 4. EMPTY STATE */}
+        {filteredServices.length === 0 && (
+          <View style={styles.emptyStateWrap}>
+            <View style={styles.emptyStateIconCircle}>
+              <MaterialCommunityIcons name="text-search" size={36} color="#94A3B8" />
             </View>
-          ))}
-
-          {/* EMPTY STATE */}
-          {filteredServices.length === 0 && (
-            <View style={styles.emptyStateWrap}>
-              <View style={styles.emptyStateIconCircle}>
-                <MaterialCommunityIcons name="text-search" size={38} color="#94A3B8" />
-              </View>
-              <Text style={styles.emptyStateTitle}>Layanan Tidak Ditemukan</Text>
-              <Text style={styles.emptyStateDesc}>
-                Tidak ada modul yang cocok dengan kata kunci &quot;{searchQuery}&quot; atau filter kategori yang dipilih.
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setSearchQuery('');
-                  setSelectedCategory('all');
-                }}
-                style={styles.emptyResetBtn}
-              >
-                <MaterialCommunityIcons name="refresh" size={16} color="#059669" />
-                <Text style={styles.emptyResetBtnText}>Reset Filter & Pencarian</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* ALWAYS VISIBLE LOGOUT CARD BUTTON */}
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={handleLogout}
-            style={styles.moreLogoutBtn}
-          >
-            <View style={styles.moreLogoutIconSquare}>
-              <MaterialCommunityIcons name="logout-variant" size={20} color="#DC2626" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.moreLogoutTitle}>Keluar dari Akun (Logout)</Text>
-              <Text style={styles.moreLogoutSub}>Akhiri sesi login perangkat ini secara aman</Text>
-            </View>
-            <View style={styles.moreLogoutArrowSquare}>
-              <MaterialCommunityIcons name="chevron-right" size={18} color="#DC2626" />
-            </View>
-          </TouchableOpacity>
-
-          {/* FOOTER NOTE */}
-          <View style={styles.footerWrap}>
-            <View style={styles.footerShieldIcon}>
-              <MaterialCommunityIcons name="shield-check-outline" size={16} color="#059669" />
-            </View>
-            <Text style={styles.footerNote}>
-              Sistem Manajemen Sekolah Terpadu • SIMSIT v2.6.4 Modern
+            <Text style={styles.emptyStateTitle}>Layanan Tidak Ditemukan</Text>
+            <Text style={styles.emptyStateDesc}>
+              Tidak ada modul yang cocok dengan kata kunci &quot;{searchQuery}&quot; atau filter kategori yang dipilih.
             </Text>
+            <TouchableOpacity
+              onPress={() => {
+                setSearchQuery('');
+                setSelectedCategory('all');
+              }}
+              style={styles.emptyResetBtn}
+            >
+              <MaterialCommunityIcons name="refresh" size={16} color="#059669" />
+              <Text style={styles.emptyResetBtnText}>Reset Filter & Pencarian</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        )}
 
+        {/* 5. ALWAYS VISIBLE LOGOUT CARD BUTTON */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleLogout}
+          style={styles.moreLogoutBtn}
+        >
+          <View style={styles.moreLogoutIconSquare}>
+            <MaterialCommunityIcons name="logout-variant" size={20} color="#DC2626" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.moreLogoutTitle}>Keluar dari Akun (Logout)</Text>
+            <Text style={styles.moreLogoutSub}>Akhiri sesi login perangkat ini secara aman</Text>
+          </View>
+          <View style={styles.moreLogoutArrowSquare}>
+            <MaterialCommunityIcons name="chevron-right" size={18} color="#DC2626" />
+          </View>
+        </TouchableOpacity>
+
+        {/* 6. FOOTER NOTE */}
+        <View style={styles.footerWrap}>
+          <View style={styles.footerShieldIcon}>
+            <MaterialCommunityIcons name="shield-check-outline" size={16} color="#059669" />
+          </View>
+          <Text style={styles.footerNote}>
+            Sistem Manajemen Sekolah Terpadu • SIMSIT v2.6.4 Modern
+          </Text>
+        </View>
       </ScrollView>
 
       {/* Confirmation Feedback Modal */}
@@ -820,158 +938,205 @@ export default function MoreScreen({ navigation }: any) {
           onClose={() => setFeedbackModal(null)}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  rootContainer: {
     flex: 1,
-    backgroundColor: '#044E36',
+    backgroundColor: '#ECFDF5',
   },
-  screen: {
-    flex: 1,
-    backgroundColor: '#044E36',
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 380,
+    overflow: 'hidden',
   },
-  content: {
-    paddingBottom: 110,
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.88,
   },
 
-  // HERO FULL CONTAINER
-  heroContainer: {
-    position: 'relative',
-    overflow: 'hidden',
-    paddingTop: 22,
-    paddingBottom: 26,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 36,
-    borderBottomRightRadius: 36,
-    shadowColor: '#064E3B',
-    shadowOpacity: 0.38,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 9,
-  },
-  decorCircle1: {
-    position: 'absolute',
-    top: -60,
-    right: -50,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  decorCircle2: {
-    position: 'absolute',
-    bottom: -40,
-    left: -40,
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  decorCircle3: {
-    position: 'absolute',
-    top: 30,
-    left: -20,
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  roleBadgeRow: {
+  // CLEAN TOP HEADER IDENTIK HALAMAN MUTABA’AH
+  cleanTopHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    zIndex: 10,
   },
-  roleTagPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  cleanHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 11,
-    paddingVertical: 4,
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#004D32',
+    shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
-  roleTagText: {
-    fontSize: 10.5,
-    fontWeight: '900',
-    color: '#064E3B',
-    letterSpacing: 0.3,
+  cleanHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 16.5,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.3,
+    marginHorizontal: 8,
   },
-  totalPill: {
+  heroBellDot: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+
+  scrollContent: {
+    paddingBottom: 110,
+    paddingTop: 4,
+  },
+
+  // 1. HERO GROUP CARD IDENTIK TAHFIZH GROUP CARD
+  heroSectionWrap: {
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  tahfizhGroupCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  tahfizhGroupCardEmerald: {
+    borderColor: '#A7F3D0',
+  },
+  tahfizhGroupCardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 16,
-    paddingHorizontal: 11,
-    paddingVertical: 4,
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#F0FDF4',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D1FAE5',
+  },
+  tahfizhGroupCardHeaderRowEmerald: {
+    backgroundColor: '#F0FDF4',
+  },
+  tahfizhGroupCardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    flex: 1,
+  },
+  tahfizhGroupHeaderIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tahfizhGroupHeaderIconBoxEmerald: {
+    backgroundColor: '#059669',
+  },
+  tahfizhGroupCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  tahfizhGroupCardSub: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  tahfizhGroupActionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    gap: 5,
+  },
+  tahfizhGroupActionBadgeEmerald: {
+    backgroundColor: '#DCFCE7',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
-    gap: 6,
+    borderColor: '#86EFAC',
+  },
+  tahfizhGroupActionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
   activeDotPulse: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#34D399',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
   },
-  totalPillText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#FFFFFF',
+
+  heroCardBody: {
+    padding: 14,
   },
-  heroTitle: {
-    fontSize: 23,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -0.4,
-    marginBottom: 4,
-  },
-  heroSubtitle: {
-    fontSize: 12,
-    color: '#D1FAE5',
-    lineHeight: 18,
+  heroCardSubtitle: {
+    fontSize: 11.5,
+    color: '#475569',
+    lineHeight: 17,
     fontWeight: '500',
-    marginBottom: 16,
+    marginBottom: 12,
   },
 
   // KPI STATS ROW
   kpiRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(2, 44, 34, 0.52)',
-    borderRadius: 18,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
-    marginBottom: 14,
+    borderColor: '#BBF7D0',
+    marginBottom: 12,
   },
   kpiItem: {
     flex: 1,
     alignItems: 'center',
   },
   kpiValue: {
-    fontSize: 14.5,
+    fontSize: 13.5,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
     letterSpacing: -0.2,
   },
   kpiLabel: {
     fontSize: 9.5,
-    color: '#A7F3D0',
+    color: '#059669',
     fontWeight: '700',
     marginTop: 2,
   },
   kpiDivider: {
     width: 1,
-    height: 24,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    height: 22,
+    backgroundColor: '#A7F3D0',
     marginHorizontal: 4,
   },
 
@@ -979,20 +1144,17 @@ const styles = StyleSheet.create({
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     gap: 8,
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#0F172A',
     padding: 0,
@@ -1001,21 +1163,14 @@ const styles = StyleSheet.create({
     padding: 2,
   },
 
-  // BODY CONTAINER
-  bodyContainer: {
-    backgroundColor: '#F0FDF4',
-    paddingTop: 16,
-    paddingHorizontal: 16,
-    minHeight: 500,
-  },
-
   // FILTER BAR
   filterBarContainer: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   filterScroll: {
     flexDirection: 'row',
     gap: 8,
+    paddingHorizontal: 16,
     paddingVertical: 2,
   },
   filterChip: {
@@ -1023,10 +1178,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    paddingHorizontal: 13,
-    paddingVertical: 7.5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderWidth: 1.5,
-    borderColor: '#D1FAE5',
+    borderColor: '#A7F3D0',
     shadowColor: '#059669',
     shadowOpacity: 0.06,
     shadowRadius: 4,
@@ -1041,7 +1196,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   filterChipText: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '700',
     color: '#065F46',
   },
@@ -1061,29 +1216,30 @@ const styles = StyleSheet.create({
   // CATEGORY CARDS
   categoryCardWrapper: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    borderRadius: 22,
+    marginHorizontal: 16,
+    marginBottom: 14,
     borderWidth: 1.5,
-    marginBottom: 16,
     overflow: 'hidden',
     shadowColor: '#064E3B',
     shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
   categoryHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 11,
-    gap: 10,
+    paddingVertical: 10,
+    gap: 9,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.06)',
   },
   categoryIconSquare: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
@@ -1092,22 +1248,22 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   categoryHeaderTitle: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '900',
     letterSpacing: -0.2,
   },
   categoryPillCount: {
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 1,
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
   },
   categoryPillCountText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   categoryHeaderDesc: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#64748B',
     fontWeight: '500',
     marginTop: 1,
@@ -1116,28 +1272,28 @@ const styles = StyleSheet.create({
   // ITEMS LIST
   itemsListContainer: {
     paddingHorizontal: 14,
-    paddingVertical: 4,
+    paddingVertical: 2,
   },
   serviceRowItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 11,
+    paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    gap: 12,
+    borderBottomColor: '#F0FDF4',
+    gap: 10,
   },
   serviceRowItemLast: {
     borderBottomWidth: 0,
   },
   iconSquircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 15,
+    width: 40,
+    height: 40,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
     elevation: 1,
   },
   textCol: {
@@ -1150,7 +1306,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   serviceTitle: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
     letterSpacing: -0.2,
@@ -1162,19 +1318,19 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   tagPillText: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: '800',
   },
   serviceDesc: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748B',
     lineHeight: 15,
     fontWeight: '500',
   },
   arrowSquircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 9,
     backgroundColor: '#F8FAFC',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1184,36 +1340,36 @@ const styles = StyleSheet.create({
   // EMPTY STATE
   emptyStateWrap: {
     alignItems: 'center',
-    paddingVertical: 36,
+    paddingVertical: 32,
     gap: 8,
   },
   emptyStateIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
   },
   emptyStateTitle: {
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#334155',
   },
   emptyStateDesc: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#64748B',
     textAlign: 'center',
     paddingHorizontal: 24,
-    lineHeight: 18,
+    lineHeight: 17,
   },
   emptyResetBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#DCFCE7',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 7.5,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#86EFAC',
@@ -1221,7 +1377,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   emptyResetBtnText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '800',
     color: '#059669',
   },
@@ -1232,42 +1388,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
+    marginHorizontal: 16,
     borderWidth: 1.5,
     borderColor: '#FECDD3',
-    paddingVertical: 13,
+    paddingVertical: 11,
     paddingHorizontal: 14,
     gap: 12,
-    marginBottom: 16,
+    marginTop: 6,
+    marginBottom: 14,
     shadowColor: '#DC2626',
     shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
   moreLogoutIconSquare: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     backgroundColor: '#FFE4E6',
     alignItems: 'center',
     justifyContent: 'center',
   },
   moreLogoutTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#E11D48',
     letterSpacing: -0.2,
   },
   moreLogoutSub: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '500',
     color: '#94A3B8',
-    marginTop: 1.5,
+    marginTop: 1,
   },
   moreLogoutArrowSquare: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 9,
     backgroundColor: '#FFF1F2',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1281,20 +1439,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 8,
-    marginBottom: 24,
+    marginTop: 4,
+    marginBottom: 20,
   },
   footerShieldIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
   },
   footerNote: {
     textAlign: 'center',
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#059669',
     fontWeight: '700',
     letterSpacing: 0.4,

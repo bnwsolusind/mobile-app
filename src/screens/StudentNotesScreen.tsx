@@ -4,6 +4,8 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Image,
+  Linking,
   Modal,
   Platform,
   RefreshControl,
@@ -19,6 +21,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getApiErrorMessage } from '../services/api';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import {
   isParentRole,
@@ -43,15 +46,20 @@ import { StudentMenuModal } from '../components/StudentMenuModal';
 import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 import { EmptyStateCard } from '../components/EmptyStateCard';
+import {
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
+} from '../utils/profile';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const STUDENT_CARD_GAP = 12;
 const STUDENT_PEEK_WIDTH = 26;
 const studentCardWidth = SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP;
 const studentSnapInterval = studentCardWidth + STUDENT_CARD_GAP;
 const studentTrackPad = STUDENT_PEEK_WIDTH;
-const centerLoopOffset = studentSnapInterval;
 
 const CATEGORIES = ['Semua', 'Akademik', 'Perilaku', 'Kedisiplinan', 'Prestasi', 'Konseling', 'Tahfizh', 'Ibadah', 'Kesehatan'];
 
@@ -171,6 +179,7 @@ export default function StudentNotesScreen({ route }: any) {
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 16);
 
   const user = useAuthStore((state) => state.user);
+  const isTu = isTuRole(user?.roles || []);
   const isParent = isParentRole(user?.roles || []);
   const isTeacher = isTeacherRole(user?.roles || []);
   const activeChildId = useActiveChildStore((state) => state.activeChildId);
@@ -178,7 +187,7 @@ export default function StudentNotesScreen({ route }: any) {
   const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
   const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
 
-  const isStaff = isStaffRole(user?.roles || []) || isTuRole(user?.roles || []) || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
+  const isStaff = isStaffRole(user?.roles || []) || isTu || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
   const isTeacherUser = isTeacher || isStaff;
   const hasDualRole = isParent && isTeacherUser;
 
@@ -368,6 +377,32 @@ export default function StudentNotesScreen({ route }: any) {
     );
   };
 
+  const handleChatParent = (phone?: string, studentName?: string) => {
+    if (!phone) {
+      Alert.alert('Info Kontak', 'Nomor kontak WhatsApp orang tua belum terdaftar pada data santri ini.');
+      return;
+    }
+    let cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = '62' + cleanPhone.slice(1);
+    }
+    const textMsg = encodeURIComponent(
+      `Assalamu'alaikum Warahmatullahi Wabarakatuh.\n\n` +
+      `Kami dari Tata Usaha Pondok Pesantren/Sekolah Terpadu menginformasikan terkait perkembangan ananda *${studentName || 'santri'}* pada Buku Penghubung.`
+    );
+    const waUrl = `whatsapp://send?phone=${cleanPhone}&text=${textMsg}`;
+    Linking.canOpenURL(waUrl)
+      .then((supported) => {
+        if (supported) {
+          return Linking.openURL(waUrl);
+        }
+        return Linking.openURL(`https://wa.me/${cleanPhone}?text=${textMsg}`);
+      })
+      .catch(() => {
+        Alert.alert('Error', 'Tidak dapat membuka aplikasi WhatsApp.');
+      });
+  };
+
   // Modals identitas santri
   const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
   const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
@@ -398,34 +433,16 @@ export default function StudentNotesScreen({ route }: any) {
   );
 
   // ── Multi-child Looping Carousel State ──
-  const studentLoopCount = children.length;
-  const safeCenter = studentLoopCount > 0 ? ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount : 0;
+  // ── Multi-child Direct Linear Carousel State ──
+  // Real-time tracking titik dot carousel saat gesture drag/swipe berlangsung
+  const [visualDotIndex, setVisualDotIndex] = useState<number | null>(null);
+  const currentActiveDotIndex = visualDotIndex !== null ? visualDotIndex : activeChildIndex;
 
-  const loopWindow = useMemo(() => {
-    const n = studentLoopCount;
-    if (n <= 1) return { list: children, realIdx: [0] };
-    const cur = ((activeChildIndex % n) + n) % n;
-    const prev = (cur - 1 + n) % n;
-    const next = (cur + 1) % n;
-    return {
-      list: [children[prev], children[cur], children[next]],
-      realIdx: [prev, cur, next],
-    };
-  }, [children, activeChildIndex, studentLoopCount]);
-
-  const recenterLoop = useCallback(() => {
-    if (studentLoopCount > 1) {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
-    }
-  }, [studentLoopCount]);
-
-  // Posisikan ScrollView ke tengah setiap kali jumlah anak berubah
-  useEffect(() => {
-    if (studentLoopCount <= 1) return;
-    requestAnimationFrame(() => {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
-    });
-  }, [studentLoopCount]);
+  const scrollToActiveChild = useCallback((idx: number, animated = false): void => {
+    if (children.length <= 1) return;
+    const clamped = Math.max(0, Math.min(children.length - 1, idx));
+    studentScrollRef.current?.scrollTo({ x: clamped * studentSnapInterval, animated });
+  }, [children.length]);
 
   // Siswa aktif untuk sticky header
   const activeChild = useMemo(() => {
@@ -434,8 +451,8 @@ export default function StudentNotesScreen({ route }: any) {
       const found = children.find((c) => String(c.id || c.student_id) === String(selectedChildId));
       if (found) return found;
     }
-    return children[safeCenter] || children[0] || null;
-  }, [children, selectedChildId, safeCenter]);
+    return children[activeChildIndex] || children[0] || null;
+  }, [children, selectedChildId, activeChildIndex]);
 
   const headerStudent = useMemo(() => {
     return activeChild || (user as any)?.student || user || null;
@@ -445,6 +462,62 @@ export default function StudentNotesScreen({ route }: any) {
     () => resolveStudentDisplay(headerStudent, user).firstName,
     [headerStudent, user]
   );
+
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState(false);
+
+  const activeStudentGender = useMemo(() => {
+    const raw = String(headerStudent?.gender || headerStudent?.jenis_kelamin || '').toLowerCase();
+    if (raw.includes('p') || raw.includes('wanita') || raw.includes('perempuan') || raw.includes('female')) {
+      return 'female';
+    }
+    return 'male';
+  }, [headerStudent]);
+
+  const studentAvatarSource = useMemo(() => {
+    return getStudentAvatarSource(headerStudent);
+  }, [headerStudent]);
+
+  const studentFullName = useMemo(() => {
+    const raw =
+      headerStudent?.name ||
+      headerStudent?.nama_lengkap ||
+      headerStudent?.full_name ||
+      headerStudent?.student?.name;
+    return typeof raw === 'string' ? raw : 'Nama Santri';
+  }, [headerStudent]);
+
+  const studentUnit = useMemo(() => {
+    if (typeof headerStudent?.unit_name === 'string') return headerStudent.unit_name;
+    if (typeof headerStudent?.unit?.name === 'string') return headerStudent.unit.name;
+    if (typeof headerStudent?.education_unit?.name === 'string') return headerStudent.education_unit.name;
+    if (typeof headerStudent?.education_unit_name === 'string') return headerStudent.education_unit_name;
+    if (typeof headerStudent?.unit === 'string') return headerStudent.unit;
+    if (typeof headerStudent?.education_unit === 'string') return headerStudent.education_unit;
+    return 'Unit Pendidikan';
+  }, [headerStudent]);
+
+  const studentClass = useMemo(() => {
+    if (typeof headerStudent?.class_name === 'string') return headerStudent.class_name;
+    if (typeof headerStudent?.classroom?.name === 'string') return headerStudent.classroom.name;
+    if (typeof headerStudent?.kelas?.nama_kelas === 'string') return headerStudent.kelas.nama_kelas;
+    if (typeof headerStudent?.kelas?.name === 'string') return headerStudent.kelas.name;
+    if (typeof headerStudent?.class?.name === 'string') return headerStudent.class.name;
+    if (typeof headerStudent?.rombel === 'string') return headerStudent.rombel;
+    if (typeof headerStudent?.kelas === 'string') return headerStudent.kelas;
+    return 'Kelas';
+  }, [headerStudent]);
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini — Single Source of Truth selaras dengan HomeScreen
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(headerStudent);
+  }, [headerStudent]);
+
+  const selectChild = (child: any) => {
+    const cid = String(child.id || child.student_id);
+    setSelectedChildId(cid);
+    useActiveChildStore.getState().setActiveChildId(cid);
+    setShowChildSelectorModal(false);
+  };
 
   // ── Load Catatan Buku Penghubung ──
   const loadNotes = useCallback(async (childId?: string, page = 1, append = false) => {
@@ -519,42 +592,21 @@ export default function StudentNotesScreen({ route }: any) {
     }
   }, [children, loadNotes]);
 
-  const goToLoopChild = useCallback((targetRealIndex: number) => {
-    if (studentLoopCount <= 1) {
-      if (children.length === 1) {
-        setActiveChildIndex(0);
-        syncLoopChildId(0);
-      }
-      return;
-    }
-    const n = studentLoopCount;
-    const normTarget = ((targetRealIndex % n) + n) % n;
-    if (normTarget === safeCenter) return;
+  const goToLoopChild = useCallback((targetIndex: number) => {
+    if (children.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(children.length - 1, targetIndex));
+    setActiveChildIndex(clampedIndex);
+    syncLoopChildId(clampedIndex);
+    scrollToActiveChild(clampedIndex, true);
+  }, [children.length, syncLoopChildId, scrollToActiveChild]);
 
-    let delta = normTarget - safeCenter;
-    if (delta > n / 2) delta -= n;
-    if (delta < -n / 2) delta += n;
-
-    if (delta === 1) {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
-      setTimeout(() => {
-        setActiveChildIndex(normTarget);
-        syncLoopChildId(normTarget);
-        recenterLoop();
-      }, 240);
-    } else if (delta === -1) {
-      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
-      setTimeout(() => {
-        setActiveChildIndex(normTarget);
-        syncLoopChildId(normTarget);
-        recenterLoop();
-      }, 240);
-    } else {
-      setActiveChildIndex(normTarget);
-      syncLoopChildId(normTarget);
-      recenterLoop();
-    }
-  }, [studentLoopCount, safeCenter, children.length, syncLoopChildId, recenterLoop]);
+  // Posisikan scroll ke kartu yang aktif saat awal load atau lebar card berubah
+  useEffect(() => {
+    if (children.length <= 1) return;
+    requestAnimationFrame(() => {
+      scrollToActiveChild(activeChildIndex, false);
+    });
+  }, [children.length, activeChildIndex, scrollToActiveChild]);
 
   // Route params sync (hanya sekali saat parameter route baru terdeteksi)
   useEffect(() => {
@@ -779,59 +831,249 @@ export default function StudentNotesScreen({ route }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* ── 0. STICKY HEADER BERSAMA ── */}
-      {isTeacherOnly ? (
-        <TeacherStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Buku Penghubung"
-          subtitle="Catatan Santri & Respon Ortu"
-          navigation={navigation}
-          route={route}
-          user={user}
-          chips={dynamicCategories.slice(0, 6).map((cat) => ({
-            label: cat,
-            active: category === cat,
-            onPress: () => setCategory(cat),
-          }))}
-        />
+      {/* ── LATAR GAMBAR & GRADASI IDENTIK DATA SISWA & ABSENSI GERBANG ── */}
+      {isTu ? (
+        <View style={styles.bgBackdrop} pointerEvents="none">
+          <Image
+            source={PARENT_HOME_BG}
+            style={styles.bgImage}
+            resizeMode="cover"
+          />
+          <LinearGradient
+            colors={[
+              'rgba(24, 161, 101, 0.18)',
+              'rgba(24, 161, 101, 0.40)',
+              'rgba(240, 253, 244, 0.95)',
+              '#F0FDF4',
+            ]}
+            locations={[0, 0.28, 0.65, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </View>
       ) : (
-        <StudentStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Buku Penghubung"
-          navigation={navigation}
-          route={route}
-          student={headerStudent}
-          user={user}
-          childrenList={children}
-          selectedChildId={selectedChildId}
-          onSelectChild={(cid, idx) => goToLoopChild(idx)}
-          middleAction={{
-            label: 'Jadwal',
-            icon: 'calendar-clock',
-            onPress: () => openScheduleForStudent(headerStudent),
-          }}
-          onOpenIdCard={(s) => setSelectedIdCardStudent(s)}
-          onOpenQr={(s) => setSelectedQrStudent(s)}
-          onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-          onOpenMenu={(s) => setSelectedMenuStudent(s)}
-        />
+        <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+          <Image
+            source={PARENT_HOME_BG}
+            style={styles.topFoliageBgImage}
+            resizeMode="cover"
+          />
+          <LinearGradient
+            colors={['rgba(240, 253, 244, 0)', 'rgba(240, 253, 244, 0.45)', '#F0FDF4']}
+            locations={[0, 0.45, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </View>
+      )}
+
+      {/* ── TOP HEADER IDENTIK HALAMAN UTAMA / DATA SISWA ── */}
+      {isTu ? (
+        <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
+          <View style={styles.headerTopRow}>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={handleBack}
+              style={styles.backButton}
+              accessibilityLabel="Kembali"
+            >
+              <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
+            </TouchableOpacity>
+
+            <View style={styles.headerTitleWrap}>
+              <View style={styles.headerBadge}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                  TATA USAHA • BUKU PENGHUBUNG
+                </Text>
+              </View>
+              <Text style={styles.headerMainTitle} numberOfLines={1}>
+                Buku Penghubung Santri
+              </Text>
+              <Text style={styles.headerSubtitle} numberOfLines={1}>
+                Monitoring Catatan &amp; Tanda Tangan Wali
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => {
+                setRefreshing(true);
+                void refresh();
+              }}
+              style={styles.refreshButton}
+              accessibilityLabel="Muat Ulang"
+            >
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Search Bar langsung di Header identik Data Siswa */}
+          <View style={styles.searchBar}>
+            <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Cari santri, NIS, topik catatan, atau guru..."
+              placeholderTextColor="#94A3B8"
+              value={search}
+              onChangeText={setSearch}
+              returnKeyType="search"
+            />
+            {search.length > 0 && (
+              <TouchableOpacity onPress={() => setSearch('')}>
+                <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 3 KPI Cards Row Terpadu Identik Data Siswa */}
+          <View style={styles.kpiCardsRow}>
+            {/* KPI 1: Total Catatan */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setStatusFilter('all')}
+              style={[
+                styles.kpiBox,
+                { borderColor: statusFilter === 'all' ? '#047857' : '#A7F3D0' },
+              ]}
+            >
+              <LinearGradient
+                colors={statusFilter === 'all' ? ['#ECFDF5', '#D1FAE5'] : ['#FFFFFF', '#F0FDF4']}
+                style={styles.kpiBoxGradient}
+              >
+                <View style={styles.kpiHeaderRow}>
+                  <View style={[styles.kpiIconSquare, { backgroundColor: '#047857' }]}>
+                    <MaterialCommunityIcons name="notebook-outline" size={14} color="#FFFFFF" />
+                  </View>
+                  <Text style={[styles.kpiVal, { color: '#047857' }]}>{stats.total}</Text>
+                </View>
+                <Text style={[styles.kpiLbl, { color: '#047857' }]} numberOfLines={1}>Total Catatan</Text>
+                <Text style={styles.kpiSub} numberOfLines={1}>Semua santri</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* KPI 2: Disetujui Ortu */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setStatusFilter('signed')}
+              style={[
+                styles.kpiBox,
+                { borderColor: statusFilter === 'signed' ? '#0D9488' : '#99F6E4' },
+              ]}
+            >
+              <LinearGradient
+                colors={statusFilter === 'signed' ? ['#F0FDFA', '#CCFBF1'] : ['#FFFFFF', '#F0FDFA']}
+                style={styles.kpiBoxGradient}
+              >
+                <View style={styles.kpiHeaderRow}>
+                  <View style={[styles.kpiIconSquare, { backgroundColor: '#0D9488' }]}>
+                    <MaterialCommunityIcons name="check-decagram" size={14} color="#FFFFFF" />
+                  </View>
+                  <Text style={[styles.kpiVal, { color: '#0D9488' }]}>{stats.signedCount}</Text>
+                </View>
+                <Text style={[styles.kpiLbl, { color: '#0D9488' }]} numberOfLines={1}>Disetujui Ortu</Text>
+                <Text style={styles.kpiSub} numberOfLines={1}>Sudah di-TTD</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* KPI 3: Perlu Respon */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setStatusFilter('unsigned')}
+              style={[
+                styles.kpiBox,
+                { borderColor: statusFilter === 'unsigned' ? '#DC2626' : (stats.unsignedCount > 0 ? '#FECDD3' : '#FDE68A') },
+              ]}
+            >
+              <LinearGradient
+                colors={statusFilter === 'unsigned'
+                  ? ['#FEF2F2', '#FEE2E2']
+                  : stats.unsignedCount > 0
+                  ? ['#FFF5F5', '#FEF2F2']
+                  : ['#FFFFFF', '#FFFBEB']}
+                style={styles.kpiBoxGradient}
+              >
+                <View style={styles.kpiHeaderRow}>
+                  <View style={[styles.kpiIconSquare, { backgroundColor: stats.unsignedCount > 0 ? '#DC2626' : '#D97706' }]}>
+                    <MaterialCommunityIcons
+                      name={stats.unsignedCount > 0 ? 'clock-alert-outline' : 'clock-outline'}
+                      size={14}
+                      color="#FFFFFF"
+                    />
+                  </View>
+                  <Text style={[styles.kpiVal, { color: stats.unsignedCount > 0 ? '#DC2626' : '#D97706' }]}>
+                    {stats.unsignedCount}
+                  </Text>
+                </View>
+                <Text style={[styles.kpiLbl, { color: stats.unsignedCount > 0 ? '#DC2626' : '#D97706' }]} numberOfLines={1}>
+                  Perlu Respon
+                </Text>
+                <Text style={styles.kpiSub} numberOfLines={1}>
+                  {stats.unsignedCount > 0 ? 'Menunggu wali' : 'Nihil'}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+
+          {/* Sub-Tabs / Kategori Segmented Scroll */}
+          <View style={styles.tuSegmentContainer}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tuSegmentScroll}
+            >
+              {dynamicCategories.map((item) => {
+                const isActive = category === item;
+                return (
+                  <TouchableOpacity
+                    key={item}
+                    onPress={() => setCategory(item)}
+                    activeOpacity={0.8}
+                    style={[styles.segmentBtn, isActive && styles.segmentBtnActive]}
+                  >
+                    <Text style={[styles.segmentBtnText, isActive && styles.segmentBtnTextActive]}>
+                      {item}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      ) : (
+        /* ── TOP HEADER IDENTIK HALAMAN UTAMA (TOMBOL KARTU PUTIH MINT GREEN SHADOW) ── */
+        <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={handleBack}
+            style={styles.cleanHeaderIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Kembali"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+          </TouchableOpacity>
+
+          <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+            Buku Penghubung
+          </Text>
+
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => navigation?.navigate('Notifikasi')}
+            style={styles.cleanHeaderIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Notifikasi"
+          >
+            <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+            {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+          </TouchableOpacity>
+        </View>
       )}
 
       <View style={styles.sheetContainer}>
-        <LinearGradient
-          colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-
         <Animated.ScrollView
           style={styles.screen}
           contentContainerStyle={[
-            styles.mainScrollContent,
-            { paddingBottom: Math.max(bottomInset + 72, 94) },
+            styles.cleanMainScrollContent,
+            { paddingBottom: isTeacherOnly ? Math.max(bottomInset + 140, 160) : Math.max(bottomInset + 72, 94) },
           ]}
           onScroll={handleMainScroll}
           scrollEventThrottle={16}
@@ -845,54 +1087,12 @@ export default function StudentNotesScreen({ route }: any) {
           }
           showsVerticalScrollIndicator={false}
         >
-          {/* ── 1. STATIC TOPBAR (identik TahfizhScreen) ── */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
-
-            <View style={styles.staticTopBarRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
-              </TouchableOpacity>
-
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>
-                  Buku Penghubung
-                </Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                  {isTeacherOnly ? 'Catatan Evaluasi & Komunikasi Wali' : (heroFirstName ? `Ananda ${heroFirstName}` : 'Komunikasi Guru & Orang Tua')}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
-            </View>
-          </View>
+          <View style={styles.cleanScrollInner}>
 
           {/* ── 2. BADAN KONTEN HALAMAN ── */}
           <View style={styles.bodyContentWrapper}>
             {/* ── DUAL ROLE TOGGLE BAR (GURU & ORTU) ── */}
-            {hasDualRole && (
+            {!isTu && hasDualRole && (
               <View style={styles.dualRolePillContainer}>
                 <TouchableOpacity
                   onPress={() => {
@@ -953,191 +1153,194 @@ export default function StudentNotesScreen({ route }: any) {
             )}
 
             {/* ── 2A. CARD SISWA / GURU HERO ── */}
-            {isTeacherOnly ? (
-              <TeacherHeroCard
-                user={user}
-                title="Buku Penghubung Santri"
-                subtitle="Pantau catatan pembinaan, evaluasi perilaku/tahfizh, dan umpan balik wali santri"
-                stats={[
-                  { label: 'Total Catatan', value: notes.length, icon: 'notebook-outline' },
-                  { label: 'Kategori Aktif', value: category, icon: 'tag-outline' },
-                  { label: 'Pencarian', value: search ? 'Filter' : 'Semua', icon: 'magnify' },
-                ]}
-              />
-            ) : children.length > 0 ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] },
-                ]}
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                    <Text style={styles.sectionTitle}>Data Ananda</Text>
-                  </View>
-                  {children.length > 1 && (
-                    <View style={styles.studentCardCountBadge}>
-                      <Text style={styles.studentCardCountBadgeText}>
-                        {safeCenter + 1} dari {children.length} Ananda
+            {!isTu && (isTeacherOnly ? (
+              <>
+                <TeacherHeroCard
+                  user={user}
+                  title={String((user as any)?.name || (user as any)?.full_name || (user as any)?.username || (isTuRole(user?.roles || []) ? 'Staf Tata Usaha' : 'Guru Pengajar'))}
+                  subtitle={(user as any)?.unit_name || (user?.metadata as any)?.unit || 'Pondok Pesantren Terpadu'}
+                  badgeText={isTuRole(user?.roles || []) ? 'Buku Penghubung • Tata Usaha' : 'Buku Penghubung Guru'}
+                  badgeIcon={isTuRole(user?.roles || []) ? 'card-account-details-outline' : 'notebook-outline'}
+                  stats={[
+                    { label: 'Total Catatan', value: stats.total, icon: 'notebook-outline', color: '#10B981' },
+                    { label: 'Perlu Respon Ortu', value: stats.unsignedCount, icon: 'clock-alert-outline', color: stats.unsignedCount > 0 ? '#DC2626' : '#10B981' },
+                    { label: 'Disetujui Ortu', value: stats.signedCount, icon: 'check-decagram', color: '#38BDF8' },
+                  ]}
+                />
+
+                {/* 3 Quick-Filter KPI Cards untuk TU & Guru */}
+                <View style={[styles.kpiGridThree, { marginTop: 10, marginBottom: 2 }]}>
+                  {/* Card 1: Total */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setStatusFilter('all')}
+                    style={[
+                      styles.kpiBigCard,
+                      statusFilter === 'all' && styles.kpiBigCardActiveEmerald,
+                    ]}
+                  >
+                    <View style={styles.kpiBigTopRow}>
+                      <View style={[styles.kpiBigIconWrap, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                        <MaterialCommunityIcons name="notebook-outline" size={17} color="#047857" />
+                      </View>
+                      <Text style={[styles.kpiBigValue, { color: '#047857' }]}>{stats.total}</Text>
+                    </View>
+                    <Text numberOfLines={1} style={styles.kpiBigLabel}>Total Catatan</Text>
+                  </TouchableOpacity>
+
+                  {/* Card 2: Disetujui */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setStatusFilter('signed')}
+                    style={[
+                      styles.kpiBigCard,
+                      statusFilter === 'signed' && styles.kpiBigCardActiveTeal,
+                    ]}
+                  >
+                    <View style={styles.kpiBigTopRow}>
+                      <View style={[styles.kpiBigIconWrap, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}>
+                        <MaterialCommunityIcons name="check-decagram" size={17} color="#0D9488" />
+                      </View>
+                      <Text style={[styles.kpiBigValue, { color: '#0D9488' }]}>{stats.signedCount}</Text>
+                    </View>
+                    <Text numberOfLines={1} style={styles.kpiBigLabel}>Disetujui</Text>
+                  </TouchableOpacity>
+
+                  {/* Card 3: Perlu Respon Ortu */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setStatusFilter('unsigned')}
+                    style={[
+                      styles.kpiBigCard,
+                      stats.unsignedCount > 0 && styles.kpiBigCardWaitingNotice,
+                      statusFilter === 'unsigned' &&
+                        (stats.unsignedCount > 0 ? styles.kpiBigCardActiveRed : styles.kpiBigCardActiveAmber),
+                    ]}
+                  >
+                    <View style={styles.kpiBigTopRow}>
+                      <View
+                        style={[
+                          styles.kpiBigIconWrap,
+                          stats.unsignedCount > 0
+                            ? { backgroundColor: '#FEE2E2', borderColor: '#FECDD3' }
+                            : { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={stats.unsignedCount > 0 ? 'clock-alert-outline' : 'clock-outline'}
+                          size={17}
+                          color={stats.unsignedCount > 0 ? '#DC2626' : '#D97706'}
+                        />
+                      </View>
+                      <Text
+                        style={[
+                          styles.kpiBigValue,
+                          { color: stats.unsignedCount > 0 ? '#DC2626' : '#D97706' },
+                        ]}
+                      >
+                        {stats.unsignedCount}
                       </Text>
                     </View>
-                  )}
-                </View>
-
-                {children.length === 1 ? (
-                  <View style={styles.singleHeroCardContainer}>
-                    <StudentHeroCard
-                      child={children[0]}
-                      isSelected={true}
-                      isSingleChild={true}
-                      showActionButtons={true}
-                      cardLabel="Kartu Siswa"
-                      calendarLabel="Jadwal"
-                      portalLabel="Menu"
-                      onPressCard={() => setSelectedIdCardStudent(children[0])}
-                      onPressQr={() => setSelectedQrStudent(children[0])}
-                      onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                      onPressCalendar={() => openScheduleForStudent(children[0])}
-                      onPressPortal={() => setSelectedMenuStudent(children[0])}
-                    />
-                  </View>
-                ) : (
-                  <>
-                    <ScrollView
-                      ref={studentScrollRef}
-                      horizontal
-                      nestedScrollEnabled={true}
-                      showsHorizontalScrollIndicator={false}
-                      contentOffset={{ x: centerLoopOffset, y: 0 }}
-                      contentContainerStyle={[
-                        styles.studentCardsTrack,
-                        { paddingHorizontal: studentTrackPad },
-                      ]}
-                      decelerationRate="fast"
-                      snapToInterval={studentSnapInterval}
-                      snapToAlignment="start"
-                      disableIntervalMomentum
-                      onMomentumScrollEnd={(e) => {
-                        if (studentLoopCount <= 1) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                        }
-                        recenterLoop();
-                      }}
-                      onScrollEndDrag={(e) => {
-                        if (studentLoopCount <= 1) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                        }
-                      }}
-                      scrollEventThrottle={16}
-                      style={styles.heroCardScrollContainer}
-                    >
-                      {loopWindow.list.map((child: any, sIdx: number) => {
-                        const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                        const isCardActive = realIdx === safeCenter;
-                        return (
-                          <StudentHeroCard
-                            key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                            child={child}
-                            isSelected={isCardActive}
-                            isSingleChild={false}
-                            showActionButtons={true}
-                            cardWidth={studentCardWidth}
-                            cardLabel="Kartu Siswa"
-                            calendarLabel="Jadwal"
-                            portalLabel="Menu"
-                            onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                            onPressCard={() => setSelectedIdCardStudent(child)}
-                            onPressQr={() => setSelectedQrStudent(child)}
-                            onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                            onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                            onPressCalendar={() => openScheduleForStudent(child)}
-                            onPressPortal={() => setSelectedMenuStudent(child)}
-                          />
-                        );
-                      })}
-                    </ScrollView>
-
-                    {/* DOT INDIKATOR SCROLL SISWA */}
-                    <View style={styles.paginationDotsRow}>
-                      {children.map((_, dotIdx) => {
-                        const isDotActive = dotIdx === safeCenter;
-                        return (
-                          <TouchableOpacity
-                            key={dotIdx}
-                            activeOpacity={0.7}
-                            onPress={() => goToLoopChild(dotIdx)}
-                            style={[
-                              styles.paginationDot,
-                              isDotActive && styles.paginationDotActive,
-                            ]}
-                            accessibilityLabel={`Pilih Siswa ke-${dotIdx + 1}`}
-                            accessibilityRole="button"
-                          />
-                        );
-                      })}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      {stats.unsignedCount > 0 && <View style={styles.kpiAlertDot} />}
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.kpiBigLabel,
+                          stats.unsignedCount > 0 && { color: '#DC2626', fontWeight: '800' },
+                        ]}
+                      >
+                        Perlu TTD
+                      </Text>
                     </View>
-                  </>
-                )}
-              </Animated.View>
-            ) : headerStudent ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] },
-                ]}
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                    <Text style={styles.sectionTitle}>Data Ananda</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              /* OPEN STUDENT PROFILE ROW (GOLD STANDARD) */
+              <View style={styles.studentProfileRow}>
+                {/* 60x60 Avatar with Mint Ring (Klik untuk lihat KTS Siswa Terpilih) */}
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedIdCardStudent(headerStudent)}
+                  style={styles.studentAvatarRing}
+                >
+                  <Image
+                    source={studentAvatarSource}
+                    style={styles.studentAvatarImg}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+
+                {/* 3-tier identity & action */}
+                <View style={styles.studentProfileInfoCol}>
+                  <TouchableOpacity
+                    activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                    onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                    style={styles.studentNameRow}
+                  >
+                    <Text numberOfLines={1} style={styles.studentProfileName}>
+                      {studentFullName}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Baris 2: Unit Pendidikan */}
+                  {studentUnit ? (
+                    <View style={styles.studentMetaRow}>
+                      <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                        {studentUnit}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Baris 3: Kelas Siswa */}
+                  {studentClass ? (
+                    <View style={styles.studentMetaRow}>
+                      <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                        {studentClass.toLowerCase().startsWith('kelas') ? studentClass : `Kelas ${studentClass}`}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran */}
+                  <View style={styles.studentActionBadgeRow}>
+                    {children && children.length > 1 && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => setShowChildSelectorModal(true)}
+                        style={styles.parentGantiAnakBtn}
+                      >
+                        <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                        <MaterialCommunityIcons name="chevron-down" size={14} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    )}
+
+                    <View
+                      style={[
+                        styles.attendanceStatusBadge,
+                        { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={attendanceStatus.icon}
+                        size={12}
+                        color={attendanceStatus.color}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                        {attendanceStatus.label}
+                      </Text>
+                    </View>
                   </View>
                 </View>
-
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={headerStudent}
-                    isSelected={true}
-                    isSingleChild={true}
-                    showActionButtons={true}
-                    cardLabel="Kartu Siswa"
-                    calendarLabel="Jadwal"
-                    portalLabel="Menu"
-                    onPressCard={() => setSelectedIdCardStudent(headerStudent)}
-                    onPressQr={() => setSelectedQrStudent(headerStudent)}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(headerStudent)}
-                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                    onPressCalendar={() => openScheduleForStudent(headerStudent)}
-                    onPressPortal={() => setSelectedMenuStudent(headerStudent)}
-                  />
-                </View>
-              </Animated.View>
-            ) : null}
+              </View>
+            ))}
 
             {/* ── 2A-2. HERO KPI GROUP CARD (MUTABA'AH & TAHFIZH SCREEN STYLE) ── */}
-            {!isTeacherOnly && (
-              <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald]}>
+            {!isTu && !isTeacherOnly && (
+              <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald, { marginTop: 6 }]}>
                 <LinearGradient
                   colors={stats.unsignedCount > 0 ? ['#047857', '#065F46'] : ['#059669', '#047857']}
                   start={{ x: 0, y: 0 }}
@@ -1348,7 +1551,8 @@ export default function StudentNotesScreen({ route }: any) {
             )}
 
             {/* ── 2B. TOOLBAR FILTER & PENCARIAN (MUTABA'AH SCREEN STYLE) ── */}
-            <View style={styles.containerBlock}>
+            {!isTu && (
+              <View style={styles.containerBlock}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionHeaderIconBox}>
                   <MaterialCommunityIcons name="notebook-edit-outline" size={17} color="#FFFFFF" />
@@ -1531,6 +1735,7 @@ export default function StudentNotesScreen({ route }: any) {
                 })}
               </ScrollView>
             </View>
+          )}
 
             {/* ── 2C. DAFTAR CATATAN GURU ── */}
             {error ? (
@@ -1613,6 +1818,164 @@ export default function StudentNotesScreen({ route }: any) {
 
                 const isWaitingResponse = !signed || status === 'signed_updated';
 
+                if (isTu) {
+                  const studentName =
+                    note.student?.full_name ||
+                    note.student?.nama_lengkap ||
+                    note.student?.name ||
+                    'Santri Belum Terhubung';
+                  const nis = note.student?.nis || note.student?.nisn || '-';
+                  const className =
+                    note.student?.classroom?.name ||
+                    note.student?.class_name ||
+                    note.classroom?.name ||
+                    note.class_name ||
+                    'Kelas Terdaftar';
+                  const studentGender = String(
+                    note.student?.gender || note.student?.jenis_kelamin || 'L'
+                  ).toUpperCase();
+                  const avatarSource =
+                    note.student?.avatar_url || note.student?.photo
+                      ? { uri: note.student?.avatar_url || note.student?.photo }
+                      : (studentGender === 'P' || studentGender === 'PEREMPUAN'
+                          ? DEFAULT_STUDENT_GIRL_AVATAR
+                          : DEFAULT_STUDENT_BOY_AVATAR);
+                  const parentPhone =
+                    note.student?.parent_phone ||
+                    note.student?.phone ||
+                    note.student?.no_hp_ortu ||
+                    note.parent?.phone ||
+                    note.parent?.no_hp;
+
+                  return (
+                    <View
+                      key={String(note.id)}
+                      style={[
+                        styles.mutationCard,
+                        isWaitingResponse ? styles.mutationCardWaiting : styles.mutationCardNormal,
+                      ]}
+                    >
+                      <View style={styles.cardTopRow}>
+                        <View style={[styles.avatarCircle, { backgroundColor: '#ECFDF5' }]}>
+                          <Image
+                            source={avatarSource}
+                            style={styles.avatarImg}
+                            resizeMode="cover"
+                          />
+                        </View>
+
+                        <View style={styles.cardMainInfo}>
+                          <View style={styles.nameRow}>
+                            <Text numberOfLines={1} style={styles.studentName}>
+                              {studentName}
+                            </Text>
+                            <View
+                              style={[
+                                styles.tagBadge,
+                                signed
+                                  ? { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', borderWidth: 1 }
+                                  : status === 'signed_updated'
+                                  ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1 }
+                                  : { backgroundColor: '#FEE2E2', borderColor: '#FECDD3', borderWidth: 1 },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.tagBadgeText,
+                                  signed
+                                    ? { color: '#047857' }
+                                    : status === 'signed_updated'
+                                    ? { color: '#B45309' }
+                                    : { color: '#DC2626' },
+                                ]}
+                              >
+                                {signed ? 'Disetujui' : status === 'signed_updated' ? 'Perlu TTD Ulang' : 'Menunggu Respon'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <Text numberOfLines={1} style={styles.nisText}>
+                            NIS: {nis} • {className} • {theme.label}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Detail Box */}
+                      <View style={styles.detailBox}>
+                        <Text style={styles.tuNoteTitle}>{note.title || 'Catatan Pembinaan'}</Text>
+
+                        <View style={styles.tuTeacherRow}>
+                          <MaterialCommunityIcons name="account-tie-outline" size={13} color="#047857" />
+                          <Text numberOfLines={1} style={styles.tuTeacherText}>
+                            {teacherName}{teacherSubject ? ` (${teacherSubject})` : ''} • {formatDate(note.date || note.created_at)}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.tuNoteContent}>{note.content || '-'}</Text>
+
+                        {note.follow_up ? (
+                          <View style={styles.tuFollowUpBox}>
+                            <View style={styles.tuFollowUpHead}>
+                              <MaterialCommunityIcons name="chat-processing-outline" size={13} color="#047857" />
+                              <Text style={styles.tuFollowUpHeadText}>Respon / Tindak Lanjut Wali Santri:</Text>
+                            </View>
+                            <Text style={styles.tuFollowUpText}>"{note.follow_up}"</Text>
+                            {note.signed_at ? (
+                              <Text style={styles.tuSignedMeta}>
+                                Ditandatangani pada: {formatDate(note.signed_at)}
+                              </Text>
+                            ) : null}
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {/* TU Footer Action Row */}
+                      <View style={styles.tuActionRow}>
+                        {Boolean(parentPhone) && (
+                          <TouchableOpacity
+                            style={styles.tuWaBtn}
+                            onPress={() => handleChatParent(parentPhone, studentName)}
+                            activeOpacity={0.8}
+                          >
+                            <MaterialCommunityIcons name="whatsapp" size={14} color="#059669" />
+                            <Text style={styles.tuWaBtnText}>Chat Wali</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        <View style={{ flex: 1 }} />
+
+                        <TouchableOpacity
+                          onPress={() => {
+                            setEditingNote(note);
+                            setNoteForm({
+                              student_id: note.student_id || note.student?.id || '',
+                              title: note.title || '',
+                              content: note.content || '',
+                              category: note.category || 'Akademik',
+                              priority: note.priority || 'medium',
+                            });
+                            setNoteModalVisible(true);
+                          }}
+                          style={styles.tuEditBtn}
+                          activeOpacity={0.8}
+                        >
+                          <MaterialCommunityIcons name="pencil-outline" size={13} color="#D97706" />
+                          <Text style={styles.tuEditBtnText}>Ubah</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={() => handleDeleteTeacherNote(note)}
+                          style={styles.tuDelBtn}
+                          activeOpacity={0.8}
+                        >
+                          <MaterialCommunityIcons name="trash-can-outline" size={13} color="#E11D48" />
+                          <Text style={styles.tuDelBtnText}>Hapus</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                }
+
                 return (
                   <View
                     key={String(note.id)}
@@ -1669,7 +2032,7 @@ export default function StudentNotesScreen({ route }: any) {
                         </View>
                       </View>
 
-                      {/* Baris 2: Meta Pill Santri, Tanggal, dan Status Tunggu */}
+                      {/* Baris 2: Meta Pill Santri, Kelas, Tanggal, dan Status Tunggu */}
                       <View style={styles.noteHeadPillsRow}>
                         {note.student ? (
                           <View
@@ -1680,7 +2043,7 @@ export default function StudentNotesScreen({ route }: any) {
                           >
                             <MaterialCommunityIcons
                               name="account-school-outline"
-                              size={11}
+                              size={12}
                               color={isWaitingResponse ? '#DC2626' : '#059669'}
                             />
                             <Text
@@ -1694,6 +2057,16 @@ export default function StudentNotesScreen({ route }: any) {
                             </Text>
                           </View>
                         ) : null}
+
+                        {(note.student?.classroom?.name || note.student?.class_name || note.classroom?.name || note.class_name) ? (
+                          <View style={styles.noteClassPill}>
+                            <MaterialCommunityIcons name="door-open" size={11} color="#047857" />
+                            <Text style={styles.noteClassText}>
+                              {note.student?.classroom?.name || note.student?.class_name || note.classroom?.name || note.class_name}
+                            </Text>
+                          </View>
+                        ) : null}
+
                         <View style={styles.noteDatePill}>
                           <MaterialCommunityIcons name="calendar-clock-outline" size={11} color="#64748B" />
                           <Text style={styles.noteDateText}>
@@ -1702,7 +2075,7 @@ export default function StudentNotesScreen({ route }: any) {
                         </View>
                         {isWaitingResponse && (
                           <View style={styles.waitingHeaderPill}>
-                            <MaterialCommunityIcons name="clock-alert-outline" size={10} color="#DC2626" />
+                            <MaterialCommunityIcons name="clock-alert-outline" size={11} color="#DC2626" />
                             <Text style={styles.waitingHeaderPillText}>Tunggu Tanggapan</Text>
                           </View>
                         )}
@@ -1817,9 +2190,9 @@ export default function StudentNotesScreen({ route }: any) {
                         </TouchableOpacity>
                       )}
 
-                      {/* Tombol Ubah & Hapus: Khusus Akun Guru Pengajar */}
+                      {/* Tombol Ubah & Hapus: Khusus Akun Guru Pengajar / Staf TU */}
                       {isTeacherOnly && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                        <View style={styles.noteActionButtonsRow}>
                           <TouchableOpacity
                             onPress={() => {
                               setEditingNote(note);
@@ -1832,39 +2205,19 @@ export default function StudentNotesScreen({ route }: any) {
                               });
                               setNoteModalVisible(true);
                             }}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 4,
-                              paddingHorizontal: 10,
-                              paddingVertical: 5,
-                              borderRadius: 10,
-                              backgroundColor: '#FEF3C7',
-                              borderWidth: 1,
-                              borderColor: '#FDE68A',
-                            }}
+                            style={styles.editNoteBtn}
                             activeOpacity={0.8}
                           >
-                            <MaterialCommunityIcons name="pencil-outline" size={12} color="#D97706" />
-                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#B45309' }}>Ubah</Text>
+                            <MaterialCommunityIcons name="pencil-outline" size={13} color="#D97706" />
+                            <Text style={styles.editNoteBtnText}>Ubah</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             onPress={() => handleDeleteTeacherNote(note)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 4,
-                              paddingHorizontal: 10,
-                              paddingVertical: 5,
-                              borderRadius: 10,
-                              backgroundColor: '#FFE4E6',
-                              borderWidth: 1,
-                              borderColor: '#FECDD3',
-                            }}
+                            style={styles.deleteNoteBtn}
                             activeOpacity={0.8}
                           >
-                            <MaterialCommunityIcons name="trash-can-outline" size={12} color="#E11D48" />
-                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#BE123C' }}>Hapus</Text>
+                            <MaterialCommunityIcons name="trash-can-outline" size={13} color="#E11D48" />
+                            <Text style={styles.deleteNoteBtnText}>Hapus</Text>
                           </TouchableOpacity>
                         </View>
                       )}
@@ -1968,6 +2321,7 @@ export default function StudentNotesScreen({ route }: any) {
               </TouchableOpacity>
             )}
           </View>
+        </View>
         </Animated.ScrollView>
       </View>
 
@@ -2007,7 +2361,7 @@ export default function StudentNotesScreen({ route }: any) {
       {/* ── TEACHER FLOATING ACTION BUTTON ── */}
       {isTeacherOnly && (
         <TouchableOpacity
-          style={[styles.teacherFab, { bottom: bottomInset + 16 }]}
+          style={[styles.teacherFab, { bottom: Math.max(bottomInset + 80, 100) }]}
           onPress={() => {
             setEditingNote(null);
             setNoteForm({
@@ -2256,6 +2610,91 @@ export default function StudentNotesScreen({ route }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* MODAL PEMILIH ANANDA (JIKA ORANG TUA MEMILIKI >1 ANAK) */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children.map((c: any, idx: number) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = (typeof c.name === 'string' && c.name) || (typeof c.nama_lengkap === 'string' && c.nama_lengkap) || (typeof c.full_name === 'string' && c.full_name) || 'Ananda';
+                const cUnit =
+                  (typeof c.unit?.name === 'string' && c.unit.name) ||
+                  (typeof c.unit_name === 'string' && c.unit_name) ||
+                  (typeof c.education_unit?.name === 'string' && c.education_unit.name) ||
+                  (typeof c.education_unit_name === 'string' && c.education_unit_name) ||
+                  (typeof c.unit === 'string' && c.unit) ||
+                  '';
+                const cClass =
+                  (typeof c.kelas?.nama_kelas === 'string' && c.kelas.nama_kelas) ||
+                  (typeof c.kelas?.name === 'string' && c.kelas.name) ||
+                  (typeof c.class?.name === 'string' && c.class.name) ||
+                  (typeof c.class_name === 'string' && c.class_name) ||
+                  (typeof c.kelas === 'string' && c.kelas) ||
+                  '';
+                const cAvatar = c.photo_url || c.avatar_url;
+
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      goToLoopChild(idx);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text
+                        style={[
+                          styles.childModalItemName,
+                          isSelected && { color: '#0D6B42', fontWeight: '800' },
+                        ]}
+                      >
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#0D6B42" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2263,7 +2702,215 @@ export default function StudentNotesScreen({ route }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+    backgroundColor: '#F0FDF4',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 1,
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cleanHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  cleanScrollInner: {
+    flex: 1,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 0,
+    paddingTop: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F0FDF4',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#0D6B42',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#0D6B42',
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  childModalItemSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   sheetContainer: {
     flex: 1,
@@ -2271,13 +2918,14 @@ const styles = StyleSheet.create({
   },
   screen: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   mainScrollContent: {
     paddingBottom: 94,
   },
   bodyContentWrapper: {
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 0,
   },
 
   // ── Static Top Bar (identik TahfizhScreen) ──
@@ -2288,13 +2936,13 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
+    borderBottomColor: '#A7F3D0',
     paddingBottom: 14,
-    shadowColor: '#047857',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
+    shadowOpacity: 0.1,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 3,
   },
   heroDecorCircle1: {
     position: 'absolute',
@@ -2303,7 +2951,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
   },
   heroDecorCircle2: {
     position: 'absolute',
@@ -2312,7 +2960,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(16, 185, 129, 0.04)',
   },
   staticTopBarRow: {
     flexDirection: 'row',
@@ -2329,7 +2977,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
     shadowOpacity: 0.12,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
@@ -2346,7 +2996,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     fontFamily: 'Poppins_700Bold',
-    color: '#FFFFFF',
+    color: '#064E3B',
     textAlign: 'center',
     letterSpacing: -0.2,
   },
@@ -2354,7 +3004,7 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '600',
     fontFamily: 'Nunito_600SemiBold',
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#047857',
     textAlign: 'center',
     marginTop: 1,
   },
@@ -2372,12 +3022,17 @@ const styles = StyleSheet.create({
 
   // ── Container & Student Block ──
   containerBlock: {
-    backgroundColor: 'rgba(255, 255, 255, 0.94)',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#DDEBE4',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     padding: 14,
     marginBottom: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   studentContainerBlock: {
     marginBottom: 10,
@@ -2437,7 +3092,7 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: '#A7F3D0',
   },
   paginationDotActive: {
     width: 16,
@@ -2574,17 +3229,17 @@ const styles = StyleSheet.create({
   },
   heroKpiCard: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000000',
+    borderWidth: 1.5,
+    borderColor: '#D1FAE5',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.06,
     shadowRadius: 3,
     elevation: 1,
   },
@@ -2627,7 +3282,7 @@ const styles = StyleSheet.create({
   },
   heroProgressBarTrack: {
     height: 4.5,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#ECFDF5',
     borderRadius: 3,
     marginTop: 5,
     overflow: 'hidden',
@@ -2674,15 +3329,15 @@ const styles = StyleSheet.create({
   kpiBigCard: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 16,
     paddingVertical: 12,
     paddingHorizontal: 10,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 1.5 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
     elevation: 2,
   },
   kpiBigCardWaitingNotice: {
@@ -2764,7 +3419,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   kpiMiniCardActiveEmerald: {
     borderColor: '#059669',
@@ -2912,9 +3567,9 @@ const styles = StyleSheet.create({
     height: 42,
     borderRadius: 13,
     paddingHorizontal: 12,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
   },
   searchInput: {
     flex: 1,
@@ -2930,9 +3585,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   filterActive: {
     backgroundColor: '#059669',
@@ -2946,7 +3601,7 @@ const styles = StyleSheet.create({
   filterText: {
     fontSize: 10.5,
     fontWeight: '800',
-    color: '#475569',
+    color: '#065F46',
   },
   filterTextActive: {
     color: '#FFFFFF',
@@ -2971,10 +3626,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
     marginVertical: 8,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
+    shadowColor: '#059669',
+    shadowOpacity: 0.05,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
@@ -2994,13 +3649,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 20,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#ECFDF5',
     marginBottom: 6,
   },
   emptyPillBadgeText: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#475569',
+    color: '#065F46',
   },
   emptyTitle: {
     fontSize: 14.5,
@@ -3095,20 +3750,20 @@ const styles = StyleSheet.create({
 
   // ── Note Card & Items ──
   noteCard: {
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     marginBottom: 14,
     shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
   },
   noteCardWaiting: {
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
@@ -3117,16 +3772,16 @@ const styles = StyleSheet.create({
     borderLeftColor: '#DC2626',
     marginBottom: 14,
     shadowColor: '#DC2626',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.08,
-    shadowRadius: 8,
+    shadowRadius: 10,
     elevation: 3,
   },
   noteHead: {
-    padding: 10,
-    borderRadius: 14,
+    padding: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   noteHeadWaiting: {
     backgroundColor: '#FFF1F2',
@@ -3139,14 +3794,14 @@ const styles = StyleSheet.create({
   noteHeadTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 10,
   },
   noteHeadPillsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 8,
+    marginTop: 10,
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: 'rgba(0, 0, 0, 0.05)',
@@ -3156,14 +3811,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
     backgroundColor: '#FEE2E2',
-    borderWidth: 0.5,
+    borderWidth: 1,
     borderColor: '#FECDD3',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
   },
   waitingHeaderPillText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
     color: '#DC2626',
   },
@@ -3172,9 +3827,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     backgroundColor: '#FEF2F2',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     marginTop: 4,
     marginBottom: 8,
     borderWidth: 1,
@@ -3187,22 +3842,22 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   teacherIcon: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
     borderRadius: 12,
     backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
   },
   teacherName: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#0F172A',
   },
   teacherSubject: {
-    fontSize: 10.5,
-    color: '#64748B',
-    fontWeight: '600',
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '700',
     marginTop: 1,
   },
   noteMetaRow: {
@@ -3216,39 +3871,55 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#A7F3D0',
     maxWidth: 160,
   },
   noteStudentPillText: {
-    fontSize: 9.5,
+    fontSize: 10.5,
     color: '#047857',
     fontWeight: '700',
     marginLeft: 3,
   },
+  noteClassPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 3,
+  },
+  noteClassText: {
+    fontSize: 10,
+    color: '#065F46',
+    fontWeight: '700',
+  },
   noteDatePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 6,
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   noteDateText: {
-    fontSize: 9.5,
+    fontSize: 10,
     color: '#64748B',
     fontWeight: '600',
     marginLeft: 3,
   },
   categoryBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 10,
     backgroundColor: '#D1FAE5',
     flexShrink: 0,
     alignSelf: 'flex-start',
@@ -3259,48 +3930,50 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   noteTitle: {
-    fontSize: 14.5,
+    fontSize: 15.5,
     fontWeight: '800',
     color: '#0F172A',
-    marginTop: 13,
-    lineHeight: 20,
+    marginTop: 11,
+    lineHeight: 22,
+    letterSpacing: -0.2,
   },
   noteContent: {
-    fontSize: 12.5,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 21,
     color: '#334155',
-    marginTop: 7,
+    marginTop: 6,
   },
   followUp: {
     backgroundColor: '#F0FDF4',
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 16,
+    padding: 14,
     marginTop: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#BBF7D0',
   },
   followUpHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 4,
+    marginBottom: 5,
   },
   followUpLabel: {
-    fontSize: 10,
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#047857',
     textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
   followUpText: {
-    fontSize: 11.5,
-    lineHeight: 18,
+    fontSize: 12.5,
+    lineHeight: 19,
     color: '#166534',
     fontStyle: 'italic',
   },
   signedAtMeta: {
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#059669',
-    fontWeight: '600',
+    fontWeight: '700',
     marginTop: 6,
     fontStyle: 'italic',
   },
@@ -3310,13 +3983,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
     marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    borderRadius: 10,
-    paddingHorizontal: 9,
+    borderRadius: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
     borderWidth: 1,
     flexShrink: 1,
@@ -3338,9 +4014,47 @@ const styles = StyleSheet.create({
     borderColor: '#FECDD3',
   },
   statusText: {
-    fontSize: 9.5,
+    fontSize: 10,
     fontWeight: '800',
     color: '#475569',
+  },
+  noteActionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: 'auto',
+  },
+  editNoteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  editNoteBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  deleteNoteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#FFE4E6',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  deleteNoteBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#BE123C',
   },
   signButton: {
     backgroundColor: '#059669',
@@ -3379,9 +4093,9 @@ const styles = StyleSheet.create({
     marginTop: 13,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   replyBoxHeaderRow: {
     flexDirection: 'row',
@@ -3406,7 +4120,7 @@ const styles = StyleSheet.create({
     minHeight: 88,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#A7F3D0',
     padding: 12,
     fontSize: 12,
     color: '#0F172A',
@@ -3459,10 +4173,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#ECFDF5',
   },
   cancelText: {
-    color: '#475569',
+    color: '#065F46',
     fontSize: 10.5,
     fontWeight: '800',
   },
@@ -3637,9 +4351,9 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   formTextInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -3650,9 +4364,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   studentSelectChipActive: {
     backgroundColor: '#ECFDF5',
@@ -3661,7 +4375,7 @@ const styles = StyleSheet.create({
   studentSelectChipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: '#065F46',
   },
   studentSelectChipTextActive: {
     color: '#047857',
@@ -3671,9 +4385,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   catSelectChipActive: {
     backgroundColor: '#059669',
@@ -3682,7 +4396,7 @@ const styles = StyleSheet.create({
   catSelectChipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: '#065F46',
   },
   catSelectChipTextActive: {
     color: '#FFFFFF',
@@ -3693,9 +4407,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#D1FAE5',
   },
   priorityChipActive: {
     backgroundColor: '#FEF3C7',
@@ -3704,7 +4418,7 @@ const styles = StyleSheet.create({
   priorityChipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: '#065F46',
   },
   priorityChipTextActive: {
     color: '#B45309',
@@ -3717,18 +4431,18 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#ECFDF5',
   },
   modalCancelBtn: {
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#ECFDF5',
   },
   modalCancelBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#065F46',
   },
   modalSubmitBtn: {
     flex: 1,
@@ -3747,5 +4461,391 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+
+  /* ── TATA USAHA: Background Backdrop Mosque & School (Identik Data Siswa) ── */
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 480,
+    width: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
+  },
+
+  /* ── TATA USAHA: Header Clean Top Bar Terpadu (Identik Data Siswa) ── */
+  headerContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  headerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 20,
+    marginBottom: 2,
+    maxWidth: '100%',
+  },
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+    marginRight: 5,
+  },
+  headerBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#047857',
+    letterSpacing: 0.5,
+    flexShrink: 1,
+  },
+  headerMainTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#064E3B',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  refreshButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    height: 44,
+    marginTop: 12,
+    gap: 8,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
+  /* ── TATA USAHA: 3 KPI Cards Row Terpadu (Identik Data Siswa) ── */
+  kpiCardsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  kpiBox: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1.2,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  kpiBoxGradient: {
+    padding: 9,
+  },
+  kpiHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  kpiIconSquare: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kpiVal: {
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  kpiLbl: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  kpiSub: {
+    fontSize: 9,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+
+  /* ── TATA USAHA: Sub-Tabs Kategori Segmented Scroll ── */
+  tuSegmentContainer: {
+    marginTop: 10,
+    marginHorizontal: -16,
+  },
+  tuSegmentScroll: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  segmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 13,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  segmentBtnActive: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+  },
+  segmentBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  segmentBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  /* ── TATA USAHA: Harmonized MutationCard (Identik Data Siswa) ── */
+  mutationCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 13,
+    marginBottom: 12,
+    shadowColor: '#004D32',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  mutationCardNormal: {
+    borderColor: '#A7F3D0',
+  },
+  mutationCardWaiting: {
+    borderColor: '#FECDD3',
+    backgroundColor: '#FFFFFF',
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+  },
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImg: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+  },
+  cardMainInfo: {
+    flex: 1,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 6,
+  },
+  studentName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+  },
+  tagBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  tagBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  nisText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  detailBox: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    padding: 10,
+    marginTop: 9,
+  },
+  tuNoteTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  tuTeacherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 6,
+  },
+  tuTeacherText: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '700',
+  },
+  tuNoteContent: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 18,
+  },
+  tuFollowUpBox: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  tuFollowUpHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  tuFollowUpHeadText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  tuFollowUpText: {
+    fontSize: 11.5,
+    fontStyle: 'italic',
+    color: '#065F46',
+    lineHeight: 16,
+  },
+  tuSignedMeta: {
+    fontSize: 9.5,
+    color: '#059669',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  tuActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  tuWaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  tuWaBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  tuEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  tuEditBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#D97706',
+  },
+  tuDelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#FFE4E6',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  tuDelBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#E11D48',
   },
 });

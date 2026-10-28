@@ -153,7 +153,7 @@ export const StudentWeeklyReportModal: React.FC<StudentWeeklyReportModalProps> =
 
                 <View style={styles.classInfoRow}>
                   <Text style={styles.classInfoText}>
-                    Kelas: <Text style={{ fontWeight: '800' }}>{student?.kelas?.nama_kelas || student?.kelas || student?.rombel || reportData?.student?.kelas?.nama_kelas || '-'}</Text>
+                    Kelas: <Text style={{ fontWeight: '800' }}>{typeof student?.kelas === 'object' ? (student?.kelas?.nama_kelas || student?.kelas?.name || '-') : (typeof student?.kelas === 'string' ? student?.kelas : (typeof student?.rombel === 'object' ? (student?.rombel?.nama_kelas || student?.rombel?.name || '-') : (student?.rombel || reportData?.student?.kelas?.nama_kelas || '-')))}</Text>
                   </Text>
                   <Text style={styles.classInfoText}>
                     Wali Kelas: <Text style={{ fontWeight: '800' }}>{student?.wali_kelas || student?.homeroom_teacher || reportData?.student?.wali_kelas || reportData?.latest_note?.teacher_name || '-'}</Text>

@@ -11,7 +11,10 @@ export const resolveMediaUrl = (rawUrl?: string | null): string | null => {
   const cleanRawUrl = rawUrl.trim();
   const apiHost = API_BASE_URL.replace(/\/api\/?$/, '');
 
-  // Data URI: return as is
+  if (cleanRawUrl.includes('data:image/')) {
+    const idx = cleanRawUrl.indexOf('data:image/');
+    return cleanRawUrl.slice(idx);
+  }
   if (cleanRawUrl.startsWith('data:')) {
     return cleanRawUrl;
   }
@@ -57,6 +60,7 @@ export const getProfileImageUrl = (user: any, dashboard?: any): string | null =>
     user?.foto_url ||
     user?.foto ||
     user?.photo ||
+    user?.photo_thumb ||
     user?.image ||
     user?.metadata?.photo ||
     user?.metadata?.foto ||
@@ -97,4 +101,63 @@ export const getProfileImageUrl = (user: any, dashboard?: any): string | null =>
     null;
 
   return resolveMediaUrl(rawUrl);
+};
+
+export const isGirlStudent = (student: any): boolean => {
+  if (!student) return false;
+  const rawGender = String(
+    student.gender ||
+    student.jenis_kelamin ||
+    student.sex ||
+    student.student?.gender ||
+    student.student?.jenis_kelamin ||
+    ''
+  ).toLowerCase().trim();
+
+  if (
+    rawGender === 'p' ||
+    rawGender === 'female' ||
+    rawGender === 'perempuan' ||
+    rawGender === 'wanita' ||
+    rawGender.startsWith('peremp') ||
+    rawGender.startsWith('fem')
+  ) {
+    return true;
+  }
+
+  if (
+    rawGender === 'l' ||
+    rawGender === 'male' ||
+    rawGender === 'laki-laki' ||
+    rawGender === 'pria' ||
+    rawGender.startsWith('lak')
+  ) {
+    return false;
+  }
+
+  // Fallback deteksi nama santri perempuan Indonesia jika gender kosong / tidak terekam
+  const name = String(
+    student.name ||
+    student.full_name ||
+    student.nama_lengkap ||
+    student.nama ||
+    student.student?.full_name ||
+    ''
+  ).toLowerCase();
+
+  const femaleKeywords = [
+    'putri', 'alya', 'zahra', 'zahrah', 'siti', 'nur', 'aisyah', 'fatimah',
+    'khadijah', 'anisa', 'annisa', 'safira', 'adiba', 'nayla', 'salma', 'azzahra',
+    'cantika', 'bilqis', 'hana', 'hasna', 'nadia', 'syifa', 'rahma', 'ayu'
+  ];
+
+  return femaleKeywords.some((keyword) => name.includes(keyword));
+};
+
+export const getStudentAvatarSource = (student: any) => {
+  const customPhoto = getProfileImageUrl(student);
+  if (customPhoto) {
+    return { uri: customPhoto };
+  }
+  return isGirlStudent(student) ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
 };

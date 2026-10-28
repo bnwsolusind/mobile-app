@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   Modal,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { getProfileImageUrl } from '../utils/profile';
+import { getProfileImageUrl, getStudentAvatarSource } from '../utils/profile';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
 
 const CARD_THEMES: Record<string, { primary: string; dark: string; secondary: string; soft: string; accent: string }> = {
@@ -36,7 +36,8 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
 
   if (!student) return null;
 
-  const activeCardTheme = CARD_THEMES.green;
+  const unitThemeKey = String(student?.education_unit?.theme || student?.education_unit?.card_theme || '').toLowerCase();
+  const activeCardTheme = CARD_THEMES[unitThemeKey] || CARD_THEMES.green;
   const sName = student?.full_name || student?.nama_lengkap || student?.name || 'Siswa';
   const sInitial = sName.charAt(0).toUpperCase();
   const sNis = student?.nis || '-';
@@ -45,6 +46,31 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
   const cardClassName = student?.kelas?.nama_kelas || student?.kelas?.name || student?.class_name || '';
   const cardRombelName = student?.kelas?.rombel || student?.rombel || student?.metadata?.rombel || '';
   const cardClassDisplay = cardRombelName ? `${cardClassName} (${cardRombelName})` : cardClassName;
+
+  // Dynamic School Info from unit or branding config
+  const schoolWebsite =
+    student?.education_unit?.website ||
+    mobileConfig.branding?.contact?.website ||
+    'sekolah.sch.id';
+  const schoolAddress =
+    student?.education_unit?.address ||
+    student?.education_unit?.alamat ||
+    mobileConfig.branding?.address ||
+    'Kampus Pendidikan Terpadu';
+  const schoolPhone =
+    student?.education_unit?.phone ||
+    student?.education_unit?.telepon ||
+    mobileConfig.branding?.contact?.phone ||
+    '-';
+  const schoolMottoHeader =
+    student?.education_unit?.metadata?.motto_header ||
+    'Sekolah Unggulan';
+  const schoolMottoSub =
+    student?.education_unit?.metadata?.motto_sub ||
+    student?.education_unit?.metadata?.motto ||
+    student?.education_unit?.motto ||
+    mobileConfig.branding?.motto ||
+    'Berakhlak & Berprestasi';
 
   let formattedBirthDate = '-';
   const rawDate = student?.birth_date || student?.tanggal_lahir;
@@ -63,6 +89,29 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
   const qrValue = student?.qr_token || `STUDENT_CARD:${sNis}:${sName}`;
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrValue)}`;
   const studentPhotoUrl = getProfileImageUrl(student);
+
+  // Dynamic Card Rules (Tata Tertib KTS dari Database / Backend / Unit)
+  const rawRules =
+    student?.education_unit?.metadata?.card_rules ||
+    student?.education_unit?.card_rules ||
+    (mobileConfig.branding as any)?.card_rules_student;
+
+  const parsedRules: string[] = useMemo(() => {
+    if (typeof rawRules === 'string' && rawRules.trim().length > 0) {
+      const lines = rawRules
+        .split('\n')
+        .map((l) => l.replace(/^[0-9]+[.)\s-]*/, '').trim())
+        .filter(Boolean);
+      if (lines.length > 0) return lines;
+    }
+    const schoolName = mobileConfig.branding?.school_name || student?.education_unit?.name || 'sekolah';
+    return [
+      `Kartu ini adalah kartu identitas resmi siswa ${schoolName}.`,
+      'Wajib dibawa & dikenakan selama jam KBM sekolah.',
+      'Apabila menemukan kartu ini, harap mengembalikan ke piket sekolah.',
+      'QR Code digunakan untuk absensi gerbang & verifikasi SIMSIT.',
+    ];
+  }, [rawRules, mobileConfig.branding?.school_name, student?.education_unit?.name]);
 
   return (
     <Modal
@@ -159,9 +208,11 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
                           resizeMode="cover"
                         />
                       ) : (
-                        <View style={[styles.webCardPhotoFallback, { backgroundColor: activeCardTheme.primary }]}>
-                          <Text style={styles.webCardPhotoFallbackText}>{sInitial}</Text>
-                        </View>
+                        <Image
+                          source={getStudentAvatarSource(student)}
+                          style={styles.webCardPhotoImg}
+                          resizeMode="cover"
+                        />
                       )}
                     </View>
                     <View style={[styles.webCardUnitPill, { backgroundColor: activeCardTheme.primary, borderColor: activeCardTheme.accent }]}>
@@ -248,14 +299,14 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
                   <View style={styles.webCardFooterLeft}>
                     <MaterialCommunityIcons name="book-open-outline" size={16} color={activeCardTheme.accent} />
                     <View style={{ marginLeft: 6 }}>
-                      <Text style={styles.webCardMottoHeader}>Sekolah Unggulan</Text>
-                      <Text style={styles.webCardMottoSub}>Berbasis Al-Qur'an</Text>
+                      <Text style={styles.webCardMottoHeader}>{schoolMottoHeader}</Text>
+                      <Text style={styles.webCardMottoSub}>{schoolMottoSub}</Text>
                     </View>
                   </View>
                   <View style={styles.webCardFooterDivider} />
                   <View style={styles.webCardFooterRight}>
                     <MaterialCommunityIcons name="web" size={14} color={activeCardTheme.accent} />
-                    <Text style={styles.webCardWebText}>www.dareliman.sch.id</Text>
+                    <Text numberOfLines={1} style={styles.webCardWebText}>{schoolWebsite}</Text>
                   </View>
                 </View>
               </View>
@@ -298,23 +349,14 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
                     </Text>
                     <View style={[styles.webCardBackDivider, { backgroundColor: activeCardTheme.accent }]} />
                     <View style={styles.webCardBackList}>
-                      <Text style={styles.webCardBackItem}>
-                        <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>1. </Text>
-                        Kartu ini adalah kartu identitas resmi siswa {mobileConfig.branding?.school_name || student?.education_unit?.name || 'sekolah'}.
-                      </Text>
-                      <Text style={styles.webCardBackItem}>
-                        <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>2. </Text>
-                        Wajib dibawa & dikenakan selama jam KBM sekolah.
-                      </Text>
-                      <Text style={styles.webCardBackItem}>
-                        <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>3. </Text>
-                        Apabila menemukan kartu ini, harap mengembalikan ke piket sekolah.
-                      </Text>
-                      <Text style={styles.webCardBackItem}>
-                        <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>4. </Text>
-                        QR Code digunakan untuk absensi gerbang & verifikasi SIMSIT.
-                      </Text>
+                      {parsedRules.slice(0, 4).map((ruleText, rIdx) => (
+                        <Text key={`card-rule-${rIdx}`} style={styles.webCardBackItem}>
+                          <Text style={{ fontWeight: '900', color: activeCardTheme.primary }}>{rIdx + 1}. </Text>
+                          {ruleText}
+                        </Text>
+                      ))}
                     </View>
+
                   </View>
 
                   <View style={styles.webCardBackQrCol}>
@@ -330,13 +372,13 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({
                 </View>
 
                 <View style={[styles.webCardFooter, { backgroundColor: activeCardTheme.primary, borderTopColor: activeCardTheme.accent }]}>
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, paddingRight: 6 }}>
                     <Text numberOfLines={1} style={styles.webCardFooterAddress}>
-                      Jl. Gajah Mada No. 28 Padang, Sumatera Barat
+                      {schoolAddress}
                     </Text>
                   </View>
-                  <Text style={styles.webCardFooterPhone}>
-                    Telp: (0751) 123456 · dareliman.or.id
+                  <Text numberOfLines={1} style={styles.webCardFooterPhone}>
+                    {schoolPhone !== '-' ? `Telp: ${schoolPhone} · ` : ''}{schoolWebsite}
                   </Text>
                 </View>
               </View>

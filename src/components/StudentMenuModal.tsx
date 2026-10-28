@@ -12,8 +12,10 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getProfileImageUrl, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_STUDENT_GIRL_AVATAR } from '../utils/profile';
+import { getProfileImageUrl, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_STUDENT_GIRL_AVATAR, isGirlStudent } from '../utils/profile';
 import { useActiveChildStore } from '../stores/activeChildStore';
+import { useAuthStore } from '../stores/authStore';
+import { isParentRole } from '../utils/roles';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -42,6 +44,9 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
 }) => {
   if (!student) return null;
 
+  const user = useAuthStore((state) => state.user);
+  const isParent = isParentRole(user?.roles || []);
+
   const sName = student.full_name || student.nama_lengkap || student.name || 'Ananda';
   const sNis = student.nis || student.student_nisn || '-';
   const sNisn = student.nisn || student.student_nisn || '';
@@ -59,31 +64,47 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
     student.kelas_name ||
     'Kelas Aktif';
 
-  const isGirl =
-    student?.gender === 'female' ||
-    student?.jenis_kelamin === 'P' ||
-    student?.jenis_kelamin === 'female' ||
-    student?.gender === 'P';
+  const isGirl = isGirlStudent(student);
 
   const avatarUri = getProfileImageUrl(student);
 
-  const menuItems: StudentMenuItem[] = useMemo(() => [
-    { label: 'Jadwal', icon: 'clock-time-four', color: '#7C3AED', bg: '#F5F3FF', route: 'Jadwal' },
-    { label: 'Tugas LMS', icon: 'clipboard-text', color: '#F59E0B', bg: '#FEF9EC', route: 'Tugas' },
-    { label: 'Materi', icon: 'book-multiple', color: '#059669', bg: '#ECFDF5', route: 'Materi' },
-    { label: 'Nilai & Rapor', icon: 'chart-box', color: '#0D9488', bg: '#E6FFFA', route: 'Nilai' },
-    { label: 'Tahfizh', icon: 'book-marker', color: '#2563EB', bg: '#EFF6FF', route: 'Tahfizh' },
-    { label: 'Mutaba’ah', icon: 'clipboard-check', color: '#F59E0B', bg: '#FEF9EC', route: 'Mutabaah' },
-    { label: 'Buku Hubung', icon: 'book-open-page-variant', color: '#7C3AED', bg: '#FAF5FF', route: 'Komentar' },
-    { label: 'Presensi', icon: 'account-check', color: '#7C3AED', bg: '#F5F3FF', route: 'Absensi' },
-    { label: 'Kisi-kisi', icon: 'file-question', color: '#EF4444', bg: '#FEF2F2', route: 'KisiKisi' },
-    { label: 'Bank Soal', icon: 'database-outline', color: '#0D9488', bg: '#E6FFFA', route: 'BankSoal' },
-    { label: 'Ujian CBT', icon: 'laptop', color: '#2563EB', bg: '#EFF6FF', route: 'CbtExams' },
-    { label: 'Al-Qur\'an', icon: 'book-open-variant', color: '#059669', bg: '#F0FDF4', route: 'Quran' },
-    { label: 'Doa & Dzikir', icon: 'hands-pray', color: '#F97316', bg: '#FFF7ED', route: 'DoaDzikir' },
-    { label: 'Kalender Akademik', icon: 'calendar-month', color: '#0284C7', bg: '#F0F9FF', route: 'Kalender' },
-    { label: 'Informasi', icon: 'bullhorn', color: '#E11D48', bg: '#FFF1F2', route: 'Informasi' },
-  ], []);
+  const menuItems: StudentMenuItem[] = useMemo(() => {
+    const list: StudentMenuItem[] = [
+      { label: 'Jadwal Pelajaran', icon: 'calendar-clock', color: '#0D9488', bg: '#ECFDF5', route: 'Jadwal' },
+      { label: 'Tugas LMS', icon: 'clipboard-text-outline', color: '#10B981', bg: '#ECFDF5', route: 'Tugas' },
+      { label: 'Materi Belajar', icon: 'book-open-page-variant', color: '#0284C7', bg: '#EFF6FF', route: 'Materi' },
+      { label: 'Penilaian & Rapor', icon: 'chart-box-outline', color: '#8B5CF6', bg: '#F5F3FF', route: 'Nilai' },
+      { label: 'Tahfizh Al-Qur\'an', icon: 'book-marker', color: '#059669', bg: '#ECFDF5', route: 'Tahfizh' },
+      { label: 'Mutaba\'ah Yaumiyyah', icon: 'clipboard-check-outline', color: '#D97706', bg: '#FFFBEB', route: 'Mutabaah' },
+      { label: 'Buku Hubung', icon: 'notebook-edit-outline', color: '#E11D48', bg: '#FFF1F2', route: 'Komentar' },
+      { label: 'Bank Soal', icon: 'database-outline', color: '#0D9488', bg: '#E6FFFA', route: 'BankSoal' },
+      { label: 'Presensi Siswa', icon: 'account-check-outline', color: '#059669', bg: '#ECFDF5', route: 'Absensi' },
+      { label: 'Perizinan Santri', icon: 'file-document-edit-outline', color: '#EF4444', bg: '#FEF2F2', route: 'Perizinan', tab: 'permissions' },
+    ];
+
+    // Menu Tagihan & SPP (Eksklusif Wali Murid)
+    if (isParent || (user as any)?.roles?.includes('Parent')) {
+      list.push({
+        label: 'Tagihan SPP',
+        icon: 'cash-multiple',
+        color: '#059669',
+        bg: '#ECFDF5',
+        route: 'Tagihan',
+      });
+    }
+
+    list.push(
+      { label: 'Chat Guru', icon: 'chat-processing-outline', color: '#2563EB', bg: '#EFF6FF', route: 'Chat' },
+      { label: 'Ujian CBT', icon: 'laptop', color: '#2563EB', bg: '#EFF6FF', route: 'CbtExams' },
+      { label: 'Kisi-kisi', icon: 'file-question', color: '#EF4444', bg: '#FEF2F2', route: 'KisiKisi' },
+      { label: 'Kalender Akademik', icon: 'calendar-month-outline', color: '#0284C7', bg: '#F0F9FF', route: 'Kalender' },
+      { label: 'Informasi', icon: 'bullhorn-outline', color: '#E11D48', bg: '#FFF1F2', route: 'Informasi' },
+      { label: 'Al-Qur\'an', icon: 'book-open-variant', color: '#059669', bg: '#F0FDF4', route: 'Quran' },
+      { label: 'Doa & Dzikir', icon: 'hands-pray', color: '#F97316', bg: '#FFF7ED', route: 'DoaDzikir' }
+    );
+
+    return list;
+  }, [isParent, user]);
 
   const handleMenuPress = (item: StudentMenuItem) => {
     onClose();
@@ -143,7 +164,7 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
               <View style={styles.headerTitleCol}>
                 <View style={styles.headerTagBadge}>
                   <MaterialCommunityIcons name="view-grid" size={12} color="#A7F3D0" />
-                  <Text style={styles.headerTagText}>MENU SISWA TERPADU</Text>
+                  <Text style={styles.headerTagText}>MENU TERPADU ANANDA</Text>
                 </View>
                 <Text numberOfLines={1} style={styles.headerStudentName}>
                   {sName}

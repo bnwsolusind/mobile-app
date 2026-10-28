@@ -560,8 +560,15 @@ export const mobileApiService = {
       headers: params?.child_id ? { 'X-Child-Id': params.child_id } : undefined,
     })
   ).data,
-  getPortalSchedules: async (params: { child_id?: string; date?: string; month?: string; academic_year?: string } = {}) => (
-    await api.get('/portal/schedules', { params })
+  getPortalSchedules: async (
+    params: { child_id?: string; date?: string; month?: string; academic_year?: string } = {},
+    options?: { signal?: AbortSignal },
+  ) => (
+    await api.get('/portal/schedules', {
+      params,
+      headers: params?.child_id ? { 'X-Child-Id': params.child_id } : undefined,
+      signal: options?.signal,
+    })
   ).data,
   getPortalGrades: async (
     childId?: string,
@@ -590,6 +597,15 @@ export const mobileApiService = {
       params: { ...(childConfig?.params || {}), page },
     })).data;
   },
+  getFinanceStats: async (params?: Record<string, any>) => (
+    await api.get('/finance/stats', { params })
+  ).data,
+  getFinanceBills: async (params?: Record<string, any>) => (
+    await api.get('/finance/bills', { params })
+  ).data,
+  getFinanceFeeCategories: async () => (
+    await api.get('/finance/fee-categories')
+  ).data,
   signPortalStudentNote: async (noteId: string, childId: string, followUp?: string) => (
     await api.post(`/portal/student-notes/${noteId}/sign`, {
       child_id: childId,
@@ -728,6 +744,15 @@ export const mobileApiService = {
   ).data,
   getTeacherAcademicCalendar: async (params: Record<string, any> = {}) => (
     await api.get('/teacher/academic-calendar', { params })
+  ).data,
+  createTeacherAcademicCalendar: async (payload: Record<string, any>) => (
+    await api.post('/teacher/academic-calendar', payload)
+  ).data,
+  updateTeacherAcademicCalendar: async (id: string, payload: Record<string, any>) => (
+    await api.put(`/teacher/academic-calendar/${id}`, payload)
+  ).data,
+  deleteTeacherAcademicCalendar: async (id: string) => (
+    await api.delete(`/teacher/academic-calendar/${id}`)
   ).data,
   getTeacherAnnouncements: async (params: Record<string, any> = {}) => (
     await api.get('/teacher/announcements', { params })
@@ -1105,5 +1130,10 @@ export const mobileApiService = {
     follow_up?: string;
   }) => (
     await api.post('/teacher/discipline-violations', payload)
+  ).data,
+
+  // Site Settings & Portal FAQs
+  getSiteSettings: async () => (
+    await api.get('/site-settings')
   ).data,
 };

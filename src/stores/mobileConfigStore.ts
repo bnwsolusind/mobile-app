@@ -39,6 +39,7 @@ export type MobileBrandingConfig = {
   fallback_logo_url?: string | null;
   address?: string;
   motto?: string;
+  tagline?: string;
   contact?: {
     phone?: string;
     email?: string;
@@ -82,6 +83,18 @@ export type MobileSystemConfig = {
   mapbox_token?: string;
 };
 
+export type OnboardingSlide = {
+  id: number;
+  title: string;
+  description: string;
+  image_url: string | null;
+};
+
+export type MobileOnboardingConfig = {
+  enabled: boolean;
+  slides: OnboardingSlide[];
+};
+
 export type MobileAppConfig = {
   platform: 'android';
   version: number;
@@ -106,6 +119,7 @@ export type MobileAppConfig = {
   >;
   features: MobileFeatureFlags;
   system: MobileSystemConfig;
+  onboarding: MobileOnboardingConfig;
   updated_at?: string;
 };
 
@@ -204,6 +218,29 @@ export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
     update_url: 'https://play.google.com/store/apps/details?id=id.sch.dareliman.simsit',
     mapbox_token: undefined,
   },
+  onboarding: {
+    enabled: true,
+    slides: [
+      {
+        id: 1,
+        title: 'Sistem Sekolah Terpadu',
+        description: 'Akses seluruh informasi akademik, jadwal pelajaran, dan kegiatan harian siswa dalam satu aplikasi terintegrasi.',
+        image_url: null,
+      },
+      {
+        id: 2,
+        title: "Mutaba'ah & Tahfizh Mandiri",
+        description: "Pantau setoran hafalan Al-Qur'an dan amalan yaumiyyah ananda secara berkala dan real-time bersama ustadz/ustadzah.",
+        image_url: null,
+      },
+      {
+        id: 3,
+        title: 'Presensi & Layanan Digital',
+        description: 'Dapatkan notifikasi kedatangan gerbang sekolah, perizinan asrama, dan komunikasi cepat dengan pihak sekolah.',
+        image_url: null,
+      },
+    ],
+  },
 };
 
 const CACHE_KEY = 'sims-android-ui-config-v2';
@@ -247,6 +284,12 @@ export const mergeConfig = (value?: Partial<MobileAppConfig>): MobileAppConfig =
       ...(value?.role_home_layouts || {}),
     },
     features: { ...DEFAULT_MOBILE_CONFIG.features, ...(value?.features || {}) },
+    onboarding: {
+      enabled: value?.onboarding?.enabled ?? DEFAULT_MOBILE_CONFIG.onboarding.enabled,
+      slides: (value?.onboarding?.slides && Array.isArray(value.onboarding.slides) && value.onboarding.slides.length > 0)
+        ? value.onboarding.slides
+        : DEFAULT_MOBILE_CONFIG.onboarding.slides,
+    },
   };
 };
 
@@ -321,10 +364,14 @@ export const useMobileConfigStore = create<ConfigState>((set, get) => ({
         // Server responded 304 Not Modified: Cached configuration is still fresh
         const now = new Date().toISOString();
         set({ isRefreshing: false, isOffline: false, lastCheckedAt: now });
-        await AsyncStorage.setItem(
-          META_KEY,
-          JSON.stringify({ etag: currentEtag, lastCheckedAt: now })
-        );
+        try {
+          await AsyncStorage.setItem(
+            META_KEY,
+            JSON.stringify({ etag: currentEtag, lastCheckedAt: now })
+          );
+        } catch (storageErr) {
+          console.warn('Failed to save mobileConfig metadata:', storageErr);
+        }
         return;
       }
 
@@ -342,10 +389,14 @@ export const useMobileConfigStore = create<ConfigState>((set, get) => ({
           lastCheckedAt: now,
         });
 
-        await Promise.all([
-          AsyncStorage.setItem(CACHE_KEY, JSON.stringify(freshConfig)),
-          AsyncStorage.setItem(META_KEY, JSON.stringify({ etag: newEtag, lastCheckedAt: now })),
-        ]);
+        try {
+          await Promise.all([
+            AsyncStorage.setItem(CACHE_KEY, JSON.stringify(freshConfig)),
+            AsyncStorage.setItem(META_KEY, JSON.stringify({ etag: newEtag, lastCheckedAt: now })),
+          ]);
+        } catch (storageErr) {
+          console.warn('Failed to persist mobileConfig cache:', storageErr);
+        }
       }
     } catch (err) {
       // Keep cached or default configuration active, mark offline status

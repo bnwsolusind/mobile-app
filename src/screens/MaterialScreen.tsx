@@ -27,7 +27,15 @@ import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
-import { DEFAULT_PARENT_AVATAR, getProfileImageUrl } from '../utils/profile';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
+import {
+  DEFAULT_PARENT_AVATAR,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+  getProfileImageUrl,
+  getStudentAvatarSource,
+  isGirlStudent,
+} from '../utils/profile';
 import { EmptyStateCard } from '../components/EmptyStateCard';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
@@ -48,12 +56,13 @@ import { useDebounce } from '../hooks/useDebounce';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
+
 const STUDENT_CARD_GAP = 12;
 const STUDENT_PEEK_WIDTH = 26;
 const studentCardWidth = SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP;
 const studentSnapInterval = studentCardWidth + STUDENT_CARD_GAP;
 const studentTrackPad = STUDENT_PEEK_WIDTH;
-const centerLoopOffset = studentSnapInterval;
 
 type Child = Record<string, any>;
 type MaterialItem = Record<string, any>;
@@ -236,49 +245,55 @@ export default function MaterialScreen({ route, navigation }: any) {
   const config = useMobileConfigStore((state) => state.config);
 
   const resolvedKopUnit = useMemo(() => {
-    const unitTarget = currentUserUnitName;
-    const uLower = (unitTarget || '').toLowerCase();
-    if (uLower.includes('sd') || uLower.includes('sdit')) {
-      return {
-        unitName: 'SD ISLAM TERPADU DAR EL-IMAN',
-        address: 'Jl. Belanti Barat No. 12, Kec. Padang Utara, Kota Padang, Sumatera Barat',
-        contact: 'Telp: (0751) 448888 • Email: sdit@dareliman.sch.id',
-      };
-    }
-    if (uLower.includes('smp') || uLower.includes('smpit')) {
-      return {
-        unitName: 'SMP ISLAM TERPADU DAR EL-IMAN',
-        address: 'Jl. Gurun Laweh No. 8, Nanggalo, Kota Padang, Sumatera Barat',
-        contact: 'Telp: (0751) 448889 • Email: smpit@dareliman.sch.id',
-      };
-    }
-    if (uLower.includes('sma') || uLower.includes('smait')) {
-      return {
-        unitName: 'SMA ISLAM TERPADU DAR EL-IMAN',
-        address: 'Jl. Gurun Laweh No. 10, Nanggalo, Kota Padang, Sumatera Barat',
-        contact: 'Telp: (0751) 448891 • Email: smait@dareliman.sch.id',
-      };
-    }
-    if (uLower.includes('tk')) {
-      return {
-        unitName: unitTarget.toUpperCase(),
-        address: 'Jl. Gunuang Sarik No. 12, Kuranji, Kota Padang, Sumatera Barat',
-        contact: 'Telp: 0812-1111-2222 • Email: tkit@dareliman.sch.id',
-      };
-    }
-    if (uLower.includes('ponpes') || uLower.includes('pesantren') || uLower.includes('mahad') || uLower.includes('asrama')) {
-      return {
-        unitName: 'PONDOK PESANTREN DAR EL-IMAN ISLAMIC BOARDING SCHOOL',
-        address: 'Jl. Gunung Juaro, Surau Gadang, Kec. Nanggalo, Kota Padang, Sumatera Barat',
-        contact: 'Telp: (0751) 448890 • Email: ponpes@dareliman.sch.id',
-      };
-    }
+    const unitObj =
+      (user as any)?.education_unit ||
+      (user as any)?.unit ||
+      (user as any)?.employee?.unit ||
+      teacherDashboard?.education_unit ||
+      teacherDashboard?.unit ||
+      (user as any)?.student?.education_unit ||
+      null;
+
+    const unitMeta = (unitObj && typeof unitObj === 'object' && 'metadata' in unitObj) ? (unitObj.metadata as any) : {};
+    const unitTarget =
+      unitObj?.name ||
+      unitObj?.nama_unit ||
+      currentUserUnitName ||
+      config?.branding?.school_name ||
+      'Unit Pendidikan';
+
+    const rawAddress =
+      unitObj?.address ||
+      unitObj?.alamat ||
+      unitMeta?.address ||
+      unitMeta?.alamat ||
+      config?.branding?.address;
+
+    const rawPhone =
+      unitObj?.phone ||
+      unitObj?.telepon ||
+      unitMeta?.phone ||
+      config?.branding?.contact?.phone;
+
+    const rawEmail =
+      unitObj?.email ||
+      unitMeta?.email ||
+      config?.branding?.contact?.email;
+
+    const rawNpsn = unitMeta?.npsn || unitObj?.code;
+
+    const contactParts: string[] = [];
+    if (rawNpsn) contactParts.push(`NPSN: ${rawNpsn}`);
+    if (rawPhone) contactParts.push(`Telp: ${rawPhone}`);
+    if (rawEmail) contactParts.push(`Email: ${rawEmail}`);
+
     return {
-      unitName: unitTarget.toUpperCase(),
-      address: 'Kompleks Kampus Pendidikan Terpadu SIT · Administrasi Tata Usaha & Akademik',
-      contact: 'Pusat Informasi & Layanan Terpadu Yayasan',
+      unitName: String(unitTarget).toUpperCase(),
+      address: rawAddress || 'Kompleks Kampus Pendidikan Terpadu SIT · Administrasi Tata Usaha & Akademik',
+      contact: contactParts.length > 0 ? contactParts.join(' • ') : 'Pusat Informasi & Layanan Terpadu Sekolah',
     };
-  }, [currentUserUnitName]);
+  }, [user, teacherDashboard, currentUserUnitName, config]);
+
 
   const foundationName = useMemo(() => {
     return (config?.branding?.school_name || (user as any)?.yayasan_name || 'Yayasan Dar El-Iman').toUpperCase();
@@ -468,6 +483,7 @@ export default function MaterialScreen({ route, navigation }: any) {
   const [selectedChildId, setSelectedChildId] = useState<string | undefined>(
     route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId
   );
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState<boolean>(false);
   const [feedbackModal, setFeedbackModal] = useState<{
     visible: boolean;
     type?: FeedbackType;
@@ -482,21 +498,15 @@ export default function MaterialScreen({ route, navigation }: any) {
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
   const handledParamIdRef = useRef<string | null>(null);
 
-  const studentLoopCount = children.length;
-  const safeCenter = studentLoopCount > 0 ? ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount : 0;
+  // Real-time tracking titik dot carousel saat gesture drag/swipe berlangsung
+  const [visualDotIndex, setVisualDotIndex] = useState<number | null>(null);
+  const currentActiveDotIndex = visualDotIndex !== null ? visualDotIndex : activeChildIndex;
 
-  // Window 3-kartu untuk carousel infinite loop mulus
-  const loopWindow = useMemo(() => {
-    const n = studentLoopCount;
-    if (n <= 1) return { list: children, realIdx: [0] };
-    const cur = ((activeChildIndex % n) + n) % n;
-    const prev = (cur - 1 + n) % n;
-    const next = (cur + 1) % n;
-    return {
-      list: [children[prev], children[cur], children[next]],
-      realIdx: [prev, cur, next],
-    };
-  }, [children, activeChildIndex, studentLoopCount]);
+  const scrollToActiveChild = useCallback((idx: number, animated = false): void => {
+    if (children.length <= 1) return;
+    const clamped = Math.max(0, Math.min(children.length - 1, idx));
+    studentScrollRef.current?.scrollTo({ x: clamped * studentSnapInterval, animated });
+  }, [children.length]);
 
   // Sinkronkan selectedChildId dengan parameter rute atau store anak aktif global
   useEffect(() => {
@@ -514,6 +524,7 @@ export default function MaterialScreen({ route, navigation }: any) {
         const idx = children.findIndex((c) => String(c.id || c.student_id) === strId);
         if (idx >= 0 && idx !== activeChildIndex) {
           setActiveChildIndex(idx);
+          scrollToActiveChild(idx, true);
         }
       }
     } else if (activeChildIdFromStore && activeChildIdFromStore !== selectedChildId) {
@@ -523,15 +534,16 @@ export default function MaterialScreen({ route, navigation }: any) {
         const idx = children.findIndex((c) => String(c.id || c.student_id) === strId);
         if (idx >= 0 && idx !== activeChildIndex) {
           setActiveChildIndex(idx);
+          scrollToActiveChild(idx, true);
         }
       }
     }
-  }, [route?.params?.child_id, route?.params?.student_id, activeChildIdFromStore, selectedChildId, children, activeChildIndex]);
+  }, [route?.params?.child_id, route?.params?.student_id, activeChildIdFromStore, selectedChildId, children, activeChildIndex, scrollToActiveChild]);
 
   const syncLoopChildId = useCallback((newIdx: number) => {
     if (!children || children.length === 0) return;
     const n = children.length;
-    const norm = ((newIdx % n) + n) % n;
+    const norm = Math.max(0, Math.min(n - 1, newIdx));
     const targetChild = children[norm];
     if (targetChild) {
       const targetId = String(targetChild.id || targetChild.student_id);
@@ -540,38 +552,21 @@ export default function MaterialScreen({ route, navigation }: any) {
     }
   }, [children]);
 
-  const recenterLoop = useCallback(() => {
-    if (studentLoopCount > 1) {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
-    }
-  }, [studentLoopCount]);
+  const goToLoopChild = useCallback((targetIndex: number) => {
+    if (children.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(children.length - 1, targetIndex));
+    setActiveChildIndex(clampedIndex);
+    syncLoopChildId(clampedIndex);
+    scrollToActiveChild(clampedIndex, true);
+  }, [children.length, syncLoopChildId, scrollToActiveChild]);
 
-  const goToLoopChild = useCallback((targetRealIdx: number) => {
-    if (studentLoopCount <= 1) {
-      setActiveChildIndex(0);
-      syncLoopChildId(0);
-      return;
-    }
-    const n = studentLoopCount;
-    const cur = safeCenter;
-    const target = ((targetRealIdx % n) + n) % n;
-    if (target === cur) {
-      recenterLoop();
-      return;
-    }
-    setActiveChildIndex(target);
-    syncLoopChildId(target);
-    const forwardStep = (target - cur + n) % n;
-    const backwardStep = (cur - target + n) % n;
-    if (forwardStep <= backwardStep) {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
-    } else {
-      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
-    }
-    setTimeout(() => {
-      recenterLoop();
-    }, 280);
-  }, [studentLoopCount, safeCenter, syncLoopChildId, recenterLoop]);
+  // Posisikan scroll ke kartu yang aktif saat awal load atau lebar card berubah
+  useEffect(() => {
+    if (children.length <= 1) return;
+    requestAnimationFrame(() => {
+      scrollToActiveChild(activeChildIndex, false);
+    });
+  }, [children.length, activeChildIndex, scrollToActiveChild]);
 
   // States
   const [loading, setLoading] = useState<boolean>(true);
@@ -1584,6 +1579,54 @@ export default function MaterialScreen({ route, navigation }: any) {
     return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
   }, []);
 
+  const studentFullName =
+    activeStudent?.full_name ||
+    activeStudent?.name ||
+    activeStudent?.nama_lengkap ||
+    'Siswa';
+
+  const studentUnit =
+    activeStudent?.kelas?.unit_pendidikan?.name ||
+    activeStudent?.kelas?.unit_pendidikan?.nama ||
+    activeStudent?.unit?.name ||
+    activeStudent?.unit_name ||
+    activeStudent?.education_unit?.name ||
+    activeStudent?.unit ||
+    '';
+
+  const studentClass =
+    activeStudent?.kelas?.nama_kelas ||
+    activeStudent?.kelas?.name ||
+    activeStudent?.kelas_name ||
+    activeStudent?.class_name ||
+    (typeof activeStudent?.kelas === 'string' ? activeStudent.kelas : '') ||
+    (activeStudent?.grade ? `Kelas ${activeStudent.grade}` : '') ||
+    '';
+
+  const studentAvatarSource = useMemo(() => {
+    return getStudentAvatarSource(activeStudent);
+  }, [activeStudent]);
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini — Single Source of Truth selaras dengan HomeScreen
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(activeStudent);
+  }, [activeStudent]);
+
+  const academicYearText = useMemo(() => {
+    return getDynamicAcademicYear(activeStudent || studentInfo || teacherDashboard);
+  }, [activeStudent, studentInfo, teacherDashboard]);
+
+  const semesterText = useMemo(() => {
+    const s = getDynamicAcademicSemester(activeStudent || studentInfo || teacherDashboard);
+    return s.split(' ')[0] || 'Semester 1';
+  }, [activeStudent, studentInfo, teacherDashboard]);
+
+  const isBoarding = useMemo(() => {
+    const unit = String(studentUnit || '').toLowerCase();
+    const jenjang = String(activeStudent?.kelas?.jenjang || activeStudent?.jenjang || '').toLowerCase();
+    return unit.includes('pesantren') || unit.includes('ponpes') || unit.includes('asrama') || jenjang.includes('pesantren');
+  }, [studentUnit, activeStudent]);
+
   const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
   const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
 
@@ -1843,7 +1886,25 @@ export default function MaterialScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* 1. STICKY HEADER BERSAMA (Guru vs Siswa) */}
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN JADWAL & UTAMA, JERNIH & CRISP) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={[
+            'rgba(240, 253, 244, 0)',
+            'rgba(240, 253, 244, 0.50)',
+            '#F0FDF4',
+          ]}
+          locations={[0.45, 0.78, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP HEADER IDENTIK HALAMAN JADWAL (TOMBOL KARTU PUTIH MINT GREEN SHADOW) ── */}
       {isTeacherOnly ? (
         <TeacherStickyHeader
           scrollY={scrollY}
@@ -1855,101 +1916,86 @@ export default function MaterialScreen({ route, navigation }: any) {
           onBack={handleBack}
         />
       ) : (
-        <StudentStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Materi Pembelajaran"
-          navigation={navigation}
-          route={route}
-          student={activeStudent}
-          user={user}
-          childrenList={children}
-          selectedChildId={selectedChildId}
-          onSelectChild={(cid, idx) => {
-            if (cid) {
-              const strId = String(cid);
-              setSelectedChildId(strId);
-              useActiveChildStore.getState().setActiveChildId(strId);
-            }
-            goToLoopChild(idx);
-          }}
-          middleAction={{
-            label: 'Jadwal',
-            icon: 'calendar-clock',
-            onPress: () => openScheduleForStudent(activeStudent),
-          }}
-          onOpenIdCard={(s) => openIdCard(s)}
-          onOpenQr={(s) => openQrCard(s)}
-          onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-          onOpenMenu={(s) => setSelectedMenuStudent(s)}
-        />
+        <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={handleBack}
+            style={styles.cleanHeaderIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Kembali"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+          </TouchableOpacity>
+
+          <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+            Materi Pembelajaran
+          </Text>
+
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => navigation?.navigate('Notifikasi')}
+            style={styles.cleanHeaderIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Notifikasi"
+          >
+            <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+            {unreadNotificationCount > 0 && <View style={styles.cleanHeaderBadgeDot} />}
+          </TouchableOpacity>
+        </View>
       )}
-      <View style={styles.sheetContainer}>
-        <LinearGradient
-          colors={isTeacherOnly ? ['#FFFFFF', '#F4FAF7', '#EAF7F0'] : ['#FFFFFF', '#F2FAF6', '#DDF5EB']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
 
-        <Animated.ScrollView
-          style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
-          onScroll={handleMainScroll}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
-          }
-        >
-          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
+      <Animated.ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.cleanMainScrollContent,
+          { paddingBottom: isTeacherOnly ? Math.max(bottomInset + 72, 94) : bottomInset + 30 },
+        ]}
+        onScroll={handleMainScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} />
+        }
+      >
+        <View style={styles.cleanScrollInner}>
+          {isTeacherOnly && (
+            <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
+              <View style={styles.staticTopBarRow}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={handleBack}
+                  style={styles.heroSquircleBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Kembali"
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={22} color="#064E3B" />
+                </TouchableOpacity>
 
-            <View style={styles.staticTopBarRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
+                <View style={styles.heroTitleCenterCol}>
+                  <Text numberOfLines={1} style={styles.heroModuleTitle}>
+                    Bahan Ajar & Modul
+                  </Text>
+                  <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
+                    {`Tahun Ajaran ${academicInfo}`}
+                  </Text>
+                </View>
 
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>
-                  {isTeacherOnly ? 'Bahan Ajar & Modul' : 'Materi Pembelajaran'}
-                </Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                  {isTeacherOnly
-                    ? `Tahun Ajaran ${academicInfo}`
-                    : (heroFirstName ? `Ananda ${heroFirstName}` : (academicInfo ? `Tahun Ajaran ${academicInfo}` : heroSubtitleFallback))}
-                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => navigation?.navigate('Notifikasi')}
+                  style={styles.heroSquircleBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Notifikasi"
+                >
+                  <MaterialCommunityIcons name="bell-outline" size={20} color="#064E3B" />
+                  {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+                </TouchableOpacity>
               </View>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#FFFFFF" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
             </View>
-          </View>
+          )}
 
-          {/* Badan Halaman Konten — dibungkus agar jarak dari hero sama dengan Tugas/Jadwal */}
-          <View style={styles.bodyContentWrapper}>
+          {/* Badan Halaman Konten */}
+          <View style={isTeacherOnly ? styles.bodyContentWrapper : styles.cleanScrollInner}>
             {isTeacherOnly ? (
               <>
 
@@ -1966,7 +2012,7 @@ export default function MaterialScreen({ route, navigation }: any) {
                     <MaterialCommunityIcons
                       name="book-open-page-variant"
                       size={16}
-                      color={materialSubTab === 'materials' ? '#047857' : '#64748B'}
+                      color={materialSubTab === 'materials' ? '#FFFFFF' : '#065F46'}
                       style={{ marginRight: 5 }}
                     />
                     <Text
@@ -2006,7 +2052,7 @@ export default function MaterialScreen({ route, navigation }: any) {
                     <MaterialCommunityIcons
                       name="layers-outline"
                       size={16}
-                      color={materialSubTab === 'modul_ajar' ? '#047857' : '#64748B'}
+                      color={materialSubTab === 'modul_ajar' ? '#FFFFFF' : '#065F46'}
                       style={{ marginRight: 5 }}
                     />
                     <Text
@@ -3232,148 +3278,153 @@ export default function MaterialScreen({ route, navigation }: any) {
               </>
             ) : (
               <>
-                {/* 1. CONTAINER DATA ANANDA & UNIT PENDIDIKAN */}
-                {children && children.length > 0 ? (
-                  <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                    {children.length === 1 ? (
-                      <View style={styles.singleHeroCardContainer}>
-                        <StudentHeroCard
-                          child={children[0]}
-                          isSelected={true}
-                          isSingleChild={true}
-                          showActionButtons={true}
-                          cardLabel="Kartu Siswa"
-                          calendarLabel="Jadwal"
-                          portalLabel="Menu"
-                          onPressCard={() => openIdCard(children[0])}
-                          onPressQr={() => openQrCard(children[0])}
-                          onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                          onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                          onPressCalendar={() => openScheduleForStudent(children[0])}
-                          onPressPortal={() => setSelectedMenuStudent(children[0])}
-                        />
-                      </View>
-                    ) : (
-                      <>
-                        <ScrollView
-                          ref={studentScrollRef}
-                          horizontal
-                          nestedScrollEnabled={true}
-                          showsHorizontalScrollIndicator={false}
-                          contentOffset={{ x: centerLoopOffset, y: 0 }}
-                          contentContainerStyle={[
-                            styles.studentCardsTrack,
-                            { paddingHorizontal: studentTrackPad },
-                          ]}
-                          decelerationRate="fast"
-                          snapToInterval={studentSnapInterval}
-                          snapToAlignment="start"
-                          disableIntervalMomentum
-                          onMomentumScrollEnd={(e) => {
-                            if (studentLoopCount === 0) return;
-                            const offsetX = e.nativeEvent.contentOffset.x;
-                            const slot = Math.round(offsetX / studentSnapInterval);
-                            const n = studentLoopCount;
-                            const cur = ((activeChildIndex % n) + n) % n;
-                            let realIdx = cur;
-                            if (slot === 2) realIdx = (cur + 1) % n;
-                            else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                            if (realIdx !== cur) {
-                              setActiveChildIndex(realIdx);
-                              syncLoopChildId(realIdx);
-                              requestAnimationFrame(() => {
-                                recenterLoop();
-                              });
-                            } else {
-                              recenterLoop();
-                            }
-                          }}
-                          onScrollEndDrag={(e) => {
-                            if (studentLoopCount === 0) return;
-                            const offsetX = e.nativeEvent.contentOffset.x;
-                            const slot = Math.round(offsetX / studentSnapInterval);
-                            const n = studentLoopCount;
-                            const cur = ((activeChildIndex % n) + n) % n;
-                            let realIdx = cur;
-                            if (slot === 2) realIdx = (cur + 1) % n;
-                            else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                            if (realIdx !== cur) {
-                              setActiveChildIndex(realIdx);
-                              syncLoopChildId(realIdx);
-                            }
-                          }}
-                          scrollEventThrottle={16}
-                          style={styles.heroCardScrollContainer}
-                        >
-                          {loopWindow.list.map((child: any, sIdx: number) => {
-                            const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                            const isCardActive = realIdx === safeCenter;
-                            return (
-                              <StudentHeroCard
-                                key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                                child={child}
-                                isSelected={isCardActive}
-                                isSingleChild={false}
-                                showActionButtons={true}
-                                cardWidth={studentCardWidth}
-                                cardLabel="Kartu Siswa"
-                                calendarLabel="Jadwal"
-                                portalLabel="Menu"
-                                onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                                onPressCard={() => openIdCard(child)}
-                                onPressQr={() => openQrCard(child)}
-                                onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                                onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                                onPressCalendar={() => openScheduleForStudent(child)}
-                                onPressPortal={() => setSelectedMenuStudent(child)}
-                              />
-                            );
-                          })}
-                        </ScrollView>
+                {/* 1. STUDENT PROFILE SECTION (TERBUKA, INDAH, DENGAN TOMBOL GANTI SISWA AKTIF) */}
+                <View style={styles.studentProfileRow}>
+                  {/* Circular Avatar dengan mint ring (Klik untuk lihat KTS Siswa Terpilih) */}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedIdCardStudent(activeStudent)}
+                    style={styles.studentAvatarRing}
+                  >
+                    <Image
+                      source={studentAvatarSource}
+                      style={styles.studentAvatarImg}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
 
-                        {/* DOT INDIKATOR SCROLL SISWA */}
-                        <View style={styles.paginationDotsRow}>
-                          {children.map((_, dotIdx) => {
-                            const isDotActive = dotIdx === safeCenter;
-                            return (
-                              <TouchableOpacity
-                                key={dotIdx}
-                                activeOpacity={0.7}
-                                onPress={() => goToLoopChild(dotIdx)}
-                                style={[
-                                  styles.paginationDot,
-                                  isDotActive && styles.paginationDotActive,
-                                ]}
-                                accessibilityLabel={`Pilih Siswa ke-${dotIdx + 1}`}
-                                accessibilityRole="button"
-                              />
-                            );
-                          })}
-                        </View>
-                      </>
-                    )}
-                  </View>
-                ) : (activeStudent || studentInfo || activeChildFromStore) ? (
-                  <View style={[styles.containerBlock, styles.studentContainerBlock]}>
-                    <View style={styles.singleHeroCardContainer}>
-                      <StudentHeroCard
-                        child={activeStudent || studentInfo || activeChildFromStore}
-                        isSelected={true}
-                        isSingleChild={true}
-                        showActionButtons={true}
-                        cardLabel="Kartu Siswa"
-                        calendarLabel="Jadwal"
-                        portalLabel="Menu"
-                        onPressCard={() => openIdCard(activeStudent || studentInfo || activeChildFromStore)}
-                        onPressQr={() => openQrCard(activeStudent || studentInfo || activeChildFromStore)}
-                        onPressWeeklyReport={() => setSelectedWeeklyStudent(activeStudent || studentInfo || activeChildFromStore)}
-                        onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                        onPressCalendar={() => openScheduleForStudent(activeStudent || studentInfo || activeChildFromStore)}
-                        onPressPortal={() => setSelectedMenuStudent(activeStudent || studentInfo || activeChildFromStore)}
-                      />
+                  {/* Profile Info */}
+                  <View style={styles.studentProfileInfoCol}>
+                    <TouchableOpacity
+                      activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                      onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                      style={styles.studentNameRow}
+                    >
+                      <Text numberOfLines={1} style={styles.studentProfileName}>
+                        {studentFullName}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Baris 2: Unit Pendidikan */}
+                    {studentUnit ? (
+                      <View style={styles.studentMetaRow}>
+                        <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                        <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                          {studentUnit}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {/* Baris 3: Kelas Siswa tepat di bawah Unit Pendidikan */}
+                    {studentClass ? (
+                      <View style={styles.studentMetaRow}>
+                        <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                        <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                          {studentClass}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran di Sebelahnya */}
+                    <View style={styles.studentActionBadgeRow}>
+                      {children && children.length > 1 && (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => setShowChildSelectorModal(true)}
+                          style={styles.parentGantiAnakBtn}
+                        >
+                          <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                          <MaterialCommunityIcons name="chevron-down" size={15} color="#FFFFFF" />
+                        </TouchableOpacity>
+                      )}
+
+                      <View
+                        style={[
+                          styles.attendanceStatusBadge,
+                          { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={attendanceStatus.icon}
+                          size={12}
+                          color={attendanceStatus.color}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                          {attendanceStatus.label}
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                ) : null}
+                </View>
+
+                {/* 1.2. BANNER TAHUN AJARAN AKTIF & SISTEM PENDIDIKAN (FULLDAY / BOARDING) */}
+                <View style={styles.academicYearBanner}>
+                  <LinearGradient
+                    colors={isBoarding ? ['#EEF2FF', '#F5F3FF', '#F8FAFC'] : ['#ECFDF5', '#F0FDF4', '#F8FAFC']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.academicYearGradient}
+                  >
+                    {/* Top Accent Strip */}
+                    <View
+                      style={[
+                        styles.academicYearAccentStrip,
+                        { backgroundColor: isBoarding ? '#6366F1' : '#059669' },
+                      ]}
+                    />
+
+                    {/* Row 1: Badge Tahun Ajaran & Status Aktif */}
+                    <View style={styles.academicYearHeaderRow}>
+                      <View
+                        style={[
+                          styles.academicYearBadge,
+                          isBoarding && { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' },
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name="calendar-check"
+                          size={13.5}
+                          color={isBoarding ? '#4F46E5' : '#047857'}
+                        />
+                        <Text
+                          style={[
+                            styles.academicYearBadgeText,
+                            isBoarding && { color: '#4338CA' },
+                          ]}
+                        >
+                          Tahun Ajaran {academicYearText} · {semesterText}
+                        </Text>
+                      </View>
+
+                      <View style={styles.activePillBadge}>
+                        <View style={styles.activeGreenDot} />
+                        <Text style={styles.activePillBadgeText}>Aktif</Text>
+                      </View>
+                    </View>
+
+                    {/* Row 2: Informasi Sistem Pendidikan (Fullday / Boarding) */}
+                    <View style={styles.systemInfoRow}>
+                      <View style={styles.systemIconBadge}>
+                        <MaterialCommunityIcons
+                          name={isBoarding ? 'home-group' : 'clock-time-four-outline'}
+                          size={15}
+                          color={isBoarding ? '#6366F1' : '#047857'}
+                        />
+                      </View>
+                      <View style={styles.systemInfoTextCol}>
+                        <Text style={styles.systemInfoTitle}>
+                          {isBoarding ? 'Pondok Pesantren (Boarding)' : 'Fullday School Terpadu'}
+                        </Text>
+                        <Text style={styles.systemInfoSubtitle}>
+                          {isBoarding
+                            ? 'Integrasi kurikulum kemenag, salafiyah & tahfizh Al-Qur\'an'
+                            : 'Pembelajaran komprehensif, karakter & materi ajar terpadu'}
+                        </Text>
+                      </View>
+                    </View>
+                  </LinearGradient>
+                </View>
 
                 {/* 2. RINGKASAN MATERI PEMBELAJARAN (4 KARTU KPI INTERAKTIF) */}
                 <View style={styles.emeraldSummaryContainer}>
@@ -3794,17 +3845,25 @@ export default function MaterialScreen({ route, navigation }: any) {
               </>
             )}
           </View>
-        </Animated.ScrollView>
+        </View>
+      </Animated.ScrollView>
 
       {/* DETAIL MATERI MODAL */}
       <Modal
         visible={!!selectedMaterial}
         animationType="slide"
         transparent
+        statusBarTranslucent
         onRequestClose={() => setSelectedMaterial(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { paddingBottom: Math.max(bottomInset, 36) + 16 }]}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setSelectedMaterial(null)}
+          />
+          <View style={[styles.modalContent, { paddingBottom: Math.max(bottomInset, Platform.OS === 'android' ? 48 : 20) + 16, maxHeight: '85%' }]}>
+            <View style={styles.modalDragHandle} />
             <View style={styles.modalHeader}>
               <View style={{ flex: 1, marginRight: 10 }}>
                 <View style={styles.subjectBadge}>
@@ -3887,6 +3946,74 @@ export default function MaterialScreen({ route, navigation }: any) {
             >
               <Text style={styles.modalDismissBtnText}>Tutup Materi</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL PILIH ANANDA (JIKA LEBIH DARI 1 ANAK) ── */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={[styles.childModalSheet, { paddingBottom: Math.max(bottomInset, Platform.OS === 'android' ? 48 : 20) + 16 }]}>
+            <View style={styles.modalDragHandle} />
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children && children.map((c: any, idx: number) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = c.name || c.nama_lengkap || c.full_name || 'Ananda';
+                const cUnit = c.unit?.name || c.unit_name || c.education_unit?.name || c.kelas?.unit_pendidikan?.name || '';
+                const cClass = c.class?.name || c.kelas?.nama_kelas || c.kelas?.name || c.class_name || c.kelas_name || '';
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      goToLoopChild(idx);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={[styles.childModalItemName, isSelected && { color: '#0D6B42', fontWeight: '800' }]}>
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#0D6B42" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -5960,7 +6087,6 @@ export default function MaterialScreen({ route, navigation }: any) {
           </View>
         </View>
       </Modal>
-      </View>
     </View>
   );
 }
@@ -5970,7 +6096,66 @@ const PICKER_MODAL_BOTTOM_PAD = Platform.OS === 'ios' ? 34 : 20;
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+    backgroundColor: '#F0FDF4',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    ...(StyleSheet.absoluteFill as any),
+    opacity: 1,
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cleanHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanHeaderBadgeDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  cleanScrollInner: {
+    flex: 1,
   },
   sheetContainer: {
     flex: 1,
@@ -5987,21 +6172,280 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 14,
   },
-  // Static hero top bar — sama style dengan Tugas/Jadwal
+  modalDragHandle: {
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#CBD5E1',
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  academicYearBanner: {
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 14,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.09,
+    shadowRadius: 8,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  academicYearGradient: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderRadius: 19,
+    position: 'relative',
+  },
+  academicYearAccentStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+  },
+  academicYearHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  academicYearBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 5,
+  },
+  academicYearBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  activePillBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+    gap: 4,
+  },
+  activeGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#0E9F6E',
+  },
+  activePillBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#03543F',
+  },
+  systemInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  systemIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  systemInfoTextCol: {
+    flex: 1,
+  },
+  systemInfoTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  systemInfoSubtitle: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#0D6B42',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  childModalItemSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  // Static hero top bar — foliage transparent style
   staticTopBarWrapper: {
     width: '100%',
     position: 'relative',
     overflow: 'hidden',
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
     paddingBottom: 14,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    elevation: 4,
+    backgroundColor: 'transparent',
   },
   heroDecorCircle1: {
     position: 'absolute',
@@ -6010,7 +6454,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
   },
   heroDecorCircle2: {
     position: 'absolute',
@@ -6019,12 +6463,12 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(16, 185, 129, 0.04)',
   },
   staticTopBarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     paddingHorizontal: 16,
     paddingBottom: 6,
     width: '100%',
@@ -6035,8 +6479,15 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     position: 'relative',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   heroTitleCenterCol: {
     flex: 1,
@@ -6045,18 +6496,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   heroModuleTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    fontFamily: 'Poppins_700Bold',
-    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#064E3B',
     textAlign: 'center',
-    letterSpacing: -0.2,
+    letterSpacing: 0.2,
   },
   heroModuleSubtitle: {
     fontSize: 11.5,
     fontWeight: '600',
-    fontFamily: 'Nunito_600SemiBold',
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#047857',
     textAlign: 'center',
     marginTop: 1,
   },
@@ -8886,10 +9335,10 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 8,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#64748B',
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
+    shadowOpacity: 0.08,
     shadowRadius: 6,
     elevation: 2,
   },
@@ -8989,12 +9438,17 @@ const styles = StyleSheet.create({
   // ── Sub-Tab Switcher Clean ──
   modernViewSwitcherWrapClean: {
     flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 4,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   modernViewSwitcherTabClean: {
     flex: 1,
@@ -9006,39 +9460,42 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   modernViewSwitcherTabActiveClean: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.2,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
   modernViewSwitcherTextClean: {
     fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
+    fontWeight: '700',
+    color: '#065F46',
   },
   modernViewSwitcherTextActiveClean: {
-    color: '#047857',
+    color: '#FFFFFF',
     fontWeight: '800',
   },
   tabCounterBadgeClean: {
     paddingHorizontal: 7,
     paddingVertical: 1.5,
     borderRadius: 10,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     marginLeft: 6,
   },
   tabCounterBadgeActiveClean: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: 'rgba(255, 255, 255, 0.4)',
   },
   tabCounterBadgeTextClean: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#047857',
   },
   tabCounterBadgeTextActiveClean: {
-    color: '#047857',
+    color: '#FFFFFF',
     fontWeight: '800',
   },
 
@@ -9060,13 +9517,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    shadowColor: '#64748B',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 1,
   },
@@ -9815,6 +10272,7 @@ const styles = StyleSheet.create({
 
   // ── Ringkasan Materi Belajar (Parent View) ──
   emeraldSummaryContainer: {
+    marginHorizontal: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     borderWidth: 1.5,
@@ -9937,11 +10395,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#CBD5E1',
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
     height: 44,
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
+    shadowColor: '#059669',
+    shadowOpacity: 0.05,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
@@ -9968,9 +10426,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    shadowColor: '#000000',
-    shadowOpacity: 0.03,
+    borderColor: '#D1FAE5',
+    shadowColor: '#059669',
+    shadowOpacity: 0.04,
     shadowRadius: 3,
     elevation: 1,
   },
@@ -10013,6 +10471,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
+    marginHorizontal: 16,
     shadowColor: '#059669',
     shadowOpacity: 0.09,
     shadowRadius: 10,

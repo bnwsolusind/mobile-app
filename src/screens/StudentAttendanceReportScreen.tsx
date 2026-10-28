@@ -8,6 +8,7 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -21,10 +22,12 @@ import { getApiErrorMessage } from '../services/api';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 import { getProfileImageUrl, resolveMediaUrl, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_PARENT_AVATAR } from '../utils/profile';
 import { isPrincipalRole } from '../utils/roles';
 
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 type SubjectType = 'siswa' | 'pegawai';
@@ -71,6 +74,19 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
 
   const user = useAuthStore((state) => state.user);
   const isPrincipal = isPrincipalRole(user?.roles || []);
+
+  // Safe back navigation helper with dynamic history fallback
+  const handleBack = () => {
+    const navState = navigation?.getState?.();
+    if (navState && navState.index > 0 && navigation?.canGoBack?.()) {
+      navigation.goBack();
+      return;
+    }
+    const didGoBack = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+    if (!didGoBack) {
+      navigation?.navigate?.('Beranda');
+    }
+  };
 
   // ── Strict Principal Education Unit Resolution ──
   const principalUnitId = useMemo(() => {
@@ -217,6 +233,48 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
     const raw = matched?.logo_url || (user as any)?.unit?.logo_url || (user?.metadata as any)?.education_unit?.logo_url;
     return raw ? resolveMediaUrl(raw) : null;
   }, [isPrincipal, principalUnitId, selectedUnitId, units, user]);
+
+  const currentUnitObj = useMemo(() => {
+    const effectiveUId = isPrincipal && principalUnitId ? String(principalUnitId) : selectedUnitId;
+    return units.find((u) => String(u.id) === String(effectiveUId)) || (user as any)?.unit || (user?.metadata as any)?.education_unit || null;
+  }, [isPrincipal, principalUnitId, selectedUnitId, units, user]);
+
+  const resolvedFoundationName = useMemo(() => {
+    return (
+      (branding as any)?.foundation_name ||
+      (branding as any)?.yayasan_name ||
+      branding?.school_name ||
+      'YAYASAN PENDIDIKAN ISLAM TERPADU DAR EL-IMAN'
+    );
+  }, [branding]);
+
+  const resolvedUnitMotto = useMemo(() => {
+    return (
+      (currentUnitObj?.metadata as any)?.motto ||
+      currentUnitObj?.motto ||
+      (branding as any)?.motto ||
+      (branding as any)?.tagline ||
+      "Pusat Pendidikan Islam Terpadu Berkarakter Qur'ani & As-Sunnah"
+    );
+  }, [currentUnitObj, branding]);
+
+  const resolvedUnitAddress = useMemo(() => {
+    return (
+      (currentUnitObj?.metadata as any)?.address ||
+      currentUnitObj?.alamat ||
+      (branding as any)?.address ||
+      (branding?.contact as any)?.address ||
+      'Jl. Gurun Laweh No. 2, Nanggalo, Kota Padang, Sumatera Barat • Kode Pos: 25143'
+    );
+  }, [currentUnitObj, branding]);
+
+  const resolvedUnitContact = useMemo(() => {
+    const npsn = (currentUnitObj?.metadata as any)?.npsn || currentUnitObj?.npsn || '69989012';
+    const akred = (currentUnitObj?.metadata as any)?.accreditation || currentUnitObj?.accreditation || 'A';
+    const telp = (currentUnitObj?.metadata as any)?.phone || currentUnitObj?.telepon || branding?.contact?.phone || '(0751) 705888';
+    const email = (currentUnitObj?.metadata as any)?.email || currentUnitObj?.email || branding?.contact?.email || 'tu@dareliman.sch.id';
+    return `NPSN: ${npsn} • Akreditasi ${akred} • Telp: ${telp} • Email: ${email}`;
+  }, [currentUnitObj, branding]);
   // Active Dropdown Meta Objects
   const activePeriodMeta = useMemo(() => {
     return PERIOD_OPTIONS.find((p) => p.key === selectedPeriod) || PERIOD_OPTIONS[0];
@@ -756,7 +814,7 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
   ]);
 
   // ── 6. Export & Download Handler ──
-  const handleDownload = () => {
+  const handleDownload = async () => {
     const subjectLabel = activeSubject === 'siswa' ? 'Presensi Siswa' : 'Presensi Guru & Pegawai';
     const scopeLabel =
       activeSubject === 'siswa'
@@ -778,12 +836,34 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
               ? `Semester ${selectedSemester.toUpperCase()}`
               : `Tahunan ${selectedYear}/${selectedYear + 1}`;
 
-    setFeedbackModal({
-      visible: true,
-      type: 'success',
-      title: 'Laporan Siap Diunduh',
-      message: `Rekapitulasi ${subjectLabel} (${scopeLabel} - ${periodLabel}) berisi ${filteredRecords.length} record telah siap diekspor dalam format resmi.`,
-    });
+    const shareContent = [
+      `*LEMBAR REKAPITULASI RESMI PRESENSI*`,
+      `${resolvedFoundationName}`,
+      `${currentUnitName.toUpperCase()}`,
+      `----------------------------------------`,
+      `Jenis: ${subjectLabel}`,
+      `Cakupan: ${scopeLabel}`,
+      `Periode: ${periodLabel}`,
+      `Total Data: ${filteredRecords.length} record`,
+      `Hadir: ${attendanceStats.present} | Sakit: ${attendanceStats.sick} | Izin: ${attendanceStats.permit} | Alpa: ${attendanceStats.alpha}`,
+      `Persentase Kehadiran: ${attendanceStats.percentage}%`,
+      `----------------------------------------`,
+      `Dokumen resmi Tata Usaha & Kesiswaan.`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        title: `Rekap Presensi ${subjectLabel} - ${currentUnitName}`,
+        message: shareContent,
+      });
+    } catch {
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Laporan Siap Diunduh',
+        message: `Rekapitulasi ${subjectLabel} (${scopeLabel} - ${periodLabel}) berisi ${filteredRecords.length} record telah siap diekspor dalam format resmi.`,
+      });
+    }
   };
 
   // Handler Cetak Rekap Kolektif Seluruh Unit (Reset target perorangan)
@@ -1075,70 +1155,89 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
 
   return (
     <View style={s.container}>
-      {/* ── HEADER HALAMAN DATA MASTER PRESENSI TERPADU ── */}
-      <LinearGradient
-        colors={['#065F46', '#059669', '#10B981']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[s.headerContainer, { paddingTop: topInset + 6 }]}
-      >
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK BUKU PENGHUBUNG & BUKU NILAI) ── */}
+      <View style={[s.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={s.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG & DATA SISWA ── */}
+      <View style={[s.headerContainer, { paddingTop: topInset + 4 }]}>
         <View style={s.headerTopRow}>
           <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => navigation?.goBack?.() || navigation?.navigate('Beranda')}
+            activeOpacity={0.75}
+            onPress={handleBack}
             style={s.backButton}
+            accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
 
           <View style={s.headerTitleWrap}>
             <View style={s.headerBadge}>
-              <MaterialCommunityIcons
-                name={activeSubject === 'siswa' ? 'school-outline' : 'account-tie-outline'}
-                size={12}
-                color="#D1FAE5"
-              />
-              <Text style={s.headerBadgeText}>
+              <View style={s.pulseDot} />
+              <Text style={s.headerBadgeText} numberOfLines={1}>
                 {activeSubject === 'siswa'
                   ? 'PUSAT DATA PRESENSI SANTRI & SISWA'
-                  : 'PUSAT PRESENSI GURU & TENAGA KEPENDIDIKAN'}
+                  : 'PUSAT PRESENSI GURU & PEGAWAI'}
               </Text>
             </View>
             <Text style={s.headerMainTitle} numberOfLines={1}>
               {activeSubject === 'siswa' ? 'Data Presensi Siswa' : 'Data Presensi Guru & Pegawai'}
             </Text>
+            <Text style={s.headerSubtitle} numberOfLines={1}>
+              {activeSubject === 'siswa'
+                ? 'Rekapitulasi kehadiran santri, rombel & izin'
+                : 'Rekapitulasi kehadiran guru & staf pegawai'}
+            </Text>
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={handleDownload}
-              style={s.refreshButton}
+              style={s.headerActionBtn}
+              accessibilityLabel="Unduh Rekap"
             >
-              <MaterialCommunityIcons name="download-outline" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="download-outline" size={19} color="#064E3B" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={handlePrint}
-              style={s.refreshButton}
+              style={s.headerActionBtn}
+              accessibilityLabel="Cetak Rekap"
             >
-              <MaterialCommunityIcons name="printer-outline" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="printer-outline" size={19} color="#064E3B" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={onRefresh}
-              style={s.refreshButton}
+              style={s.headerActionBtn}
+              accessibilityLabel="Muat Ulang"
             >
-              <MaterialCommunityIcons name="refresh" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="refresh" size={19} color="#064E3B" />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Search Bar langsung di Header Gradient (Gaya Data Master) */}
+        {/* Search Bar langsung di Header identik Buku Penghubung */}
         <View style={s.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#64748B" />
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
           <TextInput
             style={s.searchInput}
             placeholder={activeSubject === 'siswa' ? 'Cari nama santri, NIS, rombel...' : 'Cari nama pegawai, NIP, NIY...'}
@@ -1156,14 +1255,14 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
           )}
         </View>
 
-        {/* 3 KPI Cards Row (Harmonisasi Data Master & TAILGRIDS_ALUMNI_MUTASI_CARDS) */}
+        {/* 3 KPI Cards Row Terpadu (Harmonisasi Data Master) */}
         <View style={s.kpiCardsRow}>
           {/* Card 1: Total Santri & Tingkat Kehadiran */}
-          <View style={[s.kpiBox, { borderColor: 'rgba(5, 150, 105, 0.22)' }]}>
+          <View style={[s.kpiBox, { borderColor: '#A7F3D0' }]}>
             <LinearGradient colors={['#FFFFFF', '#ECFDF5']} style={s.kpiBoxGradient}>
               <View style={s.kpiHeaderRow}>
                 <View style={[s.kpiIconSquare, { backgroundColor: '#059669' }]}>
-                  <MaterialCommunityIcons name="account-check" size={14} color="#FFFFFF" />
+                  <MaterialCommunityIcons name="account-check" size={13} color="#FFFFFF" />
                 </View>
                 <Text style={[s.kpiVal, { color: '#059669' }]}>
                   {computedStats.hadir}/{computedStats.total}
@@ -1177,11 +1276,11 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
           </View>
 
           {/* Card 2: Izin & Sakit */}
-          <View style={[s.kpiBox, { borderColor: 'rgba(37, 99, 235, 0.18)' }]}>
+          <View style={[s.kpiBox, { borderColor: '#BFDBFE' }]}>
             <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={s.kpiBoxGradient}>
               <View style={s.kpiHeaderRow}>
                 <View style={[s.kpiIconSquare, { backgroundColor: '#2563EB' }]}>
-                  <MaterialCommunityIcons name="file-document-edit-outline" size={14} color="#FFFFFF" />
+                  <MaterialCommunityIcons name="file-document-edit-outline" size={13} color="#FFFFFF" />
                 </View>
                 <Text style={[s.kpiVal, { color: '#2563EB' }]}>
                   {computedStats.izin + computedStats.sakit}
@@ -1195,11 +1294,11 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
           </View>
 
           {/* Card 3: Telat & Alpa */}
-          <View style={[s.kpiBox, { borderColor: 'rgba(225, 29, 72, 0.18)' }]}>
+          <View style={[s.kpiBox, { borderColor: '#FECDD3' }]}>
             <LinearGradient colors={['#FFFFFF', '#FFF1F2']} style={s.kpiBoxGradient}>
               <View style={s.kpiHeaderRow}>
                 <View style={[s.kpiIconSquare, { backgroundColor: '#E11D48' }]}>
-                  <MaterialCommunityIcons name="clock-alert-outline" size={14} color="#FFFFFF" />
+                  <MaterialCommunityIcons name="clock-alert-outline" size={13} color="#FFFFFF" />
                 </View>
                 <Text style={[s.kpiVal, { color: '#E11D48' }]}>
                   {computedStats.terlambat + computedStats.alpa}
@@ -1212,7 +1311,7 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
             </LinearGradient>
           </View>
         </View>
-      </LinearGradient>
+      </View>
 
       {/* ── SEGMENTED SUB-TABS (Tepat di Bawah Header, Gaya Data Master) ── */}
       <View style={s.segmentContainer}>
@@ -1381,11 +1480,13 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
         </ScrollView>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[s.scrollContent, { paddingBottom: bottomInset + 30 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />}
-      >
+      {/* ── SHEET CONTAINER KONTEN (Gaya Modern Buku Nilai & Buku Penghubung) ── */}
+      <View style={s.sheetContainer}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[s.scrollContent, { paddingBottom: bottomInset + 30 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />}
+        >
         {/* ── FILTER CARD: FILTER DATA PRESENSI (GAYA DATA MASTER TERPADU) ── */}
         <View style={s.filterCard}>
           <View style={s.filterCardHeader}>
@@ -2101,6 +2202,7 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
           )}
         </View>
       </ScrollView>
+      </View>
 
       {/* ── MODAL PILIHAN PERIODE CETAK REKAP INDIVIDU PTK / SANTRI ── */}
       <Modal
@@ -2288,16 +2390,27 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
             {/* Tombol Unduh PDF Cepat */}
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => {
+              onPress={async () => {
                 setShowPrintModal(false);
                 setSelectedEmployee(null);
                 setSelectedStudent(null);
-                setFeedbackModal({
-                  visible: true,
-                  type: 'success',
-                  title: 'Dokumen Berhasil Diunduh',
-                  message: `Lembar ${printDocMeta.title} (${currentUnitName}) telah siap dan disimpan sebagai dokumen resmi TU.`,
-                });
+                const shareContent = [
+                  `*LEMBAR CETAK RESMI: ${printDocMeta.title}*`,
+                  `No. Surat: ${printDocMeta.docNo}`,
+                  `Lembaga: ${resolvedFoundationName}`,
+                  `Unit: ${currentUnitName}`,
+                  `Subjek: ${printDocMeta.subtitle}`,
+                  `----------------------------------------`,
+                  `Format Resmi Rekapitulasi Tata Usaha Sekolah Terpadu.`,
+                ].join('\n');
+                try {
+                  await Share.share({
+                    title: printDocMeta.title,
+                    message: shareContent,
+                  });
+                } catch {
+                  // Fallback
+                }
               }}
               style={[s.printActionBtn, { backgroundColor: '#0284C7', marginRight: 6 }]}
             >
@@ -2308,16 +2421,25 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
             {/* Tombol Cetak / Print */}
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => {
+              onPress={async () => {
                 setShowPrintModal(false);
                 setSelectedEmployee(null);
                 setSelectedStudent(null);
-                setFeedbackModal({
-                  visible: true,
-                  type: 'success',
-                  title: 'Perintah Cetak Dikirim',
-                  message: `Dokumen resmi ${printDocMeta.title} (${currentUnitName}) telah dikirimkan ke antrean cetak printer.`,
-                });
+                const shareContent = [
+                  `*PERINTAH CETAK DOKUMEN: ${printDocMeta.title}*`,
+                  `No. Surat: ${printDocMeta.docNo}`,
+                  `Unit: ${currentUnitName}`,
+                  `Dicetak pada: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
+                  `Dokumen siap dicetak ke printer jaringan / lokal.`,
+                ].join('\n');
+                try {
+                  await Share.share({
+                    title: `Cetak - ${printDocMeta.title}`,
+                    message: shareContent,
+                  });
+                } catch {
+                  // Fallback
+                }
               }}
               style={s.printActionBtn}
             >
@@ -2671,17 +2793,11 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
 
                 {/* Kolom Tengah: Teks Lembaga & Alamat Lengkap Sesuai Standar TU */}
                 <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 6 }}>
-                  <Text style={s.paperKopYayasan}>YAYASAN PENDIDIKAN ISLAM TERPADU DAR EL-IMAN</Text>
+                  <Text style={s.paperKopYayasan}>{resolvedFoundationName.toUpperCase()}</Text>
                   <Text style={s.paperKopUnit}>{currentUnitName.toUpperCase()}</Text>
-                  <Text style={s.paperKopMotto}>
-                    "Pusat Pendidikan Islam Terpadu Berkarakter Qur'ani & As-Sunnah"
-                  </Text>
-                  <Text style={s.paperKopAddress}>
-                    Jl. Gurun Laweh No. 2, Nanggalo, Kota Padang, Sumatera Barat • Kode Pos: 25143
-                  </Text>
-                  <Text style={s.paperKopContact}>
-                    NPSN: 69989012 • Akreditasi A • Telp: (0751) 705888 • Email: tu@dareliman.sch.id
-                  </Text>
+                  <Text style={s.paperKopMotto}>"{resolvedUnitMotto}"</Text>
+                  <Text style={s.paperKopAddress}>{resolvedUnitAddress}</Text>
+                  <Text style={s.paperKopContact}>{resolvedUnitContact}</Text>
                 </View>
 
                 {/* Logo Kanan: Unit Pendidikan */}
@@ -3611,31 +3727,45 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F0FDF4' },
 
-  /* ── Header Halaman Data Master (Matching DataManagementScreen) ── */
+  /* ── Background Foliage ── */
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+  },
+
+  /* ── Header Container ── */
   headerContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    elevation: 4,
-    shadowColor: '#000000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
+    paddingBottom: 14,
   },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   headerTitleWrap: {
     flex: 1,
@@ -3643,37 +3773,66 @@ const s = StyleSheet.create({
   headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
+  },
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
   },
   headerBadgeText: {
     fontSize: 10,
     fontWeight: '800',
-    color: 'rgba(255, 255, 255, 0.85)',
-    letterSpacing: 0.6,
+    color: '#065F46',
+    letterSpacing: 0.5,
   },
   headerMainTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
     letterSpacing: 0.2,
+    marginTop: 1,
   },
-  refreshButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  headerActionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
+
+  /* ── Header Integrated Search Bar ── */
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
     height: 42,
     marginTop: 12,
     gap: 8,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -3682,6 +3841,8 @@ const s = StyleSheet.create({
     fontWeight: '600',
     paddingVertical: 0,
   },
+
+  /* ── 3 KPI Cards Row ── */
   kpiCardsRow: {
     flexDirection: 'row',
     gap: 8,
@@ -3690,8 +3851,14 @@ const s = StyleSheet.create({
   kpiBox: {
     flex: 1,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: 1.5,
     overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   kpiBoxGradient: {
     padding: 9,
@@ -3709,11 +3876,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   kpiVal: {
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '900',
   },
   kpiLbl: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '800',
     marginTop: 4,
   },
@@ -3726,36 +3893,56 @@ const s = StyleSheet.create({
 
   /* ── Segmented Sub-Tabs Bar ── */
   segmentContainer: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingVertical: 8,
+    paddingVertical: 6,
+    backgroundColor: 'transparent',
   },
   segmentScroll: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     gap: 8,
   },
   segmentBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 14,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     gap: 6,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   segmentBtnActive: {
     backgroundColor: '#059669',
+    borderColor: '#047857',
   },
   segmentBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#065F46',
   },
   segmentBtnTextActive: {
     color: '#FFFFFF',
     fontWeight: '800',
+  },
+
+  /* ── Sheet Container ── */
+  sheetContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 4,
+    marginTop: 4,
   },
 
   topHeader: {
@@ -3795,15 +3982,6 @@ const s = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.35)',
   },
   authorityBadgeText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
-  headerTitleSection: {
-    marginTop: 4,
-    marginBottom: 10,
-    paddingHorizontal: 2,
-  },
-  headerTitle: { fontSize: 18, fontWeight: '900', color: '#FFFFFF', letterSpacing: -0.2 },
-  headerSubtitle: { fontSize: 12.5, color: '#D1FAE5', fontWeight: '600' },
-  headerUnitTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
-  headerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
   scrollContent: { padding: 14 },
 

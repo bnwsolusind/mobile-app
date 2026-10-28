@@ -21,6 +21,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Background Image: Identik dengan Halaman Utama & Splash Screen
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 import {
   ActivityIndicator,
   Button,
@@ -50,7 +53,7 @@ import {
   isTeacherRole,
   isTuRole,
 } from '../utils/roles';
-import { resolveMediaUrl } from '../utils/profile';
+import { getProfileImageUrl, resolveMediaUrl } from '../utils/profile';
 import { isEmployeeGuru } from '../utils/employeeUtils';
 import AppFeedbackModal, { FeedbackType } from '../components/AppFeedbackModal';
 
@@ -221,14 +224,14 @@ const TAB_THEMES: Record<Resource, {
     label: 'Buku Induk',
     sub: 'Data Siswa',
     icon: 'account-school-outline',
-    activeColors: ['#2563EB', '#1D4ED8', '#1E3A8A'],
-    activeShadow: '#2563EB',
-    inactiveBorder: '#93C5FD',
-    inactiveBg: ['#FFFFFF', '#EFF6FF'],
-    iconBg: '#DBEAFE',
-    iconColor: '#1D4ED8',
-    textColor: '#1E40AF',
-    cardAccentColor: '#2563EB',
+    activeColors: ['#0D5B41', '#059669', '#18A165'],
+    activeShadow: '#059669',
+    inactiveBorder: '#A7F3D0',
+    inactiveBg: ['#FFFFFF', '#ECFDF5'],
+    iconBg: '#D1FAE5',
+    iconColor: '#0D5B41',
+    textColor: '#064E3B',
+    cardAccentColor: '#0D5B41',
   },
   employees: {
     label: 'Pegawai',
@@ -1271,10 +1274,10 @@ export default function DataManagementScreen({ route, navigation: propNavigation
         total,
         heroLabel: 'TOTAL KESELURUHAN SISWA',
         heroSub: '100% Terdaftar',
-        kpi1: { label: 'Siswa Aktif', value: aktif, sub: 'KBM Berjalan', icon: 'account-check', color: '#1D4ED8', bg: ['#EFF6FF', '#DBEAFE'], border: '#BFDBFE' },
+        kpi1: { label: 'Siswa Aktif', value: aktif, sub: 'KBM Berjalan', icon: 'account-check', color: '#047857', bg: ['#ECFDF5', '#D1FAE5'], border: '#A7F3D0' },
         kpi2: { label: 'Alumni Tamat', value: alumni, sub: 'Lulusan Terdata', icon: 'school', color: '#D97706', bg: ['#FFFBEB', '#FEF3C7'], border: '#FDE68A' },
         kpi3: { label: 'Pindah/Mutasi', value: mutasi, sub: 'Mutasi Keluar/Unit', icon: 'account-arrow-right', color: '#7C3AED', bg: ['#FAF5FF', '#F3E8FF'], border: '#E9D5FF' },
-        card1: { label: 'Siswa Aktif', value: aktif, icon: 'account-check', bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE', iconBg: '#DBEAFE', tag: 'Aktif', tagColor: '#1D4ED8' },
+        card1: { label: 'Siswa Aktif', value: aktif, icon: 'account-check', bg: '#ECFDF5', color: '#047857', border: '#A7F3D0', iconBg: '#D1FAE5', tag: 'Aktif', tagColor: '#047857' },
         card2: { label: 'Siswa Alumni', value: alumni, icon: 'school', bg: '#FFFBEB', color: '#D97706', border: '#FDE68A', iconBg: '#FEF3C7', tag: 'Tamat', tagColor: '#B45309' },
         card3: { label: 'Pindah / Mutasi', value: mutasi, icon: 'account-arrow-right', bg: '#FAF5FF', color: '#7C3AED', border: '#E9D5FF', iconBg: '#F3E8FF', tag: 'Mutasi', tagColor: '#6B21A8' },
         card4: { label: 'Non-Aktif', value: nonaktif, icon: 'account-cancel', bg: '#FFF1F2', color: '#E11D48', border: '#FECDD3', iconBg: '#FFE4E6', tag: 'Pasif', tagColor: '#BE123C' },
@@ -4227,21 +4230,41 @@ export default function DataManagementScreen({ route, navigation: propNavigation
 
   return (
     <View style={styles.screen}>
-      {/* ── HEADER HALAMAN DATA MASTER TERPADU (GAYA MUTASI SISWA) ── */}
-      <LinearGradient
-        colors={currentTheme.activeColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.headerContainer, { paddingTop: topInset + 6 }]}
-      >
+      {/* ── Background Image & Gradient Identik Halaman Utama (Layer Belakang) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Halaman Utama */}
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP BAR & HEADER IDENTIK HALAMAN UTAMA (FLOATING CLEAN DI ATAS BACKGROUND MASJID) ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
         <View style={styles.headerTopRow}>
-          <TouchableOpacity activeOpacity={0.7} onPress={handleGoBack} style={styles.backButton}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={handleGoBack}
+            style={styles.backButton}
+            accessibilityLabel="Kembali"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#064E3B" />
           </TouchableOpacity>
 
           <View style={styles.headerTitleWrap}>
             <View style={styles.headerBadge}>
-              <MaterialCommunityIcons name="database-check" size={12} color="#D1FAE5" />
+              <MaterialCommunityIcons name="database-check" size={12} color="#047857" />
               <Text style={styles.headerBadgeText}>PUSAT DATA MASTER TERPADU</Text>
             </View>
             <Text style={styles.headerMainTitle} numberOfLines={1}>
@@ -4251,29 +4274,31 @@ export default function DataManagementScreen({ route, navigation: propNavigation
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={() => setRekapPrintModalVisible(true)}
               style={styles.refreshButton}
+              accessibilityLabel="Cetak Rekap"
             >
-              <MaterialCommunityIcons name="printer-outline" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="printer-outline" size={20} color="#064E3B" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={() => {
                 setRefreshing(true);
                 void load();
               }}
               style={styles.refreshButton}
+              accessibilityLabel="Muat Ulang"
             >
-              <MaterialCommunityIcons name="refresh" size={20} color="#FFFFFF" />
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Search Bar langsung di Header Gradient */}
+        {/* Search Bar langsung di Header */}
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#64748B" />
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
           <NativeTextInput
             style={styles.searchInput}
             placeholder={`Cari nama, NIS, NIP ${resourceLabels[resource].toLowerCase()}...`}
@@ -4307,7 +4332,7 @@ export default function DataManagementScreen({ route, navigation: propNavigation
             </View>
           ))}
         </View>
-      </LinearGradient>
+      </View>
 
       {/* ── SEGMENTED SUB-TABS (Tepat di bawah Header) ── */}
       <View style={styles.segmentContainer}>
@@ -4843,7 +4868,23 @@ export default function DataManagementScreen({ route, navigation: propNavigation
                 const badgeLabel = isAlumni ? 'Alumni' : isMutasi ? 'Mutasi' : isNonaktif ? 'Non-aktif' : 'Aktif';
 
                 const initials = (title || 'S').trim().split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
-                const photoUrl = resolveMediaUrl(item?.foto_url || item?.avatar || item?.foto || item?.photo);
+                const itemMeta = (item?.metadata && typeof item.metadata === 'object') ? item.metadata : {};
+                const rawPhotoCandidate =
+                  item?.photo_url ||
+                  item?.avatar_url ||
+                  item?.photo ||
+                  item?.photo_thumb ||
+                  item?.foto_url ||
+                  item?.foto ||
+                  item?.avatar ||
+                  itemMeta?.photo_url ||
+                  itemMeta?.photo ||
+                  itemMeta?.foto ||
+                  itemMeta?.avatar ||
+                  item?.user?.photo_url ||
+                  item?.user?.avatar ||
+                  item?.user?.photo;
+                const photoUrl = getProfileImageUrl(item) || resolveMediaUrl(rawPhotoCandidate);
 
                 return (
                   <View
@@ -5134,18 +5175,6 @@ export default function DataManagementScreen({ route, navigation: propNavigation
           ]}
           pointerEvents="box-none"
         >
-          {/* Tab Indicator Chip */}
-          <View style={[styles.scrollFabTabChip, { backgroundColor: TAB_THEMES[resource].activeColors[0] + '22', borderColor: TAB_THEMES[resource].activeColors[0] + '44' }]}>
-            <MaterialCommunityIcons
-              name={TAB_THEMES[resource].icon as never}
-              size={14}
-              color={TAB_THEMES[resource].activeColors[0]}
-            />
-            <Text style={[styles.scrollFabTabChipText, { color: TAB_THEMES[resource].activeColors[0] }]}>
-              {TAB_THEMES[resource].label}
-            </Text>
-          </View>
-
           {/* Tambah Button */}
           <TouchableOpacity
             activeOpacity={0.88}
@@ -5377,19 +5406,42 @@ export default function DataManagementScreen({ route, navigation: propNavigation
             {/* Header Detail Modal */}
             <View style={styles.detailModalHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                <View style={[styles.detailAvatarWrap, { backgroundColor: TAB_THEMES[resource].cardAccentColor }]}>
-                  <MaterialCommunityIcons
-                    name={
-                      resource === 'students'
-                        ? 'account-school'
-                        : resource === 'employees'
-                          ? 'badge-account-horizontal'
-                          : 'google-classroom'
-                    }
-                    size={24}
-                    color="#FFFFFF"
-                  />
-                </View>
+                {(() => {
+                  const detailMeta = (detailItem?.metadata && typeof detailItem.metadata === 'object') ? detailItem.metadata : {};
+                  const detailPhotoRaw =
+                    detailItem?.photo_url ||
+                    detailItem?.avatar_url ||
+                    detailItem?.photo ||
+                    detailItem?.photo_thumb ||
+                    detailItem?.foto_url ||
+                    detailItem?.foto ||
+                    detailItem?.avatar ||
+                    detailMeta?.photo_url ||
+                    detailMeta?.photo ||
+                    detailMeta?.foto ||
+                    detailItem?.user?.photo_url;
+                  const detailPhoto = getProfileImageUrl(detailItem) || resolveMediaUrl(detailPhotoRaw);
+
+                  return (
+                    <View style={[styles.detailAvatarWrap, { backgroundColor: TAB_THEMES[resource].cardAccentColor, overflow: 'hidden' }]}>
+                      {detailPhoto ? (
+                        <Image source={{ uri: detailPhoto }} style={styles.detailAvatarImg} />
+                      ) : (
+                        <MaterialCommunityIcons
+                          name={
+                            resource === 'students'
+                              ? 'account-school'
+                              : resource === 'employees'
+                                ? 'badge-account-horizontal'
+                                : 'google-classroom'
+                          }
+                          size={24}
+                          color="#FFFFFF"
+                        />
+                      )}
+                    </View>
+                  );
+                })()}
                 <View style={{ flex: 1 }}>
                   <Text style={styles.detailModalName} numberOfLines={1}>
                     {detailItem ? displayName(detailItem) : ''}
@@ -7374,19 +7426,29 @@ export default function DataManagementScreen({ route, navigation: propNavigation
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#F8FAFC' },
+  screen: { flex: 1, backgroundColor: '#F0FDF4' },
   content: { padding: 14, paddingBottom: 120 },
 
-  /* ── Header Halaman Data Master (Matching Mutasi Siswa) ── */
+  /* ── Background Mosque & School (Identik Halaman Utama) ── */
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 480,
+    width: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
+  },
+
+  /* ── Header Halaman Data Master (Clean Top Bar Identik Halaman Utama) ── */
   headerContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    elevation: 4,
-    shadowColor: '#000000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
+    paddingBottom: 14,
+    backgroundColor: 'transparent',
   },
   headerTopRow: {
     flexDirection: 'row',
@@ -7394,12 +7456,19 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   headerTitleWrap: {
     flex: 1,
@@ -7408,36 +7477,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
   },
   headerBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
-    color: 'rgba(255, 255, 255, 0.85)',
-    letterSpacing: 0.6,
+    color: '#047857',
+    letterSpacing: 0.5,
   },
   headerMainTitle: {
-    fontSize: 17,
+    fontSize: 19,
     fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
+    color: '#064E3B',
+    letterSpacing: -0.3,
+    marginTop: 2,
   },
   refreshButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
-    height: 42,
+    height: 44,
     marginTop: 12,
     gap: 8,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
@@ -7519,39 +7610,40 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  /* ── Mutation Card & Detail Box (Matching Mutasi Siswa) ── */
+  /* ── Mutation Card & Detail Box (Matching Mutasi Siswa & Modern Squircle) ── */
   mutationCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    padding: 12,
+    padding: 13,
     marginBottom: 12,
     shadowColor: '#000000',
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
     shadowRadius: 6,
     elevation: 2,
   },
   cardTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 11,
   },
   avatarCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   avatarImg: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
   },
   avatarInitialsText: {
-    fontSize: 15,
+    fontSize: 15.5,
     fontWeight: '900',
   },
   cardMainInfo: {
@@ -7564,9 +7656,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tagBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
     flexShrink: 0,
   },
   tagBadgeText: {
@@ -7574,17 +7666,19 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   nisText: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: '#64748B',
     fontWeight: '600',
     marginTop: 2,
   },
   detailBox: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 9,
-    marginTop: 8,
-    gap: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    padding: 10,
+    marginTop: 9,
+    gap: 5,
   },
   detailItemRow: {
     flexDirection: 'row',
@@ -7592,13 +7686,13 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   detailItemLabel: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#64748B',
     width: 65,
   },
   detailItemVal: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#1E293B',
     flex: 1,
@@ -9252,6 +9346,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  detailAvatarImg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 14,
+    resizeMode: 'cover',
   },
   detailModalName: {
     fontSize: 16,

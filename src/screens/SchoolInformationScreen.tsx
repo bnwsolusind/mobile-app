@@ -24,9 +24,9 @@ import { useAuthStore } from '../stores/authStore';
 import { isParentRole, isTeacherRole, isStaffRole } from '../utils/roles';
 import {
   getProfileImageUrl,
-  DEFAULT_STUDENT_BOY_AVATAR,
-  DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
 } from '../utils/profile';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
@@ -41,6 +41,8 @@ import { StudentMenuModal } from '../components/StudentMenuModal';
 import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 import { EmptyStateCard } from '../components/EmptyStateCard';
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -249,10 +251,20 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     }
   };
 
-  const [children, setChildren] = useState<Child[]>([]);
-  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(route?.params?.child_id);
+  const globalActiveChildId = useActiveChildStore((state) => state.activeChildId);
+  const globalChildren = useActiveChildStore((state) => state.children);
+
+  const [children, setChildren] = useState<Child[]>(() => {
+    return globalChildren && globalChildren.length > 0 ? globalChildren : [];
+  });
+  const [selectedChildId, setSelectedChildId] = useState<string | undefined>(
+    route?.params?.child_id ||
+      route?.params?.student_id ||
+      globalActiveChildId ||
+      useActiveChildStore.getState().activeChildId ||
+      (globalChildren && globalChildren[0]?.id ? String(globalChildren[0].id) : undefined)
+  );
   const [studentInfo, setStudentInfo] = useState<any>(null);
-  const studentScrollRef = useRef<ScrollView>(null);
 
   const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
   const [selectedQrStudent, setSelectedQrStudent] = useState<any>(null);
@@ -284,49 +296,35 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     }
   }, [navigation]);
 
-  const handleStudentScrollEnd = (e: any) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = SCREEN_WIDTH - 50 + 12;
-    const index = Math.round(offsetX / cardWidth);
-    if (index >= 0 && index < children.length) {
-      const targetChild = children[index];
-      if (targetChild && String(targetChild.id) !== selectedChildId) {
-        setSelectedChildId(String(targetChild.id));
-      }
+  // Sinkronisasi selectedChildId saat globalActiveChildId berubah dari luar
+  useEffect(() => {
+    if (globalActiveChildId && String(globalActiveChildId) !== String(selectedChildId)) {
+      setSelectedChildId(String(globalActiveChildId));
     }
-  };
+  }, [globalActiveChildId, selectedChildId]);
 
-  const selectChildWithScroll = (childId: string, index: number) => {
-    setSelectedChildId(childId);
-    studentScrollRef.current?.scrollTo({
-      x: index * (SCREEN_WIDTH - 50 + 12),
-      animated: true,
-    });
-  };
+  // Sinkronisasi children dari global store jika tersedia
+  useEffect(() => {
+    if (globalChildren && globalChildren.length > 0 && children.length === 0) {
+      setChildren(globalChildren);
+    }
+  }, [globalChildren, children.length]);
 
   // Siswa aktif untuk sticky header & hero (anak terpilih -> info siswa -> profil -> user)
   const headerStudent = useMemo(() => {
+    const activeId = selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
     if (children && children.length > 0) {
-      const found = children.find(
-        (c) => String(c.id || c.student_id) === String(selectedChildId)
-      );
-      if (found) return found;
+      if (activeId) {
+        const found = children.find(
+          (c) => String(c.id || c.student_id) === String(activeId)
+        );
+        if (found) return found;
+      }
       return children[0];
     }
     if (studentInfo) return studentInfo;
     return (user as any)?.student || user || null;
-  }, [children, selectedChildId, studentInfo, user]);
-
-  // Nama depan + fallback tahun ajaran untuk subtitle hero statis
-  const heroFirstName = useMemo(
-    () => resolveStudentDisplay(headerStudent, user).firstName,
-    [headerStudent, user]
-  );
-  const heroSubtitleFallback = useMemo(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    return now.getMonth() >= 6 ? `Tahun Ajaran ${y}/${y + 1}` : `Tahun Ajaran ${y - 1}/${y}`;
-  }, []);
+  }, [children, selectedChildId, globalActiveChildId, studentInfo, user]);
 
   // States
   const [loading, setLoading] = useState<boolean>(true);
@@ -339,24 +337,34 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   const [selectedItem, setSelectedItem] = useState<InfoItem | null>(null);
   const [page, setPage] = useState<number>(1);
   const [totalItems, setTotalItems] = useState<number>(0);
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState<boolean>(false);
 
-  // 1. Load Children if parent (Isolasi data 1 anak terpilih jika ada child_id)
+  // 1. Load Children if parent (memuat semua anak, default ke activeChildId atau targetChildId)
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
-      const targetChildId = route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId;
+      const targetChildId =
+        route?.params?.child_id ||
+        route?.params?.student_id ||
+        globalActiveChildId ||
+        useActiveChildStore.getState().activeChildId;
+
       mobileApiService.getPortalChildren()
         .then((res) => {
           const arr = unwrapApiData<Child[]>(res) || [];
-          if (isMounted) {
-            const filteredArr = targetChildId
-              ? arr.filter((c) => String(c.id) === String(targetChildId))
-              : arr;
-            setChildren(filteredArr.length > 0 ? filteredArr : arr);
+          if (isMounted && arr.length > 0) {
+            setChildren(arr);
             if (targetChildId) {
-              setSelectedChildId(String(targetChildId));
+              const matched = arr.find((c) => String(c.id || c.student_id) === String(targetChildId));
+              if (matched) {
+                const sid = String(matched.id || matched.student_id);
+                setSelectedChildId(sid);
+                useActiveChildStore.getState().setActiveChildId(sid);
+              }
             } else if (!selectedChildId && arr.length > 0) {
-              setSelectedChildId(useActiveChildStore.getState().activeChildId || String(arr[0].id));
+              const defaultId = String(arr[0].id || arr[0].student_id);
+              setSelectedChildId(defaultId);
+              useActiveChildStore.getState().setActiveChildId(defaultId);
             }
           }
         })
@@ -365,7 +373,118 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, route?.params?.child_id]);
+  }, [isParent, route?.params?.child_id, route?.params?.student_id, globalActiveChildId]);
+
+  // Resolusi Identitas Siswa & Unit Terpilih
+  const studentFullName = useMemo(() => {
+    return (
+      headerStudent?.nama_lengkap ||
+      headerStudent?.full_name ||
+      headerStudent?.name ||
+      'Ananda Siswa'
+    );
+  }, [headerStudent]);
+
+  const studentUnit = useMemo(() => {
+    return (
+      headerStudent?.educationUnit?.name ||
+      headerStudent?.education_unit?.name ||
+      headerStudent?.unit_name ||
+      headerStudent?.education_unit_name ||
+      headerStudent?.kelas?.unitPendidikan?.name ||
+      headerStudent?.unit ||
+      ''
+    );
+  }, [headerStudent]);
+
+  const studentClass = useMemo(() => {
+    return (
+      headerStudent?.kelas?.nama_kelas ||
+      headerStudent?.kelas?.name ||
+      headerStudent?.class?.name ||
+      headerStudent?.class_name ||
+      headerStudent?.kelas ||
+      ''
+    );
+  }, [headerStudent]);
+
+  const studentAvatarSource = useMemo(() => {
+    return getStudentAvatarSource(headerStudent);
+  }, [headerStudent]);
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini (Single Source of Truth)
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(headerStudent);
+  }, [headerStudent]);
+
+  // Informasi Unit Pendidikan Siswa Terpilih (100% Dinamis dari Database)
+  const unitInfo = useMemo(() => {
+    // 1. Prioritaskan unit dari siswa yang aktif dipilih (headerStudent)
+    const studentEdu =
+      headerStudent?.educationUnit ||
+      headerStudent?.education_unit ||
+      headerStudent?.kelas?.unitPendidikan ||
+      null;
+
+    // 2. Cocokkan apakah summary.unit sesuai dengan unit siswa aktif
+    const isSummaryUnitMatch = Boolean(
+      summary?.unit &&
+      (String(summary.unit.id) === String(studentEdu?.id) ||
+        !studentEdu ||
+        (studentUnit && String(summary.unit.name || '').toLowerCase().trim() === String(studentUnit).toLowerCase().trim()))
+    );
+
+    const edu = studentEdu || (isSummaryUnitMatch ? summary?.unit : null);
+    const meta = edu?.metadata || (isSummaryUnitMatch ? summary?.unit?.metadata : {}) || {};
+    const unitName =
+      edu?.name ||
+      headerStudent?.unit_name ||
+      headerStudent?.education_unit_name ||
+      studentUnit ||
+      (isSummaryUnitMatch ? summary?.unit?.name : '') ||
+      '';
+    const unitLevel = edu?.level || headerStudent?.jenjang || '';
+    const akreditasi = meta?.accreditation || meta?.akreditasi || null;
+    const npsn = meta?.npsn || edu?.code || null;
+    const kepalaSekolah = meta?.principal_name || meta?.kepala_sekolah || null;
+    const jamMasuk = edu?.jam_masuk ? String(edu.jam_masuk).slice(0, 5) : null;
+    const jamPulang = edu?.jam_pulang ? String(edu.jam_pulang).slice(0, 5) : null;
+    const alamat = meta?.address || meta?.alamat || null;
+    const telepon = meta?.phone || meta?.telepon || null;
+    const email = meta?.email || null;
+    const city = meta?.city || null;
+
+    return {
+      name: unitName,
+      level: unitLevel,
+      akreditasi,
+      npsn,
+      kepalaSekolah,
+      jamMasuk,
+      jamPulang,
+      alamat,
+      telepon,
+      email,
+      city,
+    };
+  }, [summary?.unit, headerStudent, studentUnit]);
+
+  // Helper filter ketat: hanya izinkan informasi yang khusus ditujukan untuk unit sekolah siswa (bukan 'all'/'semua unit'/'yayasan')
+  const isStrictUnitMatch = useCallback((item: any, unit: string) => {
+    if (!unit) return false;
+    const u = String(item?.education_unit || item?.unit_name || item?.target_unit_name || item?.data_tambahan?.unit_name || '').toLowerCase().trim();
+    // Tolak bila tidak ada unit atau berlabel semua unit / seluruh yayasan
+    if (!u || u.includes('semua') || u.includes('seluruh') || u === 'all' || u.includes('yayasan')) {
+      return false;
+    }
+    const s = String(unit).toLowerCase().trim();
+    return u.includes(s) || s.includes(u);
+  }, []);
+
+  // Filter ketat (Hanya Unit Siswa Saja): Menyembunyikan informasi berlabel "all / semua unit"
+  const displayItems = useMemo(() => {
+    return items.filter((item) => isStrictUnitMatch(item, studentUnit));
+  }, [items, studentUnit, isStrictUnitMatch]);
 
   // 2. Load summary from backend
   const loadSummary = useCallback(async () => {
@@ -373,8 +492,10 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
       return;
     }
     try {
+      const activeId = selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
       const res = await mobileApiService.getPortalSchoolInformationSummary({
-        child_id: selectedChildId,
+        child_id: activeId ? String(activeId) : undefined,
+        strict_unit: true,
       });
       const data = unwrapApiData<any>(res) || {};
       if (Array.isArray(data?.important)) {
@@ -387,11 +508,12 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     } catch {
       // safe fallback if offline
     }
-  }, [isTeacherOnly, selectedChildId]);
+  }, [isTeacherOnly, selectedChildId, globalActiveChildId]);
 
   // 3. Load items from database API
   const loadItems = useCallback(async (targetPage = 1) => {
-    const cacheKey = offlineCache.buildKey('school_info', user?.id, selectedChildId);
+    const activeId = selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
+    const cacheKey = offlineCache.buildKey('school_info', user?.id, activeId);
     // 1. Baca cache dulu saat halaman pertama tanpa filter
     if (targetPage === 1 && !searchQuery.trim() && selectedTab === 'all' && !showBookmarkedOnly) {
       const cached = await offlineCache.get<{ items: InfoItem[]; total: number }>(cacheKey);
@@ -417,7 +539,8 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
         total = data?.total || list.length;
       } else {
         const params: Record<string, any> = {
-          child_id: selectedChildId,
+          child_id: activeId ? String(activeId) : undefined,
+          strict_unit: true,
           type: selectedTab === 'all' ? undefined : selectedTab,
           search: searchQuery.trim() || undefined,
           bookmarked: showBookmarkedOnly ? true : undefined,
@@ -445,7 +568,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     } catch {
       // Offline: data cache sudah tampil dari step 1
     }
-  }, [isTeacherOnly, selectedChildId, selectedTab, searchQuery, showBookmarkedOnly, user?.id]);
+  }, [isTeacherOnly, selectedChildId, globalActiveChildId, selectedTab, searchQuery, showBookmarkedOnly, user?.id]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -520,38 +643,51 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
 
   const counts = summary?.counts || {};
   const importantItems: InfoItem[] = useMemo(() => {
-    if (Array.isArray(summary?.important) && summary.important.length > 0) {
-      return summary.important.map(normalizeInfoItem);
-    }
-    return items.filter((i) => i.priority === 'mendesak' || i.priority === 'penting').slice(0, 3);
-  }, [summary?.important, items]);
+    const raw = Array.isArray(summary?.important) && summary.important.length > 0
+      ? summary.important.map(normalizeInfoItem)
+      : items.filter((i) => i.priority === 'mendesak' || i.priority === 'penting');
+
+    return raw.filter((item: InfoItem) => isStrictUnitMatch(item, studentUnit)).slice(0, 3);
+  }, [summary?.important, items, studentUnit, isStrictUnitMatch]);
   const unreadCount = summary?.unread_count ?? 0;
   const bookmarkedCount = summary?.bookmarked_count ?? 0;
 
   const categoryCounts = useMemo(() => {
-    const rawAll = totalItems || items.length;
-    const pengumuman = items.filter((i) => {
+    const pengumuman = displayItems.filter((i) => {
       const c = String(i.category || i.type || '').toLowerCase();
       return c.includes('announcement') || c.includes('pengumuman') || c.includes('ppdb') || c.includes('umum');
     }).length;
-    const berita = items.filter((i) => {
+    const berita = displayItems.filter((i) => {
       const c = String(i.category || i.type || '').toLowerCase();
       return c.includes('news') || c.includes('berita') || c.includes('prestasi');
     }).length;
-    const agenda = items.filter((i) => {
+    const agenda = displayItems.filter((i) => {
       const c = String(i.category || i.type || '').toLowerCase();
       return c.includes('event') || c.includes('agenda') || c.includes('kegiatan') || c.includes('kalender');
     }).length;
+    const edaran = displayItems.filter((i) => {
+      const c = String(i.category || i.type || '').toLowerCase();
+      return c.includes('circular') || c.includes('edaran');
+    }).length;
+    const kalender = displayItems.filter((i) => {
+      const c = String(i.category || i.type || '').toLowerCase();
+      return c.includes('calendar') || c.includes('kalender');
+    }).length;
+    const galeri = displayItems.filter((i) => {
+      const c = String(i.category || i.type || '').toLowerCase();
+      return c.includes('gallery') || c.includes('galeri');
+    }).length;
+
     return {
-      all: counts.all ?? rawAll,
-      announcement: counts.announcement ?? (pengumuman || 0),
-      news: counts.news ?? (berita || 0),
-      event: counts.event ?? (agenda || 0),
-      circular: counts.circular ?? 0,
-      calendar: counts.calendar ?? 0,
-      gallery: counts.gallery ?? 0,
+      all: displayItems.length,
+      announcement: pengumuman,
+      news: berita,
+      event: agenda,
+      circular: edaran,
+      calendar: kalender,
+      gallery: galeri,
     };
-  }, [items, totalItems, counts]);
+  }, [displayItems]);
 
   const categoryTabs = useMemo(() => [
     { key: 'all', label: 'Semua', count: categoryCounts.all, icon: 'bullhorn-outline', color: '#059669', activeGradient: ['#059669', '#10B981'] },
@@ -565,124 +701,268 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* 0. STICKY HEADER BERSAMA */}
-      {isTeacherOnly ? (
-        <TeacherStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Informasi Sekolah"
-          subtitle="Agenda & Pengumuman Sekolah"
-          navigation={navigation}
-          route={route}
-          user={user}
-          chips={[
-            { label: 'Semua', active: selectedTab === 'all', onPress: () => setSelectedTab('all') },
-            { label: 'Pengumuman', active: selectedTab === 'announcement', onPress: () => setSelectedTab('announcement') },
-            { label: 'Agenda', active: selectedTab === 'event', onPress: () => setSelectedTab('event') },
-            { label: 'Berita', active: selectedTab === 'news', onPress: () => setSelectedTab('news') },
-          ]}
+      {/* ── Background Foliage Atas (IDENTIK DENGAN BERANDA & KALENDER AKADEMIK) ── */}
+      <View style={[styles.topFoliageWrapper, { height: Math.max(topInset + 300, 380) }]}>
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
         />
-      ) : (
-        <StudentStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Informasi Sekolah"
-          navigation={navigation}
-          route={route}
-          student={headerStudent}
-          user={user}
-          childrenList={children}
-          selectedChildId={selectedChildId}
-          onSelectChild={(cid, idx) => {
-            selectChildWithScroll(cid, idx);
-            useActiveChildStore.getState().setActiveChildId(cid);
-          }}
-          middleAction={{
-            label: 'Jadwal',
-            icon: 'calendar-clock',
-            onPress: () => openScheduleForStudent(headerStudent),
-          }}
-          onOpenIdCard={(s) => openIdCard(s)}
-          onOpenQr={(s) => openQrCard(s)}
-          onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-          onOpenMenu={(s) => setSelectedMenuStudent(s)}
-        />
-      )}
-      <View style={styles.sheetContainer}>
         <LinearGradient
-          colors={['#FFFFFF', '#F2FAF6', '#DDF5EB']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
+          colors={['rgba(236,253,245,0.20)', 'rgba(236,253,245,0.75)', '#ECFDF5']}
+          locations={[0, 0.55, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
 
+      {/* ── Clean Top Header (Fixed Luar ScrollView, IDENTIK DENGAN KALENDER AKADEMIK) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={20} color="#065F46" />
+        </TouchableOpacity>
+
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Informasi Sekolah
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#065F46" />
+          {unreadNotificationCount > 0 && <View style={styles.cleanBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Main Scroll Sheet Container ── */}
+      <View style={styles.sheetContainer}>
         <Animated.ScrollView
           style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
-          onScroll={handleMainScroll}
-          scrollEventThrottle={16}
+          contentContainerStyle={[
+            styles.cleanMainScrollContent,
+            { paddingBottom: Math.max(bottomInset + 72, 94) },
+          ]}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} progressViewOffset={topInset + 10} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#059669', '#10B981']}
+              tintColor="#059669"
+            />
           }
         >
-          {/* Top Bar Statis (ketika belum di-scroll) — sama style dengan Tugas/Jadwal/Materi/Nilai */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
+          <View style={styles.cleanScrollInner}>
+            <View style={styles.bodyContentWrapper}>
+              {/* ── 0. OPEN PROFILE ROW (IDENTIK DENGAN BERANDA & KALENDER AKADEMIK) ── */}
+              {!isTeacherOnly ? (
+                <View style={styles.studentProfileRow}>
+                  {/* 60x60 Avatar with Mint Ring */}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedIdCardStudent(headerStudent)}
+                    style={styles.studentAvatarRing}
+                  >
+                    <Image
+                      source={studentAvatarSource}
+                      style={styles.studentAvatarImg}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
 
-            <View style={styles.staticTopBarRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
-              </TouchableOpacity>
+                  {/* 3-tier identity & action */}
+                  <View style={styles.studentProfileInfoCol}>
+                    <TouchableOpacity
+                      activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                      onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                      style={styles.studentNameRow}
+                    >
+                      <Text numberOfLines={1} style={styles.studentProfileName}>
+                        {studentFullName}
+                      </Text>
+                    </TouchableOpacity>
 
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>
-                  Informasi Sekolah
-                </Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                  {isTeacherOnly
-                    ? 'Agenda, Berita & Pengumuman'
-                    : (isParent && heroFirstName
-                        ? `Ananda ${heroFirstName}`
-                        : (heroFirstName || heroSubtitleFallback))}
-                </Text>
-              </View>
+                    {/* Baris 2: Unit Pendidikan Dinamis */}
+                    {studentUnit ? (
+                      <View style={styles.studentMetaRow}>
+                        <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                        <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                          {studentUnit}
+                        </Text>
+                      </View>
+                    ) : null}
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
-            </View>
-          </View>
+                    {/* Baris 3: Kelas Siswa Dinamis */}
+                    {studentClass ? (
+                      <View style={styles.studentMetaRow}>
+                        <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                        <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                          {studentClass}
+                        </Text>
+                      </View>
+                    ) : null}
 
-          {/* Badan Halaman Konten */}
-          <View style={styles.bodyContentWrapper}>
+                    {/* Baris Aksi Terpadu */}
+                    <View style={styles.studentActionBadgeRow}>
+                      {children && children.length > 1 && (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => setShowChildSelectorModal(true)}
+                          style={styles.parentGantiAnakBtn}
+                        >
+                          <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                          <MaterialCommunityIcons name="chevron-down" size={15} color="#FFFFFF" />
+                        </TouchableOpacity>
+                      )}
+
+                      <View
+                        style={[
+                          styles.studentStatusBadge,
+                          { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={attendanceStatus.icon}
+                          size={12}
+                          color={attendanceStatus.color}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={[styles.studentStatusBadgeText, { color: attendanceStatus.color }]}>
+                          {attendanceStatus.label}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.studentProfileRow}>
+                  <View style={styles.studentAvatarRing}>
+                    <Image
+                      source={getStudentAvatarSource(user)}
+                      style={styles.studentAvatarImg}
+                      resizeMode="cover"
+                    />
+                  </View>
+                  <View style={styles.studentProfileInfoCol}>
+                    <Text numberOfLines={1} style={styles.studentProfileName}>
+                      {String((user as any)?.nama_lengkap || (user as any)?.full_name || (user as any)?.name || 'Dewan Guru')}
+                    </Text>
+                    <View style={styles.studentMetaRow}>
+                      <MaterialCommunityIcons name="school" size={12} color="#047857" style={{ marginRight: 4 }} />
+                      <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                        {String(
+                          (user as any)?.employee?.unit_name ||
+                            (user as any)?.employee?.educationUnit?.name ||
+                            (user as any)?.unit_name ||
+                            (user as any)?.unit ||
+                            'Tenaga Pendidik & Kependidikan'
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.studentActionBadgeRow}>
+                      <View style={[styles.studentStatusBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                        <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
+                        <Text style={[styles.studentStatusBadgeText, { color: '#059669' }]}>
+                          {String(
+                            (user as any)?.employee?.jabatan ||
+                              (user as any)?.employee?.position ||
+                              'Pendidik & Tenaga Kependidikan'
+                          )}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* ── CARD INFORMASI SEKOLAH (COMPACT & SOFT MINT, BUKAN SOLID GELAP) ── */}
+              {unitInfo.name ? (
+                <View style={styles.compactUnitCard}>
+                  <View style={styles.compactUnitCardHeader}>
+                    <View style={styles.compactUnitIconBox}>
+                      <MaterialCommunityIcons name="office-building-marker-outline" size={20} color="#047857" />
+                    </View>
+                    <View style={styles.compactUnitTitleCol}>
+                      <Text numberOfLines={1} style={styles.compactUnitName}>
+                        {unitInfo.name}
+                      </Text>
+                      <View style={styles.compactUnitBadgesRow}>
+                        {unitInfo.akreditasi ? (
+                          <View style={styles.compactUnitBadgeAmber}>
+                            <MaterialCommunityIcons name="certificate-outline" size={11} color="#D97706" />
+                            <Text style={styles.compactUnitBadgeAmberText}>
+                              Akreditasi {unitInfo.akreditasi}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {unitInfo.npsn ? (
+                          <View style={styles.compactUnitBadgeMint}>
+                            <MaterialCommunityIcons name="identifier" size={11} color="#059669" />
+                            <Text style={styles.compactUnitBadgeMintText}>
+                              NPSN {unitInfo.npsn}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Info Detail Dinamis (Hanya tampil jika ada data nyata dari DB) */}
+                  {(unitInfo.kepalaSekolah || (unitInfo.jamMasuk && unitInfo.jamPulang) || unitInfo.telepon || unitInfo.alamat) ? (
+                    <View style={styles.compactUnitMetaList}>
+                      {unitInfo.kepalaSekolah ? (
+                        <View style={styles.compactUnitMetaItem}>
+                          <MaterialCommunityIcons name="account-tie-outline" size={13} color="#059669" />
+                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
+                            Kepala Sekolah: <Text style={styles.compactUnitMetaHighlight}>{unitInfo.kepalaSekolah}</Text>
+                          </Text>
+                        </View>
+                      ) : null}
+                      {unitInfo.jamMasuk && unitInfo.jamPulang ? (
+                        <View style={styles.compactUnitMetaItem}>
+                          <MaterialCommunityIcons name="clock-outline" size={13} color="#059669" />
+                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
+                            KBM: <Text style={styles.compactUnitMetaHighlight}>{unitInfo.jamMasuk} - {unitInfo.jamPulang} WIB</Text>
+                          </Text>
+                        </View>
+                      ) : null}
+                      {unitInfo.telepon ? (
+                        <View style={styles.compactUnitMetaItem}>
+                          <MaterialCommunityIcons name="phone-outline" size={13} color="#059669" />
+                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
+                            Kontak: <Text style={styles.compactUnitMetaHighlight}>{unitInfo.telepon}</Text>
+                          </Text>
+                        </View>
+                      ) : null}
+                      {unitInfo.alamat ? (
+                        <View style={styles.compactUnitMetaItem}>
+                          <MaterialCommunityIcons name="map-marker-outline" size={13} color="#059669" />
+                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
+                            {unitInfo.alamat}{unitInfo.city ? `, ${unitInfo.city}` : ''}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
             {/* 1. RINGKASAN KPI INFORMASI & BERITA (WARNA GRADASI MODERN) */}
             <View style={styles.kpiCardsGrid}>
               {/* Card 1: Total Informasi */}
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => setSelectedTab('all')}
-                style={[styles.kpiCard, styles.kpiCardEmerald, selectedTab === 'all' && styles.kpiCardActive]}
+                style={[styles.kpiCard, styles.kpiCardEmerald, selectedTab === 'all' && styles.kpiCardActiveEmerald]}
               >
                 <View style={styles.kpiTopRow}>
                   <View style={[styles.kpiIconWrap, { backgroundColor: '#DEF7EC' }]}>
@@ -704,7 +984,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => setSelectedTab('announcement')}
-                style={[styles.kpiCard, styles.kpiCardSky, selectedTab === 'announcement' && styles.kpiCardActive]}
+                style={[styles.kpiCard, styles.kpiCardSky, selectedTab === 'announcement' && styles.kpiCardActiveSky]}
               >
                 <View style={styles.kpiTopRow}>
                   <View style={[styles.kpiIconWrap, { backgroundColor: '#E0F2FE' }]}>
@@ -726,7 +1006,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => setSelectedTab('news')}
-                style={[styles.kpiCard, styles.kpiCardPurple, selectedTab === 'news' && styles.kpiCardActive]}
+                style={[styles.kpiCard, styles.kpiCardPurple, selectedTab === 'news' && styles.kpiCardActivePurple]}
               >
                 <View style={styles.kpiTopRow}>
                   <View style={[styles.kpiIconWrap, { backgroundColor: '#EDE9FE' }]}>
@@ -748,7 +1028,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => setSelectedTab('event')}
-                style={[styles.kpiCard, styles.kpiCardAmber, selectedTab === 'event' && styles.kpiCardActive]}
+                style={[styles.kpiCard, styles.kpiCardAmber, selectedTab === 'event' && styles.kpiCardActiveAmber]}
               >
                 <View style={styles.kpiTopRow}>
                   <View style={[styles.kpiIconWrap, { backgroundColor: '#FEF3C7' }]}>
@@ -973,7 +1253,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
                   </Text>
                 </View>
                 <View style={styles.itemTotalBadge}>
-                  <Text style={styles.itemTotalBadgeText}>{items.length} Data</Text>
+                  <Text style={styles.itemTotalBadgeText}>{displayItems.length} Data</Text>
                 </View>
               </View>
 
@@ -982,8 +1262,8 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
                   <ActivityIndicator color="#18A165" size="large" />
                   <Text style={styles.loadingText}>Memuat data informasi & berita sekolah...</Text>
                 </View>
-              ) : items.length > 0 ? (
-                items.map((item, idx) => {
+              ) : displayItems.length > 0 ? (
+                displayItems.map((item, idx) => {
                   const theme = getCategoryTheme(item.category || item.type);
                   const priorityTheme = getPriorityTheme(item.priority);
                   const isImportant = item.priority === 'penting' || item.priority === 'mendesak';
@@ -1076,7 +1356,10 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
                             <TouchableOpacity
                               activeOpacity={0.7}
                               onPress={() => handleToggleBookmark(item)}
-                              style={styles.bookmarkIconBtn}
+                              style={[
+                                styles.bookmarkIconBtn,
+                                item.is_bookmarked && styles.bookmarkIconBtnActive,
+                              ]}
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                               accessibilityRole="button"
                               accessibilityLabel={item.is_bookmarked ? 'Hapus Simpan' : 'Simpan'}
@@ -1084,7 +1367,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
                               <MaterialCommunityIcons
                                 name={item.is_bookmarked ? 'bookmark' : 'bookmark-outline'}
                                 size={19}
-                                color={item.is_bookmarked ? '#F59E0B' : '#94A3B8'}
+                                color={item.is_bookmarked ? '#D97706' : '#94A3B8'}
                               />
                             </TouchableOpacity>
                           </View>
@@ -1106,14 +1389,14 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
                         <View style={styles.modernCardFooter}>
                           <View style={styles.cardMetaLeft}>
                             <View style={styles.cardMetaItem}>
-                              <MaterialCommunityIcons name="account-outline" size={13} color="#94A3B8" />
+                              <MaterialCommunityIcons name="account-outline" size={13} color="#64748B" />
                               <Text numberOfLines={1} style={styles.cardMetaText}>
                                 {item.publisher}
                               </Text>
                             </View>
                             <View style={styles.cardMetaDot} />
                             <View style={styles.cardMetaItem}>
-                              <MaterialCommunityIcons name="calendar-outline" size={13} color="#94A3B8" />
+                              <MaterialCommunityIcons name="calendar-outline" size={13} color="#64748B" />
                               <Text style={styles.cardMetaText}>{dateStr}</Text>
                             </View>
                             {item.attachments && item.attachments.length > 0 && (
@@ -1147,8 +1430,9 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
               )}
             </View>
           </View>
-        </Animated.ScrollView>
-      </View>
+        </View>
+      </Animated.ScrollView>
+    </View>
 
       {/* MODAL KARTU SISWA / QR / MENU / LAPORAN (dibuka dari header & card bodi) */}
       <StudentIdCardModal
@@ -1320,6 +1604,127 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
         </View>
       </Modal>
 
+      {/* ── Modal Pilih Siswa (Pilihan Ananda) ── */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children.map((c: any, idx: number) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = (typeof c.name === 'string' && c.name) || (typeof c.nama_lengkap === 'string' && c.nama_lengkap) || (typeof c.full_name === 'string' && c.full_name) || 'Ananda';
+                const cUnit =
+                  c.educationUnit?.name ||
+                  c.education_unit?.name ||
+                  c.unit_name ||
+                  c.education_unit_name ||
+                  c.kelas?.unitPendidikan?.name ||
+                  '';
+                const cClass =
+                  c.kelas?.nama_kelas ||
+                  c.kelas?.name ||
+                  c.class?.name ||
+                  c.class_name ||
+                  '';
+
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      setSelectedChildId(cId);
+                      useActiveChildStore.getState().setActiveChildId(cId);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text
+                        style={[
+                          styles.childModalItemName,
+                          isSelected && { color: '#004D32', fontWeight: '800' },
+                        ]}
+                      >
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#004D32" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Kartu Siswa (KTS) */}
+      {selectedIdCardStudent && (
+        <StudentIdCardModal
+          visible={Boolean(selectedIdCardStudent)}
+          student={selectedIdCardStudent}
+          onClose={() => setSelectedIdCardStudent(null)}
+        />
+      )}
+
+      {/* Modal QR Siswa */}
+      {selectedQrStudent && (
+        <StudentQrModal
+          visible={Boolean(selectedQrStudent)}
+          student={selectedQrStudent}
+          onClose={() => setSelectedQrStudent(null)}
+        />
+      )}
+
+      {/* Modal Menu Siswa */}
+      {selectedMenuStudent && (
+        <StudentMenuModal
+          visible={Boolean(selectedMenuStudent)}
+          student={selectedMenuStudent}
+          navigation={navigation}
+          onClose={() => setSelectedMenuStudent(null)}
+        />
+      )}
+
+      {/* Modal Laporan Mingguan */}
+      {selectedWeeklyStudent && (
+        <StudentWeeklyReportModal
+          visible={Boolean(selectedWeeklyStudent)}
+          student={selectedWeeklyStudent}
+          onClose={() => setSelectedWeeklyStudent(null)}
+        />
+      )}
+
       {/* Universal Feedback Modal */}
       {feedbackModal && (
         <AppFeedbackModal
@@ -1337,20 +1742,329 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+    backgroundColor: '#ECFDF5',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: 'hidden',
+    zIndex: 0,
+  },
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cleanHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanBellDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
   sheetContainer: {
     flex: 1,
     overflow: 'hidden',
   },
   screen: { flex: 1, backgroundColor: 'transparent' },
-  // Struktur scroll + hero statis disamakan plek dengan Tugas/Jadwal/Materi/Nilai
-  mainScrollContent: {
+  cleanMainScrollContent: {
     flexGrow: 1,
+    paddingTop: 8,
+  },
+  cleanScrollInner: {
+    width: '100%',
   },
   bodyContentWrapper: {
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 8,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingHorizontal: 4,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 2.5,
+    borderColor: '#10B981',
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  studentProfileName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.3,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#047857',
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  studentStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  studentStatusBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  // Card Informasi Unit Sekolah Compact (Soft Mint & Bersih)
+  compactUnitCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  compactUnitCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  compactUnitIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+  },
+  compactUnitTitleCol: {
+    flex: 1,
+  },
+  compactUnitName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  compactUnitBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    flexWrap: 'wrap',
+  },
+  compactUnitBadgeAmber: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  compactUnitBadgeAmberText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#D97706',
+  },
+  compactUnitBadgeMint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  compactUnitBadgeMintText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  compactUnitMetaList: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F0FDF4',
+    gap: 4,
+  },
+  compactUnitMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  compactUnitMetaText: {
+    fontSize: 11,
+    color: '#4B5563',
+    flex: 1,
+  },
+  compactUnitMetaHighlight: {
+    color: '#065F46',
+    fontWeight: '700',
+  },
+  // Modal Pilih Ananda
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#004D32',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  childModalItemSub: {
+    fontSize: 11.5,
+    color: '#047857',
+    marginTop: 2,
   },
   staticTopBarWrapper: {
     width: '100%',
@@ -1477,6 +2191,30 @@ const styles = StyleSheet.create({
   kpiCardActive: {
     borderWidth: 2,
     borderColor: '#059669',
+  },
+  kpiCardActiveEmerald: {
+    borderWidth: 2,
+    borderColor: '#059669',
+    shadowColor: '#059669',
+    shadowOpacity: 0.16,
+  },
+  kpiCardActiveSky: {
+    borderWidth: 2,
+    borderColor: '#0284C7',
+    shadowColor: '#0284C7',
+    shadowOpacity: 0.16,
+  },
+  kpiCardActivePurple: {
+    borderWidth: 2,
+    borderColor: '#7C3AED',
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.16,
+  },
+  kpiCardActiveAmber: {
+    borderWidth: 2,
+    borderColor: '#D97706',
+    shadowColor: '#D97706',
+    shadowOpacity: 0.16,
   },
   kpiTopRow: {
     flexDirection: 'row',
@@ -1872,18 +2610,26 @@ const styles = StyleSheet.create({
   },
   bookmarkIconBtn: {
     padding: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  bookmarkIconBtnActive: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
   },
   modernCardTitle: {
-    fontSize: 13.5,
-    fontWeight: '900',
+    fontSize: 14.5,
+    fontWeight: '800',
     color: '#0F172A',
-    lineHeight: 19,
+    lineHeight: 20,
+    letterSpacing: -0.2,
     marginBottom: 5,
   },
   modernCardSummary: {
-    fontSize: 11.5,
+    fontSize: 12,
     color: '#475569',
-    lineHeight: 16,
+    lineHeight: 18,
     marginBottom: 10,
   },
   modernCardFooter: {
@@ -1907,7 +2653,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   cardMetaText: {
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#64748B',
     fontWeight: '600',
   },
@@ -1952,10 +2698,11 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   modalTitle: {
-    fontSize: 15,
-    fontWeight: '900',
+    fontSize: 16,
+    fontWeight: '800',
     color: '#0F172A',
-    lineHeight: 20,
+    lineHeight: 22,
+    letterSpacing: -0.2,
   },
   modalBookmarkBtn: {
     padding: 4,
@@ -2001,10 +2748,10 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   modalFullContent: {
-    fontSize: 13,
+    fontSize: 13.5,
     color: '#334155',
-    lineHeight: 20,
-    marginBottom: 14,
+    lineHeight: 22,
+    marginBottom: 16,
   },
   attachmentBox: {
     backgroundColor: '#F8FAFC',

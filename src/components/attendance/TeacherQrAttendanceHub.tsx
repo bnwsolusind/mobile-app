@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AttendancePayload, mobileApiService, unwrapApiData, unwrapCollection } from '../../services/mobileApiService';
 import { getApiErrorMessage } from '../../services/api';
-import { getProfileImageUrl, DEFAULT_PARENT_AVATAR, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_STUDENT_GIRL_AVATAR } from '../../utils/profile';
+import { getProfileImageUrl, DEFAULT_PARENT_AVATAR, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_STUDENT_GIRL_AVATAR, isGirlStudent } from '../../utils/profile';
 import { getDynamicAcademicYear } from '../../utils/academicYear';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
 import { AttendanceRejectedModal, AttendanceRejectionDetails } from './AttendanceRejectedModal';
@@ -2522,7 +2522,7 @@ export default function TeacherQrAttendanceHub({
                   const sName = st.full_name || st.nama_lengkap || st.name || 'Santri';
                   const sNis = st.nis || '-';
                   const stImg = getProfileImageUrl(st);
-                  const defAvatar = (st.gender === 'P' || st.jenis_kelamin === 'P') ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+                  const defAvatar = isGirlStudent(st) ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
 
                   const statusCfg: Record<string, { label: string; color: string; bg: string }> = {
                     present: { label: 'Hadir', color: '#059669', bg: '#ECFDF5' },
@@ -2868,6 +2868,29 @@ export default function TeacherQrAttendanceHub({
                   </TouchableOpacity>
                 </View>
 
+                {/* Quick Action Bar: Checklist Hadir Semua & Reset Status */}
+                <View style={s.hubQuickActionsRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={handleMarkAllPresent}
+                    disabled={students.length === 0}
+                    style={s.hubMarkAllBtn}
+                  >
+                    <MaterialCommunityIcons name="check-all" size={16} color="#FFFFFF" />
+                    <Text style={s.hubMarkAllBtnText}>Checklist Hadir Semua ({students.length})</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setStudentStatuses({})}
+                    disabled={students.length === 0}
+                    style={s.hubResetAttendanceBtn}
+                  >
+                    <MaterialCommunityIcons name="backup-restore" size={15} color="#64748B" />
+                    <Text style={s.hubResetAttendanceBtnText}>Reset</Text>
+                  </TouchableOpacity>
+                </View>
+
                 {/* Status Dropdown Menu (Inline) */}
                 {showStatusDropdown && (
                   <View style={s.statusDropdownMenu}>
@@ -2940,7 +2963,7 @@ export default function TeacherQrAttendanceHub({
                   const sName = st.full_name || st.nama_lengkap || st.name || 'Santri';
                   const sNis = st.nis || '-';
                   const stImg = getProfileImageUrl(st);
-                  const defAvatar = (st.gender === 'P' || st.jenis_kelamin === 'P') ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+                  const defAvatar = isGirlStudent(st) ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
                   const perm = pendingPermissions[sId];
                   const isPending = perm && ['submitted', 'waiting_verification'].includes(perm.status);
                   const isApproved = perm && perm.status === 'approved';
@@ -3452,7 +3475,7 @@ export default function TeacherQrAttendanceHub({
                   source={(() => {
                     const stImg = getProfileImageUrl(showUbahStatusSheet);
                     if (stImg) return { uri: stImg };
-                    return (showUbahStatusSheet.gender === 'P' || showUbahStatusSheet.jenis_kelamin === 'P')
+                    return isGirlStudent(showUbahStatusSheet)
                       ? DEFAULT_STUDENT_GIRL_AVATAR
                       : DEFAULT_STUDENT_BOY_AVATAR;
                   })()}
@@ -4405,6 +4428,50 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#475569',
+  },
+  hubQuickActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  hubMarkAllBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  hubMarkAllBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  hubResetAttendanceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    height: 38,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: '#CBD5E1',
+  },
+  hubResetAttendanceBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
   },
   statusDropdownTrigger: {
     flexDirection: 'row',

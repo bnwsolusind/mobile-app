@@ -29,10 +29,13 @@ import { api } from '../services/api';
 import { mobileApiService, unwrapApiData, unwrapCollection } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 import { AttendanceRejectedModal, AttendanceRejectionDetails } from '../components/attendance/AttendanceRejectedModal';
 import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../utils/profile';
+import { isPrincipalRole, isTeacherRole, isTuRole } from '../utils/roles';
 
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type ActiveTab = 'mandiri' | 'qr_card';
@@ -105,6 +108,23 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 14);
 
   const user = useAuthStore((state) => state.user);
+  const roles = user?.roles || [];
+  const isPrincipal = isPrincipalRole(roles);
+  const isTeacher = isTeacherRole(roles);
+  const isTu = isTuRole(roles);
+
+  // Safe back navigation helper with dynamic history fallback
+  const handleBack = () => {
+    const navState = navigation?.getState?.();
+    if (navState && navState.index > 0 && navigation?.canGoBack?.()) {
+      navigation.goBack();
+      return;
+    }
+    const didGoBack = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+    if (!didGoBack) {
+      navigation?.navigate?.('Beranda');
+    }
+  };
 
   // Tab State: 'mandiri' (Presensi GPS/Selfie) or 'qr_card' (Kartu QR Pegawai)
   const [activeTab, setActiveTab] = useState<ActiveTab>('mandiri');
@@ -702,32 +722,62 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
 
   return (
     <View style={s.container}>
-      {/* ── TOP HERO HEADER ── */}
-      <View style={[s.topHeader, { paddingTop: topInset + 6 }]}>
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK BUKU PENGHUBUNG & BUKU NILAI) ── */}
+      <View style={[s.topFoliageWrapper, { height: 320 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={s.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#047857', '#059669', '#10B981']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
+
+      {/* ── TOP HERO HEADER ── */}
+      <View style={[s.topHeader, { paddingTop: topInset + 4 }]}>
         <View style={s.topHeaderRow}>
           <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => navigation?.goBack?.() || navigation?.navigate('Beranda')}
+            activeOpacity={0.75}
+            onPress={handleBack}
             style={s.headerSquircleBtn}
+            accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
           <View style={s.headerTitleCol}>
             <View style={s.roleTag}>
               <View style={s.pulseDot} />
-              <Text style={s.roleTagText}>STAF TATA USAHA • PRESTASI KERJA</Text>
+              <Text style={s.roleTagText} numberOfLines={1}>
+                {isPrincipal
+                  ? 'OTORITAS KEPALA SEKOLAH • PRESENSI MANDIRI'
+                  : isTeacher
+                  ? 'GURU / PENDIDIK • PRESENSI MANDIRI'
+                  : isTu
+                  ? 'STAF TATA USAHA • PRESENSI MANDIRI'
+                  : 'PEGAWAI & KARYAWAN • PRESENSI MANDIRI'}
+              </Text>
             </View>
             <Text style={s.headerTitle} numberOfLines={1}>Presensi Mandiri</Text>
             <Text style={s.headerSubtitle} numberOfLines={1}>
               {currentDateText}
             </Text>
           </View>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={onRefresh}
+            style={s.headerSquircleBtn}
+            accessibilityLabel="Muat Ulang"
+          >
+            <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+          </TouchableOpacity>
         </View>
 
         {/* ── Tab Switcher: Presensi Mandiri vs Kartu QR Pegawai ── */}
@@ -739,8 +789,8 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
           >
             <MaterialCommunityIcons
               name="account-clock"
-              size={17}
-              color={activeTab === 'mandiri' ? '#047857' : '#FFFFFF'}
+              size={16}
+              color={activeTab === 'mandiri' ? '#FFFFFF' : '#065F46'}
               style={{ marginRight: 6 }}
             />
             <Text style={[s.modeToggleText, activeTab === 'mandiri' && s.modeToggleTextActive]}>
@@ -755,8 +805,8 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
           >
             <MaterialCommunityIcons
               name="qrcode-scan"
-              size={17}
-              color={activeTab === 'qr_card' ? '#047857' : '#FFFFFF'}
+              size={16}
+              color={activeTab === 'qr_card' ? '#FFFFFF' : '#065F46'}
               style={{ marginRight: 6 }}
             />
             <Text style={[s.modeToggleText, activeTab === 'qr_card' && s.modeToggleTextActive]}>
@@ -766,11 +816,13 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
         </View>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[s.scrollContent, { paddingBottom: bottomInset + 30 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />}
-      >
+      {/* ── SHEET CONTAINER KONTEN (Gaya Modern Buku Nilai & Buku Penghubung) ── */}
+      <View style={s.sheetContainer}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[s.scrollContent, { paddingBottom: bottomInset + 30 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />}
+        >
         {activeTab === 'mandiri' ? (
           /* ======================================================= */
           /* TAB 1: PRESENSI DIGITAL MANDIRI                         */
@@ -1289,6 +1341,7 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
           </View>
         )}
       </ScrollView>
+      </View>
 
       {/* ── MODAL: FULL SCREEN QR CODE ── */}
       <Modal visible={showFullQrModal} animationType="fade" transparent={false} onRequestClose={() => setShowFullQrModal(false)}>
@@ -1354,53 +1407,87 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F0FDF4' },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+  },
   topHeader: {
     paddingHorizontal: 16,
     paddingBottom: 14,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    overflow: 'hidden',
   },
   topHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 10,
   },
   headerSquircleBtn: {
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
     elevation: 2,
   },
-  headerTitleCol: { flex: 1, marginHorizontal: 10 },
-  roleTag: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-  pulseDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#34D399', marginRight: 5 },
-  roleTagText: { fontSize: 9.5, fontWeight: '800', color: '#D1FAE5', letterSpacing: 0.5 },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
-  headerSubtitle: { fontSize: 11, color: '#E6FFFA', fontWeight: '600' },
+  headerTitleCol: { flex: 1 },
+  roleTag: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  pulseDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#059669' },
+  roleTagText: { fontSize: 10, fontWeight: '800', color: '#065F46', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 18, fontWeight: '900', color: '#064E3B', letterSpacing: 0.2, marginTop: 1 },
+  headerSubtitle: { fontSize: 11, color: '#047857', fontWeight: '600', marginTop: 1 },
 
   modeToggleBox: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: '#FFFFFF',
     borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     padding: 3,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   modeToggleBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 11,
   },
-  modeToggleBtnActive: { backgroundColor: '#FFFFFF' },
-  modeToggleText: { fontSize: 11.5, fontWeight: '700', color: '#FFFFFF' },
-  modeToggleTextActive: { color: '#047857' },
+  modeToggleBtnActive: { backgroundColor: '#059669' },
+  modeToggleText: { fontSize: 12, fontWeight: '700', color: '#065F46' },
+  modeToggleTextActive: { color: '#FFFFFF', fontWeight: '800' },
+
+  sheetContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 4,
+    marginTop: 4,
+  },
 
   scrollContent: { padding: 14 },
 

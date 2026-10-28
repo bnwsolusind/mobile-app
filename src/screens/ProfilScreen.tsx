@@ -1,7 +1,7 @@
-import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -14,10 +14,15 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { mobileApiService } from '../services/mobileApiService';
 import { AuthUser, useAuthStore } from '../stores/authStore';
+import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { useActiveChildStore } from '../stores/activeChildStore';
+import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { navigationHistory } from '../stores/navigationHistoryStore';
 import {
   isParentRole,
   isStudentRole,
@@ -29,8 +34,18 @@ import {
   isTeacherRole,
   roleLabel,
 } from '../utils/roles';
-import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../utils/profile';
+import {
+  getProfileImageUrl,
+  resolveMediaUrl,
+  DEFAULT_PARENT_AVATAR,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+  isGirlStudent,
+} from '../utils/profile';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const displayValue = (value: unknown, fallback = '-') => {
   if (!value) return fallback;
@@ -87,13 +102,21 @@ function InfoRow({ icon, iconBg, iconColor, label, value, isLast }: InfoRowProps
   );
 }
 
-export default function ProfilScreen() {
+export default function ProfilScreen({ navigation }: any) {
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 12);
+
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
   const roles = useAuthStore((state) => state.roles);
   const scope = useAuthStore((state) => state.scope);
   const setUser = useAuthStore((state) => state.setUser);
   const clearSession = useAuthStore((state) => state.clearSession);
+
+  // Active child store sync
+  const storeActiveChildId = useActiveChildStore((state) => state.activeChildId);
+  const setActiveChildIdInStore = useActiveChildStore((state) => state.setActiveChildId);
+  const unreadNotificationCount = useNotificationBadgeStore((state) => state.unreadNotificationCount);
 
   const [loading, setLoading] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -149,8 +172,20 @@ export default function ProfilScreen() {
   const isTeacher = isTeacherRole(roles);
   const isTeacherOrEmployee = !isStudent && !isParent && !isAlumni;
 
+  const handleBack = () => {
+    const handled = navigationHistory.goBackDynamic(navigation);
+    if (!handled) {
+      if (typeof navigation?.goBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+        return;
+      }
+      if (typeof navigation?.navigate === 'function') {
+        navigation.navigate('Beranda');
+      }
+    }
+  };
+
   const menuButtons: MenuButtonItem[] = useMemo(() => {
-    // 1. Role Orang Tua / Wali
     if (isParent) {
       return [
         {
@@ -179,7 +214,7 @@ export default function ProfilScreen() {
         },
         {
           id: 'sesi',
-          title: 'Sesi & Bantuan',
+          title: 'Sesi & Akun',
           subtitle: 'Info akun & keluar',
           icon: 'cellphone-lock',
           iconColor: '#7C3AED',
@@ -188,7 +223,6 @@ export default function ProfilScreen() {
       ];
     }
 
-    // 2. Role Siswa / Santri
     if (isStudent) {
       return [
         {
@@ -217,7 +251,7 @@ export default function ProfilScreen() {
         },
         {
           id: 'sesi',
-          title: 'Sesi & Bantuan',
+          title: 'Sesi & Akun',
           subtitle: 'Info akun & keluar',
           icon: 'cellphone-lock',
           iconColor: '#7C3AED',
@@ -226,7 +260,6 @@ export default function ProfilScreen() {
       ];
     }
 
-    // 3. Role Alumni
     if (isAlumni) {
       return [
         {
@@ -255,7 +288,7 @@ export default function ProfilScreen() {
         },
         {
           id: 'sesi',
-          title: 'Sesi & Bantuan',
+          title: 'Sesi & Akun',
           subtitle: 'Info akun & keluar',
           icon: 'cellphone-lock',
           iconColor: '#7C3AED',
@@ -264,7 +297,6 @@ export default function ProfilScreen() {
       ];
     }
 
-    // 4. Role Yayasan / Super Admin / Divisi
     if (isFoundation) {
       return [
         {
@@ -293,7 +325,7 @@ export default function ProfilScreen() {
         },
         {
           id: 'sesi',
-          title: 'Sesi & Bantuan',
+          title: 'Sesi & Akun',
           subtitle: 'Info akun & keluar',
           icon: 'cellphone-lock',
           iconColor: '#7C3AED',
@@ -302,12 +334,11 @@ export default function ProfilScreen() {
       ];
     }
 
-    // 5. Role Kepala Sekolah
     if (isPrincipal) {
       return [
         {
           id: 'biodata',
-          title: 'Biodata Kepala Sekolah',
+          title: 'Kepala Sekolah',
           subtitle: 'Pimpinan eksekutif unit',
           icon: 'shield-check-outline',
           iconColor: '#059669',
@@ -331,7 +362,7 @@ export default function ProfilScreen() {
         },
         {
           id: 'sesi',
-          title: 'Sesi & Bantuan',
+          title: 'Sesi & Akun',
           subtitle: 'Info akun & keluar',
           icon: 'cellphone-lock',
           iconColor: '#7C3AED',
@@ -340,7 +371,6 @@ export default function ProfilScreen() {
       ];
     }
 
-    // 6. Role Tata Usaha
     if (isTu) {
       return [
         {
@@ -369,7 +399,7 @@ export default function ProfilScreen() {
         },
         {
           id: 'sesi',
-          title: 'Sesi & Bantuan',
+          title: 'Sesi & Akun',
           subtitle: 'Info akun & keluar',
           icon: 'cellphone-lock',
           iconColor: '#7C3AED',
@@ -378,7 +408,7 @@ export default function ProfilScreen() {
       ];
     }
 
-    // 7. Role Guru / Tenaga Pendidik
+    // Role Guru / Tenaga Pendidik
     return [
       {
         id: 'biodata',
@@ -406,7 +436,7 @@ export default function ProfilScreen() {
       },
       {
         id: 'sesi',
-        title: 'Sesi & Bantuan',
+        title: 'Sesi & Akun',
         subtitle: 'Info akun & keluar',
         icon: 'cellphone-lock',
         iconColor: '#7C3AED',
@@ -459,8 +489,14 @@ export default function ProfilScreen() {
           const raw = res?.data ?? res;
           const available = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
           setChildren(available);
-          if (available.length > 0 && !selectedChildId) {
-            setSelectedChildId(String(available[0].id));
+          if (available.length > 0) {
+            const initialId = storeActiveChildId && available.some((c: any) => String(c.id) === String(storeActiveChildId))
+              ? storeActiveChildId
+              : String(available[0].id);
+            setSelectedChildId(initialId);
+            if (!storeActiveChildId) {
+              setActiveChildIdInStore(initialId);
+            }
           }
         })
         .catch(() => {});
@@ -470,6 +506,18 @@ export default function ProfilScreen() {
   useEffect(() => {
     loadFreshProfile();
   }, [token, isParent]);
+
+  // Keep selected child synced if store changes
+  useEffect(() => {
+    if (storeActiveChildId && storeActiveChildId !== selectedChildId) {
+      setSelectedChildId(storeActiveChildId);
+    }
+  }, [storeActiveChildId]);
+
+  const handleSelectChild = (childId: string) => {
+    setSelectedChildId(childId);
+    setActiveChildIdInStore(childId);
+  };
 
   const unitName: string = useMemo(() => {
     const raw =
@@ -484,6 +532,7 @@ export default function ProfilScreen() {
       'Unit Pendidikan Terpadu';
     return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : 'Unit Pendidikan Terpadu';
   }, [user, employee]);
+
   const niyOrNip = employee?.niy || employee?.nik || scope?.employee_id || '-';
   const jabatanName = (isParent ? 'Orang Tua / Wali Santri' : employee?.position?.name) || roleLabel(roles);
   const profileImageUrl = getProfileImageUrl(user);
@@ -653,26 +702,23 @@ export default function ProfilScreen() {
 
     setSavingEmail(true);
     try {
-      const res = await mobileApiService.updateProfile({ email: trimmed });
-      const updatedData = res?.data ?? res;
-      if (updatedData) {
-        setUser({ ...user, ...updatedData });
-      }
+      await mobileApiService.updateProfile({ email: trimmed });
+      setUser({ ...user, email: trimmed } as AuthUser);
       loadFreshProfile();
 
       setFeedbackModal({
         visible: true,
         type: 'success',
         title: 'Email Berhasil Diperbarui',
-        message: `Alamat email Anda kini diperbarui menjadi: ${trimmed}`,
-        confirmText: 'Selesai',
+        message: 'Alamat email akun Anda telah berhasil diganti menjadi: ' + trimmed,
+        confirmText: 'Alhamdulillah',
       });
     } catch (err: any) {
       setFeedbackModal({
         visible: true,
         type: 'error',
         title: 'Gagal Memperbarui Email',
-        message: err?.response?.data?.message || err?.message || 'Alamat email mungkin sudah digunakan akun lain.',
+        message: err?.response?.data?.message || err?.message || 'Email mungkin sudah digunakan oleh akun lain.',
         confirmText: 'Tutup',
       });
     } finally {
@@ -686,14 +732,14 @@ export default function ProfilScreen() {
       setFeedbackModal({
         visible: true,
         type: 'warning',
-        title: 'Password Lama Wajib Diisi',
-        message: 'Masukkan password Anda saat ini untuk memverifikasi kepemilikan akun.',
+        title: 'Password Saat Ini Diperlukan',
+        message: 'Mohon masukkan kata sandi saat ini untuk verifikasi keamanan.',
         confirmText: 'Isi Password',
       });
       return;
     }
 
-    if (newPassword.length < 6) {
+    if (!newPassword || newPassword.length < 6) {
       setFeedbackModal({
         visible: true,
         type: 'warning',
@@ -751,7 +797,7 @@ export default function ProfilScreen() {
     setFeedbackModal({
       visible: true,
       type: 'confirm',
-      title: 'Keluar dari Aplikasi?',
+      title: 'Keluar dari Akun?',
       message: 'Sesi masuk Anda pada perangkat ini akan dihapus. Anda dapat masuk kembali kapan saja.',
       confirmText: 'Ya, Keluar',
       cancelText: 'Batal',
@@ -768,741 +814,972 @@ export default function ProfilScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#044E36" />
+    <View style={styles.rootContainer}>
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+
+      {/* ── BACKGROUND ILUSTRASI SEKOLAH IDENTIK HALAMAN MUTABA’AH ── */}
+      <View style={styles.topFoliageWrapper} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP HEADER IDENTIK HALAMAN MUTABA’AH ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
+
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Profil & Pengaturan Akun
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* ── BODY SCROLL CONTAINER ── */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-          {/* FULL BLEED ULTRA MODERN HERO PROFILE CONTAINER */}
-          <View style={styles.heroContainerFull}>
-            <LinearGradient
-              colors={['#022C22', '#064E3B', '#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            {/* Ambient Multi-Tone Glow Orbs */}
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
-            <View style={styles.heroDecorCircle3} />
-
-
-
-            {loading && (
-              <View style={styles.heroLoadingBadge}>
-                <ActivityIndicator size="small" color="#FFFFFF" />
-                <Text style={styles.heroLoadingText}>Menyelaraskan...</Text>
-              </View>
-            )}
-
-            {/* Avatar Squircle with Camera Action */}
-            <View style={styles.avatarContainer}>
-              <View style={styles.heroAvatarWrap}>
-                {profileImageUrl ? (
-                  <Image source={{ uri: String(profileImageUrl) }} style={styles.heroAvatarImg} resizeMode="cover" />
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* 1. HERO PROFILE CARD IDENTIK TAHFIZH GROUP CARD MUTABA'AH */}
+          <View style={styles.heroCardContainer}>
+            <View style={[styles.tahfizhGroupCard, styles.tahfizhGroupCardEmerald]}>
+              {/* Header Box di dalam Group Card */}
+              <View style={[styles.tahfizhGroupCardHeaderRow, styles.tahfizhGroupCardHeaderRowEmerald]}>
+                <View style={styles.tahfizhGroupCardHeaderLeft}>
+                  <View style={[styles.tahfizhGroupHeaderIconBox, styles.tahfizhGroupHeaderIconBoxEmerald]}>
+                    <MaterialCommunityIcons name="shield-account" size={16} color="#FFFFFF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text numberOfLines={1} style={[styles.tahfizhGroupCardTitle, { color: '#064E3B' }]}>
+                      Identitas Akun Terverifikasi
+                    </Text>
+                    <Text numberOfLines={1} style={[styles.tahfizhGroupCardSub, { color: '#059669' }]}>
+                      {activeAcademicPeriod}
+                    </Text>
+                  </View>
+                </View>
+                {loading ? (
+                  <View style={styles.loadingPill}>
+                    <ActivityIndicator size="small" color="#059669" />
+                  </View>
                 ) : (
-                  <Image source={DEFAULT_PARENT_AVATAR} style={styles.heroAvatarImg} resizeMode="cover" />
-                )}
-                {uploadingAvatar && (
-                  <View style={styles.avatarLoadingOverlay}>
-                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  <View style={[styles.tahfizhGroupActionBadge, styles.tahfizhGroupActionBadgeEmerald]}>
+                    <View style={styles.activeDotPulse} />
+                    <Text style={[styles.tahfizhGroupActionBadgeText, { color: '#047857' }]}>
+                      Aktif
+                    </Text>
                   </View>
                 )}
               </View>
 
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={handlePickAndUploadAvatar}
-                style={styles.avatarCameraBtn}
-                disabled={uploadingAvatar}
-              >
-                <MaterialCommunityIcons name="camera" size={14} color="#064E3B" />
-              </TouchableOpacity>
-              <View style={styles.heroAvatarOnlineDot} />
-            </View>
+              {/* Center Profile Details */}
+              <View style={styles.heroProfileCenterWrap}>
+                {/* Avatar with Camera Action */}
+                <View style={styles.avatarContainer}>
+                  <View style={styles.heroAvatarWrap}>
+                    {profileImageUrl ? (
+                      <Image source={{ uri: String(profileImageUrl) }} style={styles.heroAvatarImg} resizeMode="cover" />
+                    ) : (
+                      <Image source={DEFAULT_PARENT_AVATAR} style={styles.heroAvatarImg} resizeMode="cover" />
+                    )}
+                    {uploadingAvatar && (
+                      <View style={styles.avatarLoadingOverlay}>
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      </View>
+                    )}
+                  </View>
 
-            {/* User Title & Identity */}
-            <Text style={styles.heroName} numberOfLines={2}>
-              {employee?.gelar_depan ? `${employee.gelar_depan} ` : ''}
-              {namaLengkap || user?.name || (isParent ? 'Orang Tua / Wali Santri' : isStudent ? 'Peserta Didik' : 'Ustadz / Tenaga Pendidik')}
-              {employee?.gelar_belakang ? `, ${employee.gelar_belakang}` : ''}
-            </Text>
-
-            <View style={styles.heroBadgesRow}>
-              <View style={styles.heroRoleBadge}>
-                <MaterialCommunityIcons name="shield-check" size={13} color="#059669" style={{ marginRight: 4 }} />
-                <Text style={styles.heroRoleBadgeText}>{jabatanName}</Text>
-              </View>
-              {isStudent && (
-                <View style={styles.heroNiyBadge}>
-                  <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#A7F3D0" style={{ marginRight: 4 }} />
-                  <Text style={styles.heroNiyBadgeText}>NIS: {displayValue((user as any)?.student?.nis || (user as any)?.nis || '-')}</Text>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={handlePickAndUploadAvatar}
+                    style={styles.avatarCameraBtn}
+                    disabled={uploadingAvatar}
+                    accessibilityLabel="Ganti foto profil"
+                  >
+                    <MaterialCommunityIcons name="camera" size={14} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  <View style={styles.heroAvatarOnlineDot} />
                 </View>
-              )}
-              {niyOrNip !== '-' && isTeacherOrEmployee && (
-                <View style={styles.heroNiyBadge}>
-                  <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#A7F3D0" style={{ marginRight: 4 }} />
-                  <Text style={styles.heroNiyBadgeText}>NIY: {niyOrNip}</Text>
-                </View>
-              )}
-            </View>
 
-            <Text style={styles.heroEmail} numberOfLines={1}>{user?.email || 'email@sekolah.sch.id'}</Text>
-
-            {/* KPI STATS ROW */}
-            <View style={styles.heroStatsRow}>
-              <View style={styles.heroStatItem}>
-                <Text style={styles.heroStatValue} numberOfLines={1}>
-                  {isParent && currentChild
-                    ? String(currentChild?.education_unit?.name || currentChild?.educationUnit?.name || currentChild?.unit_name || unitName || 'Terpadu').replace('Unit ', '')
-                    : isStudent
-                    ? String((user as any)?.student?.education_unit?.name || (user as any)?.unit_name || unitName || 'Madrasah').replace('Unit ', '')
-                    : String(unitName || '').replace('Unit ', '') || 'Terpadu'}
+                {/* User Name & Role */}
+                <Text style={styles.heroName} numberOfLines={2}>
+                  {employee?.gelar_depan ? `${employee.gelar_depan} ` : ''}
+                  {namaLengkap || user?.name || (isParent ? 'Orang Tua / Wali Santri' : isStudent ? 'Peserta Didik' : 'Ustadz / Tenaga Pendidik')}
+                  {employee?.gelar_belakang ? `, ${employee.gelar_belakang}` : ''}
                 </Text>
-                <Text style={styles.heroStatLabel}>{isParent ? 'Unit Santri' : isStudent ? 'Unit Belajar' : 'Unit Tugas'}</Text>
-              </View>
-              <View style={styles.heroStatDivider} />
-              <View style={styles.heroStatItem}>
-                <Text style={styles.heroStatValue}>
-                  {isParent ? `${children.length} Santri` : isStudent ? displayValue((user as any)?.student?.kelas?.nama_kelas || (user as any)?.student?.kelas?.name || (user as any)?.class_name || '-') : (employee?.status_pegawai || 'Tetap')}
-                </Text>
-                <Text style={styles.heroStatLabel}>{isParent ? 'Ananda' : isStudent ? 'Kelas' : 'Kepegawaian'}</Text>
-              </View>
-              <View style={styles.heroStatDivider} />
-              <View style={styles.heroStatItem}>
-                <View style={styles.activeStatIndicator}>
-                  <View style={styles.activeStatPulse} />
-                  <Text style={styles.heroStatValue}>Aktif</Text>
+
+                <View style={styles.heroBadgesRow}>
+                  <View style={styles.heroRoleBadge}>
+                    <MaterialCommunityIcons name="shield-check" size={13} color="#059669" style={{ marginRight: 4 }} />
+                    <Text style={styles.heroRoleBadgeText}>{jabatanName}</Text>
+                  </View>
+
+                  {isStudent && (
+                    <View style={styles.heroNiyBadge}>
+                      <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#0284C7" style={{ marginRight: 4 }} />
+                      <Text style={styles.heroNiyBadgeText}>NIS: {displayValue((user as any)?.student?.nis || (user as any)?.nis || '-')}</Text>
+                    </View>
+                  )}
+
+                  {niyOrNip !== '-' && isTeacherOrEmployee && (
+                    <View style={styles.heroNiyBadge}>
+                      <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#0284C7" style={{ marginRight: 4 }} />
+                      <Text style={styles.heroNiyBadgeText}>NIY: {niyOrNip}</Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={styles.heroStatLabel}>Status Akun</Text>
+
+                <Text style={styles.heroEmail} numberOfLines={1}>{user?.email || 'email@sekolah.sch.id'}</Text>
+
+                {/* KPI STATS ROW */}
+                <View style={styles.heroStatsRow}>
+                  <View style={styles.heroStatItem}>
+                    <Text style={styles.heroStatValue} numberOfLines={1}>
+                      {isParent && currentChild
+                        ? String(
+                            currentChild?.education_unit?.name ||
+                            currentChild?.education_unit?.nama ||
+                            currentChild?.educationUnit?.name ||
+                            currentChild?.educationUnit?.nama ||
+                            currentChild?.kelas?.unit_pendidikan?.name ||
+                            currentChild?.kelas?.unit_pendidikan?.nama ||
+                            currentChild?.kelas?.unitPendidikan?.name ||
+                            currentChild?.kelas?.unitPendidikan?.nama ||
+                            currentChild?.unit_name ||
+                            (typeof currentChild?.unit === 'object' ? (currentChild?.unit?.name || currentChild?.unit?.nama) : currentChild?.unit) ||
+                            unitName ||
+                            'Unit Belajar'
+                          ).replace(/^Unit\s+/i, '')
+                        : isStudent
+                        ? String(
+                            (user as any)?.student?.education_unit?.name ||
+                            (user as any)?.student?.education_unit?.nama ||
+                            (user as any)?.student?.educationUnit?.name ||
+                            (user as any)?.student?.kelas?.unit_pendidikan?.name ||
+                            (user as any)?.student?.kelas?.unitPendidikan?.name ||
+                            (user as any)?.student?.unit_name ||
+                            (user as any)?.unit_name ||
+                            unitName ||
+                            'Unit Belajar'
+                          ).replace(/^Unit\s+/i, '')
+                        : String(unitName || '').replace(/^Unit\s+/i, '') || 'Dar El-Iman'}
+                    </Text>
+                    <Text style={styles.heroStatLabel}>{isParent ? 'Unit Belajar' : isStudent ? 'Unit Belajar' : 'Unit Tugas'}</Text>
+                  </View>
+                  <View style={styles.heroStatDivider} />
+                  <View style={styles.heroStatItem}>
+                    <Text style={styles.heroStatValue}>
+                      {isParent ? `${children.length} Santri` : isStudent ? displayValue((user as any)?.student?.kelas?.nama_kelas || (user as any)?.student?.kelas?.name || (user as any)?.class_name || '-') : (employee?.status_pegawai || 'Tetap')}
+                    </Text>
+                    <Text style={styles.heroStatLabel}>{isParent ? 'Ananda' : isStudent ? 'Kelas' : 'Kepegawaian'}</Text>
+                  </View>
+                  <View style={styles.heroStatDivider} />
+                  <View style={styles.heroStatItem}>
+                    <View style={styles.activeStatIndicator}>
+                      <View style={styles.activeStatPulse} />
+                      <Text style={styles.heroStatValue}>Aktif</Text>
+                    </View>
+                    <Text style={styles.heroStatLabel}>Status Akun</Text>
+                  </View>
+                </View>
               </View>
             </View>
           </View>
 
-          {/* BODY CONTAINER */}
-          <View style={styles.bodyContainer}>
-
-            {/* 2x2 BUTTON MENU GRID */}
-            <View style={styles.menuButtonGridSection}>
-              <View style={styles.menuGridHeader}>
-                <View style={styles.menuGridHeaderIconWrap}>
-                  <MaterialCommunityIcons name="view-dashboard-outline" size={17} color="#059669" />
+          {/* 2. PILIH ANANDA TERCINTA (TAB / SELECTOR KHUSUS ORANG TUA WALI) */}
+          {isParent && children.length > 0 && (
+            <View style={styles.childSelectorWrapper}>
+              <View style={styles.childSelectorHeaderRow}>
+                <View style={styles.childSelectorHeaderLeft}>
+                  <View style={styles.childSelectorIconBadge}>
+                    <MaterialCommunityIcons name="account-child-circle" size={18} color="#059669" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.childSelectorTitle}>Pilih Ananda Tercinta</Text>
+                    <Text style={styles.childSelectorSub}>
+                      Pilih santri untuk sinkronisasi data & melihat biodata
+                    </Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.menuGridHeaderTitle}>Pilih Menu Pengaturan</Text>
-                  <Text style={styles.menuGridHeaderSub}>Ketuk menu untuk membuka atau mengubah data</Text>
+                <View style={styles.childCountBadge}>
+                  <MaterialCommunityIcons name="school-outline" size={12} color="#047857" />
+                  <Text style={styles.childCountBadgeText}>{children.length} Santri</Text>
                 </View>
               </View>
 
-              <View style={styles.menuButtonGrid}>
-                {menuButtons.map((btn) => {
-                  const isActive = activeTab === btn.id;
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.childCardsScrollContent}
+              >
+                {children.map((child, idx) => {
+                  const isSelected = String(child.id) === String(selectedChildId);
+                  const childName = child.full_name || child.nama_lengkap || child.name || `Ananda ${idx + 1}`;
+                  const isGirl = isGirlStudent(child);
+                  const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+                  const rawPhoto = child.foto || child.photo || child.avatar || child.photo_url || child.image;
+                  const photoUrl = rawPhoto ? resolveMediaUrl(rawPhoto) : null;
+                  const className = child.kelas?.nama_kelas || child.kelas?.name || child.class_name || child.kelas || 'Rombel Aktif';
+                  const unit =
+                    child.education_unit?.name ||
+                    child.education_unit?.nama ||
+                    child.educationUnit?.name ||
+                    child.educationUnit?.nama ||
+                    child.kelas?.unit_pendidikan?.name ||
+                    child.kelas?.unit_pendidikan?.nama ||
+                    child.kelas?.unitPendidikan?.name ||
+                    child.kelas?.unitPendidikan?.nama ||
+                    child.unit_name ||
+                    (typeof child.unit === 'object' ? (child.unit?.name || child.unit?.nama) : child.unit) ||
+                    'Unit Belajar';
+                  const nis = child.nis || child.nisn || '-';
+
                   return (
                     <TouchableOpacity
-                      key={btn.id}
-                      activeOpacity={0.8}
-                      onPress={() => setActiveTab(btn.id)}
+                      key={String(child.id)}
+                      activeOpacity={0.88}
+                      onPress={() => handleSelectChild(String(child.id))}
                       style={[
-                        styles.menuButtonCard,
-                        isActive && styles.menuButtonCardActive,
+                        styles.childCard,
+                        isSelected && styles.childCardSelected,
+                        children.length === 1 && { width: SCREEN_WIDTH - 32 },
                       ]}
                     >
-                      {isActive && <View style={styles.menuButtonActiveIndicatorBar} />}
-
-                      <View style={styles.menuButtonCardTop}>
-                        <View style={[styles.menuButtonIconBox, { backgroundColor: btn.iconBg }]}>
-                          <MaterialCommunityIcons name={btn.icon} size={22} color={btn.iconColor} />
+                      {/* Top Row: Status badge & Unit pill */}
+                      <View style={styles.childCardTopRow}>
+                        <View style={[styles.childActivePill, isSelected ? styles.childActivePillSelected : styles.childActivePillInactive]}>
+                          <MaterialCommunityIcons
+                            name={isSelected ? 'check-decagram' : 'checkbox-blank-circle-outline'}
+                            size={12}
+                            color={isSelected ? '#047857' : '#64748B'}
+                          />
+                          <Text style={[styles.childActivePillText, isSelected ? styles.childActivePillTextSelected : styles.childActivePillTextInactive]}>
+                            {isSelected ? 'Ananda Terpilih' : 'Ketuk Memilih'}
+                          </Text>
                         </View>
-                        <View style={[styles.menuButtonStatusDot, isActive && styles.menuButtonStatusDotActive]}>
-                          {isActive ? (
-                            <MaterialCommunityIcons name="check" size={11} color="#FFFFFF" />
-                          ) : (
-                            <View style={styles.menuButtonInactiveDot} />
-                          )}
+
+                        <View style={styles.childUnitPill}>
+                          <Text numberOfLines={1} style={styles.childUnitPillText}>
+                            {String(unit).replace(/^Unit\s+/i, '')}
+                          </Text>
                         </View>
                       </View>
 
-                      <Text style={[styles.menuButtonCardTitle, isActive && styles.menuButtonCardTitleActive]} numberOfLines={1}>
-                        {btn.title}
-                      </Text>
-                      <Text style={styles.menuButtonCardSub} numberOfLines={1}>
-                        {btn.subtitle}
-                      </Text>
+                      {/* Main Identity: Avatar & Text */}
+                      <View style={styles.childCardIdentityRow}>
+                        <View style={[styles.childAvatarWrap, isSelected && styles.childAvatarWrapSelected]}>
+                          <Image
+                            source={photoUrl ? { uri: photoUrl } : defaultAvatar}
+                            style={styles.childAvatarImg}
+                            resizeMode="cover"
+                          />
+                        </View>
+
+                        <View style={styles.childCardIdentityText}>
+                          <Text numberOfLines={1} style={[styles.childCardName, isSelected && styles.childCardNameSelected]}>
+                            {childName}
+                          </Text>
+                          <View style={styles.childClassRow}>
+                            <MaterialCommunityIcons name="google-classroom" size={13} color={isSelected ? '#059669' : '#64748B'} />
+                            <Text numberOfLines={1} style={styles.childClassText}>
+                              {className}
+                            </Text>
+                          </View>
+                          <View style={styles.childNisRow}>
+                            <MaterialCommunityIcons name="card-account-details-outline" size={12} color="#94A3B8" />
+                            <Text style={styles.childNisText}>NIS: {nis}</Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Bottom active indicator */}
+                      {isSelected && <View style={styles.childSelectedBottomBar} />}
                     </TouchableOpacity>
                   );
                 })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* 3. 2x2 NAVIGATION BUTTON MENU GRID */}
+          <View style={styles.menuButtonGridSection}>
+            <View style={styles.menuGridHeader}>
+              <View style={styles.menuGridHeaderIconWrap}>
+                <MaterialCommunityIcons name="view-dashboard-outline" size={16} color="#059669" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuGridHeaderTitle}>Pilih Menu Pengaturan</Text>
+                <Text style={styles.menuGridHeaderSub}>Ketuk menu untuk membuka atau memperbarui data</Text>
               </View>
             </View>
 
-            {/* TAB CONTENT 1: BIODATA & RINGKASAN */}
-            {activeTab === 'biodata' && (
-              <>
-                {/* CHILD SELECTOR FOR PARENTS */}
-                {isParent && children.length > 1 && (
-                  <View style={styles.sectionCard}>
-                    <View style={styles.cardSectionHeader}>
-                      <View style={styles.cardSectionIconBadge}>
-                        <MaterialCommunityIcons name="account-group" size={15} color="#059669" />
-                      </View>
-                      <Text style={styles.cardSectionTitle}>Pilih Ananda</Text>
-                    </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.childChipsRow}>
-                      {children.map((child) => {
-                        const isSelected = String(child.id) === String(currentChild?.id);
-                        return (
-                          <TouchableOpacity
-                            key={String(child.id)}
-                            activeOpacity={0.8}
-                            onPress={() => setSelectedChildId(String(child.id))}
-                            style={[styles.childChip, isSelected && styles.childChipActive]}
-                          >
-                            <MaterialCommunityIcons name="school" size={14} color={isSelected ? '#FFFFFF' : '#059669'} style={{ marginRight: 4 }} />
-                            <Text style={[styles.childChipText, isSelected && styles.childChipTextActive]} numberOfLines={1}>
-                              {child.full_name || child.nama_lengkap || child.name}
-                            </Text>
-                            {isSelected && (
-                              <View style={styles.childChipCheckDot}>
-                                <MaterialCommunityIcons name="check" size={9} color="#059669" />
-                              </View>
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                )}
+            <View style={styles.menuButtonGrid}>
+              {menuButtons.map((btn) => {
+                const isActive = activeTab === btn.id;
+                return (
+                  <TouchableOpacity
+                    key={btn.id}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab(btn.id)}
+                    style={[
+                      styles.menuButtonCard,
+                      isActive && styles.menuButtonCardActive,
+                    ]}
+                  >
+                    {isActive && <View style={styles.menuButtonActiveIndicatorBar} />}
 
-                {/* BIODATA SANTRI (FOR PARENT) */}
-                {isParent && currentChild && (
+                    <View style={styles.menuButtonCardTop}>
+                      <View style={[styles.menuButtonIconBox, { backgroundColor: btn.iconBg }]}>
+                        <MaterialCommunityIcons name={btn.icon} size={20} color={btn.iconColor} />
+                      </View>
+                      <View style={[styles.menuButtonStatusDot, isActive && styles.menuButtonStatusDotActive]}>
+                        {isActive ? (
+                          <MaterialCommunityIcons name="check" size={11} color="#FFFFFF" />
+                        ) : (
+                          <View style={styles.menuButtonInactiveDot} />
+                        )}
+                      </View>
+                    </View>
+
+                    <Text style={[styles.menuButtonCardTitle, isActive && styles.menuButtonCardTitleActive]} numberOfLines={1}>
+                      {btn.title}
+                    </Text>
+                    <Text style={styles.menuButtonCardSub} numberOfLines={1}>
+                      {btn.subtitle}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* 4. TAB CONTENT 1: BIODATA & IDENTITAS */}
+          {activeTab === 'biodata' && (
+            <>
+              {/* BIODATA ANANDA TERPILIH (FOR PARENT) */}
+              {isParent && currentChild && (() => {
+                const isSantriChild = Boolean(
+                  currentChild?.is_santri ||
+                  currentChild?.asrama ||
+                  currentChild?.education_unit?.name?.toLowerCase().includes('ponpes') ||
+                  currentChild?.education_unit?.name?.toLowerCase().includes('pesantren')
+                );
+                const childRoleLabel = isSantriChild ? 'Santri' : 'Peserta Didik';
+                const childShortLabel = isSantriChild ? 'Santri' : 'Siswa';
+                const defaultUnitFallback = useMobileConfigStore.getState().config.branding?.school_name || 'Sekolah Terpadu';
+
+                return (
                   <View style={styles.sectionCard}>
                     <View style={styles.cardSectionHeader}>
                       <View style={styles.cardSectionIconBadge}>
-                        <MaterialCommunityIcons name="card-account-details-outline" size={15} color="#059669" />
+                        <MaterialCommunityIcons name="card-account-details-outline" size={16} color="#059669" />
                       </View>
-                      <Text style={styles.cardSectionTitle}>Biodata Santri Binaan</Text>
+                      <Text style={styles.cardSectionTitle}>{`Biodata Lengkap ${childRoleLabel}`}</Text>
                       <View style={styles.cardSectionBadge}>
                         <Text style={styles.cardSectionBadgeText} numberOfLines={1}>
-                          {currentChild?.full_name || currentChild?.nama_lengkap || 'Santri'}
+                          {currentChild?.full_name || currentChild?.nama_lengkap || childShortLabel}
                         </Text>
                       </View>
                     </View>
                     <View style={styles.infoRowsContainer}>
-                      <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap Santri" value={displayValue(currentChild?.full_name || currentChild?.nama_lengkap || currentChild?.name)} />
+                      <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label={`Nama Lengkap ${childShortLabel}`} value={displayValue(currentChild?.full_name || currentChild?.nama_lengkap || currentChild?.name)} />
                       <InfoRow icon="numeric" iconBg="#EFF6FF" iconColor="#2563EB" label="NIS / NISN" value={(currentChild?.nis || '-') + ' / ' + (currentChild?.nisn || '-')} />
-                      <InfoRow icon="domain" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Pendidikan" value={displayValue(currentChild?.education_unit?.name || currentChild?.educationUnit?.name || currentChild?.unit_name || 'Sekolah Terpadu')} />
+                      <InfoRow
+                        icon="domain"
+                        iconBg="#F5F3FF"
+                        iconColor="#7C3AED"
+                        label="Unit Pendidikan"
+                        value={displayValue(
+                          currentChild?.education_unit?.name ||
+                          currentChild?.education_unit?.nama ||
+                          currentChild?.educationUnit?.name ||
+                          currentChild?.educationUnit?.nama ||
+                          currentChild?.kelas?.unit_pendidikan?.name ||
+                          currentChild?.kelas?.unit_pendidikan?.nama ||
+                          currentChild?.kelas?.unitPendidikan?.name ||
+                          currentChild?.kelas?.unitPendidikan?.nama ||
+                          currentChild?.unit_name ||
+                          (typeof currentChild?.unit === 'object' ? (currentChild?.unit?.name || currentChild?.unit?.nama) : currentChild?.unit) ||
+                          defaultUnitFallback
+                        )}
+                      />
                       <InfoRow icon="google-classroom" iconBg="#FEF3C7" iconColor="#D97706" label="Kelas / Rombel" value={displayValue(currentChild?.kelas?.nama_kelas || currentChild?.kelas?.name || currentChild?.class_name)} />
                       <InfoRow icon="calendar-account" iconBg="#FEE2E2" iconColor="#DC2626" label="Tempat, Tanggal Lahir" value={(currentChild?.birth_place || '-') + ', ' + formatDateSafe(currentChild?.birth_date)} />
                       <InfoRow icon="home-map-marker" iconBg="#ECFDF5" iconColor="#059669" label="Alamat Tempat Tinggal" value={displayValue(currentChild?.address)} isLast />
                     </View>
                   </View>
-                )}
+                );
+              })()}
 
-                {/* BIODATA SISWA (FOR STUDENT ROLE) */}
-                {isStudent && (
+              {/* PROFIL UNIT SEKOLAH ANANDA TERPILIH (FOR PARENT) */}
+              {isParent && currentChild && (() => {
+                const eduUnit = currentChild?.education_unit || currentChild?.kelas?.unit_pendidikan || {};
+                const meta = eduUnit?.metadata || {};
+                const schoolName = eduUnit?.name || currentChild?.unit_name || 'Unit Sekolah';
+                const principalName = meta?.principal_name || '-';
+                const npsn = meta?.npsn || eduUnit?.code || '-';
+                const accreditation = meta?.accreditation || 'A';
+                const address = meta?.address || '-';
+                const phone = meta?.phone || '-';
+                const email = meta?.email || '-';
+                const program = `${eduUnit?.program_type ? String(eduUnit.program_type).toUpperCase() : 'FULDAY'} · ${eduUnit?.jam_kegiatan || 'Jam KBM Terpadu'}`;
+
+                return (
                   <View style={styles.sectionCard}>
                     <View style={styles.cardSectionHeader}>
-                      <View style={styles.cardSectionIconBadge}>
-                        <MaterialCommunityIcons name="school" size={15} color="#059669" />
+                      <View style={[styles.cardSectionIconBadge, { backgroundColor: '#EFF6FF' }]}>
+                        <MaterialCommunityIcons name="domain" size={16} color="#2563EB" />
                       </View>
-                      <Text style={styles.cardSectionTitle}>Biodata Peserta Didik</Text>
-                      <View style={styles.cardSectionBadge}>
-                        <Text style={styles.cardSectionBadgeText}>Siswa Aktif</Text>
+                      <Text style={styles.cardSectionTitle}>Profil Unit Sekolah Ananda</Text>
+                      <View style={[styles.cardSectionBadge, { backgroundColor: '#EFF6FF' }]}>
+                        <Text style={[styles.cardSectionBadgeText, { color: '#2563EB' }]} numberOfLines={1}>
+                          {schoolName.replace(/^Unit\s+/i, '')}
+                        </Text>
                       </View>
                     </View>
                     <View style={styles.infoRowsContainer}>
-                      <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap Siswa" value={displayValue(user?.name || (user as any)?.student?.nama_lengkap || namaLengkap)} />
-                      <InfoRow icon="numeric" iconBg="#EFF6FF" iconColor="#2563EB" label="NIS / NISN" value={((user as any)?.student?.nis || (user as any)?.nis || '-') + ' / ' + ((user as any)?.student?.nisn || (user as any)?.nisn || '-')} />
-                      <InfoRow icon="domain" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Pendidikan" value={displayValue((user as any)?.student?.education_unit?.name || (user as any)?.unit_name || unitName || 'Sekolah Terpadu')} />
-                      <InfoRow icon="google-classroom" iconBg="#FEF3C7" iconColor="#D97706" label="Kelas / Rombel" value={displayValue((user as any)?.student?.kelas?.nama_kelas || (user as any)?.student?.kelas?.name || (user as any)?.class_name || '-')} />
-                      <InfoRow icon="calendar-account" iconBg="#FEE2E2" iconColor="#DC2626" label="Tempat, Tanggal Lahir" value={`${displayValue((user as any)?.student?.birth_place || tempatLahir)}, ${formatDateSafe((user as any)?.student?.birth_date || tanggalLahir)}`} />
-                      <InfoRow icon="gender-male-female" iconBg="#ECFDF5" iconColor="#059669" label="Jenis Kelamin" value={(user as any)?.student?.gender === 'P' || jenisKelamin === 'P' ? 'Perempuan' : 'Laki-laki'} />
-                      <InfoRow icon="account-child-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Orang Tua / Wali" value={displayValue((user as any)?.student?.parent?.name || (user as any)?.parent_name || '-')} />
-                      <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
-                      <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
-                      <InfoRow icon="home-map-marker" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Tempat Tinggal" value={displayValue(alamat || (user as any)?.student?.address)} isLast />
+                      <InfoRow icon="domain" iconBg="#EFF6FF" iconColor="#2563EB" label="Nama Unit Sekolah" value={displayValue(schoolName)} />
+                      <InfoRow icon="account-tie" iconBg="#DCFCE7" iconColor="#059669" label="Kepala Sekolah / Pimpinan" value={displayValue(principalName)} />
+                      <InfoRow icon="certificate" iconBg="#FEF3C7" iconColor="#D97706" label="Akreditasi & NPSN" value={`Akreditasi ${accreditation} · NPSN ${npsn}`} />
+                      <InfoRow icon="clock-outline" iconBg="#F3E8FF" iconColor="#7C3AED" label="Program & Jam KBM" value={displayValue(program)} />
+                      <InfoRow icon="phone-outline" iconBg="#ECFDF5" iconColor="#059669" label="Kontak Telepon" value={displayValue(phone)} />
+                      <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Resmi" value={displayValue(email)} />
+                      <InfoRow icon="map-marker-outline" iconBg="#FFF1F2" iconColor="#E11D48" label="Alamat Kampus Sekolah" value={displayValue(address)} isLast />
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* BIODATA SISWA (FOR STUDENT ROLE) */}
+              {isStudent && (
+                <View style={styles.sectionCard}>
+                  <View style={styles.cardSectionHeader}>
+                    <View style={styles.cardSectionIconBadge}>
+                      <MaterialCommunityIcons name="school" size={16} color="#059669" />
+                    </View>
+                    <Text style={styles.cardSectionTitle}>Biodata Peserta Didik</Text>
+                    <View style={styles.cardSectionBadge}>
+                      <Text style={styles.cardSectionBadgeText}>Siswa Aktif</Text>
+                    </View>
+                  </View>
+                  <View style={styles.infoRowsContainer}>
+                    <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap Siswa" value={displayValue(user?.name || (user as any)?.student?.nama_lengkap || namaLengkap)} />
+                    <InfoRow icon="numeric" iconBg="#EFF6FF" iconColor="#2563EB" label="NIS / NISN" value={((user as any)?.student?.nis || (user as any)?.nis || '-') + ' / ' + ((user as any)?.student?.nisn || (user as any)?.nisn || '-')} />
+                    <InfoRow icon="domain" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Pendidikan" value={displayValue((user as any)?.student?.education_unit?.name || (user as any)?.unit_name || unitName || 'Sekolah Terpadu')} />
+                    <InfoRow icon="google-classroom" iconBg="#FEF3C7" iconColor="#D97706" label="Kelas / Rombel" value={displayValue((user as any)?.student?.kelas?.nama_kelas || (user as any)?.student?.kelas?.name || (user as any)?.class_name || '-')} />
+                    <InfoRow icon="calendar-account" iconBg="#FEE2E2" iconColor="#DC2626" label="Tempat, Tanggal Lahir" value={`${displayValue((user as any)?.student?.birth_place || tempatLahir)}, ${formatDateSafe((user as any)?.student?.birth_date || tanggalLahir)}`} />
+                    <InfoRow icon="gender-male-female" iconBg="#ECFDF5" iconColor="#059669" label="Jenis Kelamin" value={isGirlStudent((user as any)?.student || user) ? 'Perempuan' : 'Laki-laki'} />
+                    <InfoRow icon="account-child-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Orang Tua / Wali" value={displayValue((user as any)?.student?.parent?.name || (user as any)?.parent_name || '-')} />
+                    <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
+                    <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
+                    <InfoRow icon="home-map-marker" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Tempat Tinggal" value={displayValue(alamat || (user as any)?.student?.address)} isLast />
+                  </View>
+                </View>
+              )}
+
+              {/* IDENTITAS PENDIDIK / PEGAWAI / WALI (FOR NON-STUDENT) */}
+              {!isStudent && (
+                <View style={styles.sectionCard}>
+                  <View style={styles.cardSectionHeader}>
+                    <View style={styles.cardSectionIconBadge}>
+                      <MaterialCommunityIcons name="badge-account-outline" size={16} color="#059669" />
+                    </View>
+                    <Text style={styles.cardSectionTitle}>{isTeacherOrEmployee ? 'Identitas Tenaga Pendidik' : 'Identitas Akun Wali'}</Text>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setActiveTab('edit_profil')}
+                      style={styles.cardHeaderQuickAction}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={12} color="#059669" />
+                      <Text style={styles.cardHeaderQuickActionText}>Ubah</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.infoRowsContainer}>
+                    <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap & Gelar" value={namaLengkap ? `${employee?.gelar_depan ? employee.gelar_depan + ' ' : ''}${namaLengkap}${employee?.gelar_belakang ? ', ' + employee.gelar_belakang : ''}` : displayValue(user?.name)} />
+                    {isTeacherOrEmployee && (
+                      <>
+                        <InfoRow icon="card-bulleted-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Nomor Induk Yayasan (NIY)" value={displayValue(employee?.niy || niyOrNip)} />
+                        <InfoRow icon="account-tie-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Jabatan & Peran" value={displayValue(jabatanName)} />
+                        <InfoRow icon="office-building" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Penugasan" value={displayValue(unitName)} />
+                        <InfoRow icon="gender-male-female" iconBg="#FEE2E2" iconColor="#E11D48" label="Jenis Kelamin" value={jenisKelamin === 'L' ? 'Laki-laki' : 'Perempuan'} />
+                        <InfoRow icon="calendar-clock" iconBg="#ECFDF5" iconColor="#059669" label="Tempat, Tanggal Lahir" value={`${displayValue(tempatLahir)}, ${formatDateSafe(tanggalLahir)}`} />
+                      </>
+                    )}
+                    <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
+                    <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
+                    <InfoRow icon="home-outline" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Domisili" value={displayValue(alamat)} isLast />
+                  </View>
+                </View>
+              )}
+
+              {/* QUICK ACTION BANNER */}
+              <View style={styles.quickActionBanner}>
+                <View style={styles.quickActionIconWrap}>
+                  <MaterialCommunityIcons name="lightning-bolt" size={20} color="#059669" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.quickActionTitle}>Kelola Akun Mandiri</Text>
+                  <Text style={styles.quickActionDesc}>
+                    Perbarui kontak, biodata, serta ganti kata sandi kapan saja langsung dari aplikasi.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setActiveTab('edit_profil')}
+                  style={styles.quickActionPill}
+                >
+                  <Text style={styles.quickActionPillText}>Edit Data</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={14} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {/* 5. TAB CONTENT 2: UBAH DATA PROFIL */}
+          {activeTab === 'edit_profil' && (
+            <View style={styles.sectionCard}>
+              <View style={styles.cardSectionHeader}>
+                <View style={styles.cardSectionIconBadge}>
+                  <MaterialCommunityIcons name="account-edit" size={16} color="#059669" />
+                </View>
+                <Text style={styles.cardSectionTitle}>Form Perubahan Biodata</Text>
+                <View style={styles.statusLivePill}>
+                  <Text style={styles.statusLivePillText}>Editable</Text>
+                </View>
+              </View>
+
+              <View style={styles.formContainer}>
+                {/* Gelar Depan & Belakang Row */}
+                {isTeacherOrEmployee && (
+                  <View style={styles.formRowTwoCol}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.inputFieldLabel}>Gelar Depan</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        value={gelarDepan}
+                        onChangeText={setGelarDepan}
+                        placeholder="Ustadz / Dr."
+                        placeholderTextColor="#94A3B8"
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.inputFieldLabel}>Gelar Belakang</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        value={gelarBelakang}
+                        onChangeText={setGelarBelakang}
+                        placeholder="S.Pd.I / M.Pd"
+                        placeholderTextColor="#94A3B8"
+                      />
                     </View>
                   </View>
                 )}
 
-                {/* IDENTITAS PENDIDIK / PEGAWAI / AKUN (FOR NON-STUDENT) */}
-                {!isStudent && (
-                  <View style={styles.sectionCard}>
-                    <View style={styles.cardSectionHeader}>
-                      <View style={styles.cardSectionIconBadge}>
-                        <MaterialCommunityIcons name="badge-account-outline" size={15} color="#059669" />
-                      </View>
-                      <Text style={styles.cardSectionTitle}>{isTeacherOrEmployee ? 'Identitas Tenaga Pendidik' : 'Identitas Akun'}</Text>
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => setActiveTab('edit_profil')}
-                        style={styles.cardHeaderQuickAction}
-                      >
-                        <MaterialCommunityIcons name="pencil" size={12} color="#059669" />
-                        <Text style={styles.cardHeaderQuickActionText}>Ubah</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.infoRowsContainer}>
-                      <InfoRow icon="account" iconBg="#DCFCE7" iconColor="#059669" label="Nama Lengkap & Gelar" value={namaLengkap ? `${employee?.gelar_depan ? employee.gelar_depan + ' ' : ''}${namaLengkap}${employee?.gelar_belakang ? ', ' + employee.gelar_belakang : ''}` : displayValue(user?.name)} />
-                      {isTeacherOrEmployee && (
-                        <>
-                          <InfoRow icon="card-bulleted-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Nomor Induk Yayasan (NIY)" value={displayValue(employee?.niy || niyOrNip)} />
-                          <InfoRow icon="account-tie-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Jabatan & Peran" value={displayValue(jabatanName)} />
-                          <InfoRow icon="office-building" iconBg="#F5F3FF" iconColor="#7C3AED" label="Unit Penugasan" value={displayValue(unitName)} />
-                          <InfoRow icon="gender-male-female" iconBg="#FEE2E2" iconColor="#E11D48" label="Jenis Kelamin" value={jenisKelamin === 'L' ? 'Laki-laki' : 'Perempuan'} />
-                          <InfoRow icon="calendar-clock" iconBg="#ECFDF5" iconColor="#059669" label="Tempat, Tanggal Lahir" value={`${displayValue(tempatLahir)}, ${formatDateSafe(tanggalLahir)}`} />
-                        </>
-                      )}
-                      <InfoRow icon="phone-outline" iconBg="#DCFCE7" iconColor="#059669" label="Nomor WhatsApp / HP" value={displayValue(phone || user?.phone)} />
-                      <InfoRow icon="email-outline" iconBg="#EFF6FF" iconColor="#2563EB" label="Email Terdaftar" value={displayValue(user?.email)} />
-                      <InfoRow icon="home-outline" iconBg="#F0FDFA" iconColor="#0D9488" label="Alamat Domisili" value={displayValue(alamat)} isLast />
-                    </View>
+                {/* Nama Lengkap */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputFieldLabel}>Nama Lengkap *</Text>
+                  <View style={styles.inputWithIcon}>
+                    <MaterialCommunityIcons name="account-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
+                    <TextInput
+                      style={styles.inputWithPrefix}
+                      value={namaLengkap}
+                      onChangeText={setNamaLengkap}
+                      placeholder="Masukkan nama lengkap..."
+                      placeholderTextColor="#94A3B8"
+                    />
                   </View>
-                )}
+                </View>
 
-                {/* QUICK ACTION BANNER */}
-                <View style={styles.quickActionBanner}>
-                  <View style={styles.quickActionIconWrap}>
-                    <MaterialCommunityIcons name="lightning-bolt" size={20} color="#059669" />
+                {/* Nama Panggilan & No HP */}
+                <View style={styles.formRowTwoCol}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputFieldLabel}>Nama Panggilan</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      value={namaPanggilan}
+                      onChangeText={setNamaPanggilan}
+                      placeholder="Panggilan"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                  <View style={{ flex: 1.3 }}>
+                    <Text style={styles.inputFieldLabel}>No. WhatsApp / HP</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      value={phone}
+                      onChangeText={setPhone}
+                      placeholder="081234567890"
+                      keyboardType="phone-pad"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                </View>
+
+                {/* Tempat & Tanggal Lahir */}
+                <View style={styles.formRowTwoCol}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputFieldLabel}>Tempat Lahir</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      value={tempatLahir}
+                      onChangeText={setTempatLahir}
+                      placeholder="Kota Lahir"
+                      placeholderTextColor="#94A3B8"
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.quickActionTitle}>Kelola Akun Mandiri</Text>
-                    <Text style={styles.quickActionDesc}>
-                      Perbarui kontak, biodata, serta ganti kata sandi kapan saja langsung dari aplikasi.
-                    </Text>
+                    <Text style={styles.inputFieldLabel}>Tgl Lahir (YYYY-MM-DD)</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      value={tanggalLahir}
+                      onChangeText={setTanggalLahir}
+                      placeholder="1990-05-20"
+                      placeholderTextColor="#94A3B8"
+                    />
                   </View>
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => setActiveTab('edit_profil')}
-                    style={styles.quickActionPill}
-                  >
-                    <Text style={styles.quickActionPillText}>Edit Data</Text>
-                    <MaterialCommunityIcons name="chevron-right" size={14} color="#FFFFFF" />
-                  </TouchableOpacity>
                 </View>
-              </>
-            )}
 
-            {/* TAB CONTENT 2: UBAH DATA GURU */}
-            {activeTab === 'edit_profil' && (
+                {/* Jenis Kelamin Selector */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputFieldLabel}>Jenis Kelamin</Text>
+                  <View style={styles.genderSelectRow}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setJenisKelamin('L')}
+                      style={[styles.genderOption, jenisKelamin === 'L' && styles.genderOptionActive]}
+                    >
+                      <MaterialCommunityIcons
+                        name="gender-male"
+                        size={16}
+                        color={jenisKelamin === 'L' ? '#FFFFFF' : '#059669'}
+                      />
+                      <Text style={[styles.genderOptionText, jenisKelamin === 'L' && styles.genderOptionTextActive]}>
+                        Laki-laki (Ikhwan)
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setJenisKelamin('P')}
+                      style={[styles.genderOption, jenisKelamin === 'P' && styles.genderOptionActive]}
+                    >
+                      <MaterialCommunityIcons
+                        name="gender-female"
+                        size={16}
+                        color={jenisKelamin === 'P' ? '#FFFFFF' : '#059669'}
+                      />
+                      <Text style={[styles.genderOptionText, jenisKelamin === 'P' && styles.genderOptionTextActive]}>
+                        Perempuan (Akhwat)
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Alamat Domisili */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputFieldLabel}>Alamat Domisili</Text>
+                  <TextInput
+                    style={[styles.formInput, { minHeight: 70, textAlignVertical: 'top' }]}
+                    value={alamat}
+                    onChangeText={setAlamat}
+                    placeholder="Alamat tempat tinggal lengkap..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                    numberOfLines={3}
+                  />
+                </View>
+
+                {/* Save Profile Button */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={handleSaveProfile}
+                  disabled={savingProfile}
+                  style={styles.saveSubmitBtn}
+                >
+                  <LinearGradient
+                    colors={['#059669', '#10B981']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.saveSubmitGradient}
+                  >
+                    {savingProfile ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <MaterialCommunityIcons name="content-save-check-outline" size={18} color="#FFFFFF" />
+                        <Text style={styles.saveSubmitBtnText}>Simpan Perubahan Data</Text>
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* 6. TAB CONTENT 3: PASSWORD & EMAIL */}
+          {activeTab === 'keamanan' && (
+            <>
+              {/* CARD GANTI EMAIL */}
               <View style={styles.sectionCard}>
                 <View style={styles.cardSectionHeader}>
                   <View style={styles.cardSectionIconBadge}>
-                    <MaterialCommunityIcons name="account-edit" size={16} color="#059669" />
+                    <MaterialCommunityIcons name="email-edit-outline" size={16} color="#059669" />
                   </View>
-                  <Text style={styles.cardSectionTitle}>Form Perubahan Biodata</Text>
-                  <View style={styles.statusLivePill}>
-                    <Text style={styles.statusLivePillText}>Editable</Text>
-                  </View>
+                  <Text style={styles.cardSectionTitle}>Perbarui Alamat Email</Text>
                 </View>
-
                 <View style={styles.formContainer}>
-                  {/* Gelar Depan & Belakang Row */}
-                  {isTeacherOrEmployee && (
-                    <View style={styles.formRowTwoCol}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.inputFieldLabel}>Gelar Depan</Text>
-                        <TextInput
-                          style={styles.formInput}
-                          value={gelarDepan}
-                          onChangeText={setGelarDepan}
-                          placeholder="Ustadz / Dr."
-                          placeholderTextColor="#94A3B8"
+                  <Text style={styles.inputDescription}>
+                    Email digunakan untuk menerima pemberitahuan resmi dan sebagai alternatif masuk ke akun.
+                  </Text>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.inputFieldLabel}>Alamat Email Akun</Text>
+                    <View style={styles.inputWithIcon}>
+                      <MaterialCommunityIcons name="email-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
+                      <TextInput
+                        style={styles.inputWithPrefix}
+                        value={emailInput}
+                        onChangeText={setEmailInput}
+                        placeholder="nama@sekolah.sch.id"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                      />
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={handleSaveEmail}
+                    disabled={savingEmail}
+                    style={styles.saveSecondaryBtn}
+                  >
+                    {savingEmail ? (
+                      <ActivityIndicator size="small" color="#059669" />
+                    ) : (
+                      <>
+                        <MaterialCommunityIcons name="check-circle-outline" size={16} color="#059669" />
+                        <Text style={styles.saveSecondaryBtnText}>Simpan Email Baru</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* CARD GANTI PASSWORD */}
+              <View style={styles.sectionCard}>
+                <View style={styles.cardSectionHeader}>
+                  <View style={[styles.cardSectionIconBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                    <MaterialCommunityIcons name="lock-reset" size={16} color="#2563EB" />
+                  </View>
+                  <Text style={styles.cardSectionTitle}>Ubah Kata Sandi (Password)</Text>
+                </View>
+                <View style={styles.formContainer}>
+                  <Text style={styles.inputDescription}>
+                    Gunakan kata sandi yang kuat dengan minimal 6 karakter kombinasi huruf dan angka.
+                  </Text>
+
+                  {/* Password Saat Ini */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.inputFieldLabel}>Password Saat Ini *</Text>
+                    <View style={styles.inputWithIcon}>
+                      <MaterialCommunityIcons name="lock-outline" size={18} color="#64748B" style={styles.inputPrefixIcon} />
+                      <TextInput
+                        style={styles.inputWithPrefix}
+                        value={currentPassword}
+                        onChangeText={setCurrentPassword}
+                        placeholder="Ketik password lama Anda..."
+                        placeholderTextColor="#94A3B8"
+                        secureTextEntry={!showCurrentPass}
+                        autoCapitalize="none"
+                      />
+                      <TouchableOpacity
+                        onPress={() => setShowCurrentPass(!showCurrentPass)}
+                        style={styles.inputSuffixBtn}
+                      >
+                        <MaterialCommunityIcons
+                          name={showCurrentPass ? 'eye-off-outline' : 'eye-outline'}
+                          size={18}
+                          color="#64748B"
                         />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.inputFieldLabel}>Gelar Belakang</Text>
-                        <TextInput
-                          style={styles.formInput}
-                          value={gelarBelakang}
-                          onChangeText={setGelarBelakang}
-                          placeholder="S.Pd.I / M.Pd"
-                          placeholderTextColor="#94A3B8"
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Password Baru */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.inputFieldLabel}>Password Baru (Min. 6 Karakter) *</Text>
+                    <View style={styles.inputWithIcon}>
+                      <MaterialCommunityIcons name="lock-check-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
+                      <TextInput
+                        style={styles.inputWithPrefix}
+                        value={newPassword}
+                        onChangeText={setNewPassword}
+                        placeholder="Ketik password baru..."
+                        placeholderTextColor="#94A3B8"
+                        secureTextEntry={!showNewPass}
+                        autoCapitalize="none"
+                      />
+                      <TouchableOpacity
+                        onPress={() => setShowNewPass(!showNewPass)}
+                        style={styles.inputSuffixBtn}
+                      >
+                        <MaterialCommunityIcons
+                          name={showNewPass ? 'eye-off-outline' : 'eye-outline'}
+                          size={18}
+                          color="#64748B"
                         />
-                      </View>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Konfirmasi Password Baru */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.inputFieldLabel}>Konfirmasi Password Baru *</Text>
+                    <View style={styles.inputWithIcon}>
+                      <MaterialCommunityIcons name="shield-check-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
+                      <TextInput
+                        style={styles.inputWithPrefix}
+                        value={confirmPassword}
+                        onChangeText={setConfirmPassword}
+                        placeholder="Ketik ulang password baru..."
+                        placeholderTextColor="#94A3B8"
+                        secureTextEntry={!showConfirmPass}
+                        autoCapitalize="none"
+                      />
+                      <TouchableOpacity
+                        onPress={() => setShowConfirmPass(!showConfirmPass)}
+                        style={styles.inputSuffixBtn}
+                      >
+                        <MaterialCommunityIcons
+                          name={showConfirmPass ? 'eye-off-outline' : 'eye-outline'}
+                          size={18}
+                          color="#64748B"
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Password Match Status */}
+                  {newPassword.length > 0 && confirmPassword.length > 0 && (
+                    <View style={[
+                      styles.passCheckAlert,
+                      newPassword === confirmPassword ? styles.passCheckAlertMatch : styles.passCheckAlertMismatch
+                    ]}>
+                      <MaterialCommunityIcons
+                        name={newPassword === confirmPassword ? 'check-circle' : 'alert-circle'}
+                        size={14}
+                        color={newPassword === confirmPassword ? '#059669' : '#DC2626'}
+                      />
+                      <Text style={[
+                        styles.passCheckAlertText,
+                        newPassword === confirmPassword ? styles.passCheckAlertTextMatch : styles.passCheckAlertTextMismatch
+                      ]}>
+                        {newPassword === confirmPassword ? 'Konfirmasi password sesuai' : 'Konfirmasi password belum sama'}
+                      </Text>
                     </View>
                   )}
 
-                  {/* Nama Lengkap */}
-                  <View style={styles.formGroup}>
-                    <Text style={styles.inputFieldLabel}>Nama Lengkap *</Text>
-                    <View style={styles.inputWithIcon}>
-                      <MaterialCommunityIcons name="account-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
-                      <TextInput
-                        style={styles.inputWithPrefix}
-                        value={namaLengkap}
-                        onChangeText={setNamaLengkap}
-                        placeholder="Masukkan nama lengkap..."
-                        placeholderTextColor="#94A3B8"
-                      />
-                    </View>
-                  </View>
-
-                  {/* Nama Panggilan & No HP */}
-                  <View style={styles.formRowTwoCol}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.inputFieldLabel}>Nama Panggilan</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        value={namaPanggilan}
-                        onChangeText={setNamaPanggilan}
-                        placeholder="Panggilan"
-                        placeholderTextColor="#94A3B8"
-                      />
-                    </View>
-                    <View style={{ flex: 1.3 }}>
-                      <Text style={styles.inputFieldLabel}>No. WhatsApp / HP</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        value={phone}
-                        onChangeText={setPhone}
-                        placeholder="081234567890"
-                        keyboardType="phone-pad"
-                        placeholderTextColor="#94A3B8"
-                      />
-                    </View>
-                  </View>
-
-                  {/* Tempat & Tanggal Lahir */}
-                  <View style={styles.formRowTwoCol}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.inputFieldLabel}>Tempat Lahir</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        value={tempatLahir}
-                        onChangeText={setTempatLahir}
-                        placeholder="Kota Lahir"
-                        placeholderTextColor="#94A3B8"
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.inputFieldLabel}>Tgl Lahir (YYYY-MM-DD)</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        value={tanggalLahir}
-                        onChangeText={setTanggalLahir}
-                        placeholder="1990-05-20"
-                        placeholderTextColor="#94A3B8"
-                      />
-                    </View>
-                  </View>
-
-                  {/* Jenis Kelamin Selector */}
-                  <View style={styles.formGroup}>
-                    <Text style={styles.inputFieldLabel}>Jenis Kelamin</Text>
-                    <View style={styles.genderSelectRow}>
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => setJenisKelamin('L')}
-                        style={[styles.genderOption, jenisKelamin === 'L' && styles.genderOptionActive]}
-                      >
-                        <MaterialCommunityIcons
-                          name="gender-male"
-                          size={16}
-                          color={jenisKelamin === 'L' ? '#FFFFFF' : '#059669'}
-                        />
-                        <Text style={[styles.genderOptionText, jenisKelamin === 'L' && styles.genderOptionTextActive]}>
-                          Laki-laki (Ikhwan)
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => setJenisKelamin('P')}
-                        style={[styles.genderOption, jenisKelamin === 'P' && styles.genderOptionActive]}
-                      >
-                        <MaterialCommunityIcons
-                          name="gender-female"
-                          size={16}
-                          color={jenisKelamin === 'P' ? '#FFFFFF' : '#059669'}
-                        />
-                        <Text style={[styles.genderOptionText, jenisKelamin === 'P' && styles.genderOptionTextActive]}>
-                          Perempuan (Akhwat)
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  {/* Alamat Domisili */}
-                  <View style={styles.formGroup}>
-                    <Text style={styles.inputFieldLabel}>Alamat Domisili</Text>
-                    <TextInput
-                      style={[styles.formInput, { minHeight: 70, textAlignVertical: 'top' }]}
-                      value={alamat}
-                      onChangeText={setAlamat}
-                      placeholder="Alamat tempat tinggal lengkap..."
-                      placeholderTextColor="#94A3B8"
-                      multiline
-                      numberOfLines={3}
-                    />
-                  </View>
-
-                  {/* Save Profile Button */}
+                  {/* Submit Change Password Button */}
                   <TouchableOpacity
                     activeOpacity={0.85}
-                    onPress={handleSaveProfile}
-                    disabled={savingProfile}
+                    onPress={handleChangePassword}
+                    disabled={savingPassword}
                     style={styles.saveSubmitBtn}
                   >
                     <LinearGradient
-                      colors={['#059669', '#10B981']}
+                      colors={['#2563EB', '#3B82F6']}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 0 }}
                       style={styles.saveSubmitGradient}
                     >
-                      {savingProfile ? (
+                      {savingPassword ? (
                         <ActivityIndicator size="small" color="#FFFFFF" />
                       ) : (
                         <>
-                          <MaterialCommunityIcons name="content-save-check-outline" size={18} color="#FFFFFF" />
-                          <Text style={styles.saveSubmitBtnText}>Simpan Perubahan Data</Text>
+                          <MaterialCommunityIcons name="key-change" size={18} color="#FFFFFF" />
+                          <Text style={styles.saveSubmitBtnText}>Perbarui Password Sekarang</Text>
                         </>
                       )}
                     </LinearGradient>
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
+            </>
+          )}
 
-            {/* TAB CONTENT 3: PASSWORD & EMAIL */}
-            {activeTab === 'keamanan' && (
-              <>
-                {/* CARD GANTI EMAIL */}
-                <View style={styles.sectionCard}>
-                  <View style={styles.cardSectionHeader}>
-                    <View style={styles.cardSectionIconBadge}>
-                      <MaterialCommunityIcons name="email-edit-outline" size={16} color="#059669" />
-                    </View>
-                    <Text style={styles.cardSectionTitle}>Perbarui Alamat Email</Text>
-                  </View>
-                  <View style={styles.formContainer}>
-                    <Text style={styles.inputDescription}>
-                      Email digunakan untuk menerima pemberitahuan resmi dan sebagai alternatif masuk ke akun.
-                    </Text>
-                    <View style={styles.formGroup}>
-                      <Text style={styles.inputFieldLabel}>Alamat Email Akun</Text>
-                      <View style={styles.inputWithIcon}>
-                        <MaterialCommunityIcons name="email-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
-                        <TextInput
-                          style={styles.inputWithPrefix}
-                          value={emailInput}
-                          onChangeText={setEmailInput}
-                          placeholder="nama@sekolah.sch.id"
-                          placeholderTextColor="#94A3B8"
-                          keyboardType="email-address"
-                          autoCapitalize="none"
-                        />
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={handleSaveEmail}
-                      disabled={savingEmail}
-                      style={styles.saveSecondaryBtn}
-                    >
-                      {savingEmail ? (
-                        <ActivityIndicator size="small" color="#059669" />
-                      ) : (
-                        <>
-                          <MaterialCommunityIcons name="check-circle-outline" size={16} color="#059669" />
-                          <Text style={styles.saveSecondaryBtnText}>Simpan Email Baru</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
+          {/* 7. TAB CONTENT 4: SESI & KEAMANAN */}
+          {activeTab === 'sesi' && (
+            <>
+              {/* SESSION INFO CARD */}
+              <View style={styles.sessionCard}>
+                <View style={styles.sessionIconBadge}>
+                  <MaterialCommunityIcons name="shield-lock-outline" size={20} color="#059669" />
                 </View>
-
-                {/* CARD GANTI PASSWORD */}
-                <View style={styles.sectionCard}>
-                  <View style={styles.cardSectionHeader}>
-                    <View style={[styles.cardSectionIconBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                      <MaterialCommunityIcons name="lock-reset" size={16} color="#2563EB" />
-                    </View>
-                    <Text style={styles.cardSectionTitle}>Ubah Kata Sandi (Password)</Text>
-                  </View>
-                  <View style={styles.formContainer}>
-                    <Text style={styles.inputDescription}>
-                      Gunakan kata sandi yang kuat dengan minimal 6 karakter kombinasi huruf dan angka.
-                    </Text>
-
-                    {/* Password Saat Ini */}
-                    <View style={styles.formGroup}>
-                      <Text style={styles.inputFieldLabel}>Password Saat Ini *</Text>
-                      <View style={styles.inputWithIcon}>
-                        <MaterialCommunityIcons name="lock-outline" size={18} color="#64748B" style={styles.inputPrefixIcon} />
-                        <TextInput
-                          style={styles.inputWithPrefix}
-                          value={currentPassword}
-                          onChangeText={setCurrentPassword}
-                          placeholder="Ketik password lama Anda..."
-                          placeholderTextColor="#94A3B8"
-                          secureTextEntry={!showCurrentPass}
-                          autoCapitalize="none"
-                        />
-                        <TouchableOpacity
-                          onPress={() => setShowCurrentPass(!showCurrentPass)}
-                          style={styles.inputSuffixBtn}
-                        >
-                          <MaterialCommunityIcons
-                            name={showCurrentPass ? 'eye-off-outline' : 'eye-outline'}
-                            size={18}
-                            color="#64748B"
-                          />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {/* Password Baru */}
-                    <View style={styles.formGroup}>
-                      <Text style={styles.inputFieldLabel}>Password Baru (Min. 6 Karakter) *</Text>
-                      <View style={styles.inputWithIcon}>
-                        <MaterialCommunityIcons name="lock-check-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
-                        <TextInput
-                          style={styles.inputWithPrefix}
-                          value={newPassword}
-                          onChangeText={setNewPassword}
-                          placeholder="Ketik password baru..."
-                          placeholderTextColor="#94A3B8"
-                          secureTextEntry={!showNewPass}
-                          autoCapitalize="none"
-                        />
-                        <TouchableOpacity
-                          onPress={() => setShowNewPass(!showNewPass)}
-                          style={styles.inputSuffixBtn}
-                        >
-                          <MaterialCommunityIcons
-                            name={showNewPass ? 'eye-off-outline' : 'eye-outline'}
-                            size={18}
-                            color="#64748B"
-                          />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {/* Konfirmasi Password Baru */}
-                    <View style={styles.formGroup}>
-                      <Text style={styles.inputFieldLabel}>Konfirmasi Password Baru *</Text>
-                      <View style={styles.inputWithIcon}>
-                        <MaterialCommunityIcons name="shield-check-outline" size={18} color="#059669" style={styles.inputPrefixIcon} />
-                        <TextInput
-                          style={styles.inputWithPrefix}
-                          value={confirmPassword}
-                          onChangeText={setConfirmPassword}
-                          placeholder="Ketik ulang password baru..."
-                          placeholderTextColor="#94A3B8"
-                          secureTextEntry={!showConfirmPass}
-                          autoCapitalize="none"
-                        />
-                        <TouchableOpacity
-                          onPress={() => setShowConfirmPass(!showConfirmPass)}
-                          style={styles.inputSuffixBtn}
-                        >
-                          <MaterialCommunityIcons
-                            name={showConfirmPass ? 'eye-off-outline' : 'eye-outline'}
-                            size={18}
-                            color="#64748B"
-                          />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {/* Password Match Status */}
-                    {newPassword.length > 0 && confirmPassword.length > 0 && (
-                      <View style={[
-                        styles.passCheckAlert,
-                        newPassword === confirmPassword ? styles.passCheckAlertMatch : styles.passCheckAlertMismatch
-                      ]}>
-                        <MaterialCommunityIcons
-                          name={newPassword === confirmPassword ? 'check-circle' : 'alert-circle'}
-                          size={14}
-                          color={newPassword === confirmPassword ? '#059669' : '#DC2626'}
-                        />
-                        <Text style={[
-                          styles.passCheckAlertText,
-                          newPassword === confirmPassword ? styles.passCheckAlertTextMatch : styles.passCheckAlertTextMismatch
-                        ]}>
-                          {newPassword === confirmPassword ? 'Konfirmasi password sesuai' : 'Konfirmasi password belum sama'}
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Submit Change Password Button */}
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={handleChangePassword}
-                      disabled={savingPassword}
-                      style={styles.saveSubmitBtn}
-                    >
-                      <LinearGradient
-                        colors={['#2563EB', '#3B82F6']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.saveSubmitGradient}
-                      >
-                        {savingPassword ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <>
-                            <MaterialCommunityIcons name="key-change" size={18} color="#FFFFFF" />
-                            <Text style={styles.saveSubmitBtnText}>Perbarui Password Sekarang</Text>
-                          </>
-                        )}
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  </View>
+                <View style={styles.sessionTextCol}>
+                  <Text style={styles.sessionTitle}>Status Keamanan & Enkripsi Sesi</Text>
+                  <Text style={styles.sessionDesc}>
+                    Token autentikasi Sanctum Anda terenkripsi aman secara lokal di perangkat. Setiap pertukaran data API dienkripsi melalui protokol SSL/TLS yang terjamin.
+                  </Text>
                 </View>
-              </>
-            )}
-
-            {/* TAB CONTENT 4: SESI & KEAMANAN */}
-            {activeTab === 'sesi' && (
-              <>
-                {/* SESSION INFO CARD */}
-                <View style={styles.sessionCard}>
-                  <View style={styles.sessionIconBadge}>
-                    <MaterialCommunityIcons name="shield-lock-outline" size={20} color="#059669" />
-                  </View>
-                  <View style={styles.sessionTextCol}>
-                    <Text style={styles.sessionTitle}>Status Keamanan & Enkripsi Sesi</Text>
-                    <Text style={styles.sessionDesc}>
-                      Token autentikasi Sanctum Anda terenkripsi aman secara lokal di perangkat. Setiap pertukaran data API dienkripsi melalui protokol SSL/TLS yang terjamin.
-                    </Text>
-                  </View>
-                </View>
-
-                {/* DETAIL PERANGKAT & AKUN */}
-                <View style={styles.sectionCard}>
-                  <View style={styles.cardSectionHeader}>
-                    <View style={styles.cardSectionIconBadge}>
-                      <MaterialCommunityIcons name="cellphone-check" size={16} color="#059669" />
-                    </View>
-                    <Text style={styles.cardSectionTitle}>Informasi Aplikasi & Sesi</Text>
-                  </View>
-                  <View style={styles.infoRowsContainer}>
-                    <InfoRow icon="shield-account" iconBg="#DCFCE7" iconColor="#059669" label="Hak Akses Sistem" value={roleLabel(roles)} />
-                    <InfoRow icon="calendar-check" iconBg="#EFF6FF" iconColor="#2563EB" label="Tahun Ajaran Aktif" value={activeAcademicPeriod} />
-                    <InfoRow icon="cellphone" iconBg="#F5F3FF" iconColor="#7C3AED" label="Platform Perangkat" value={`${Platform.OS.toUpperCase()} Native App`} />
-                    <InfoRow icon="clock-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Sesi Terverifikasi" value="Aktif (Terhubung Aman)" isLast />
-                  </View>
-                </View>
-              </>
-            )}
-
-            {/* ALWAYS-ACCESSIBLE LOGOUT BUTTON ACROSS ALL TABS */}
-            <TouchableOpacity activeOpacity={0.85} onPress={handleLogout} style={styles.logoutBtn}>
-              <View style={styles.logoutIconSquare}>
-                <MaterialCommunityIcons name="logout-variant" size={18} color="#DC2626" />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.logoutBtnText}>Keluar dari Akun</Text>
-                <Text style={styles.logoutBtnSubText}>Akhiri sesi login perangkat ini dengan aman</Text>
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={20} color="#DC2626" />
-            </TouchableOpacity>
 
-            <Text style={styles.version}>Sistem Terpadu • v2.6.4 Modern Pendidik</Text>
-          </View>
+              {/* DETAIL PERANGKAT & AKUN */}
+              <View style={styles.sectionCard}>
+                <View style={styles.cardSectionHeader}>
+                  <View style={styles.cardSectionIconBadge}>
+                    <MaterialCommunityIcons name="cellphone-check" size={16} color="#059669" />
+                  </View>
+                  <Text style={styles.cardSectionTitle}>Informasi Aplikasi & Sesi</Text>
+                </View>
+                <View style={styles.infoRowsContainer}>
+                  <InfoRow icon="shield-account" iconBg="#DCFCE7" iconColor="#059669" label="Hak Akses Sistem" value={roleLabel(roles)} />
+                  <InfoRow icon="calendar-check" iconBg="#EFF6FF" iconColor="#2563EB" label="Tahun Ajaran Aktif" value={activeAcademicPeriod} />
+                  <InfoRow icon="cellphone" iconBg="#F5F3FF" iconColor="#7C3AED" label="Platform Perangkat" value={`${Platform.OS.toUpperCase()} Native App`} />
+                  <InfoRow icon="clock-outline" iconBg="#FEF3C7" iconColor="#D97706" label="Sesi Terverifikasi" value="Aktif (Terhubung Aman)" isLast />
+                </View>
+              </View>
+            </>
+          )}
+
+          {/* 8. ALWAYS-ACCESSIBLE LOGOUT BUTTON ACROSS ALL TABS */}
+          <TouchableOpacity activeOpacity={0.85} onPress={handleLogout} style={styles.logoutBtn}>
+            <View style={styles.logoutIconSquare}>
+              <MaterialCommunityIcons name="logout-variant" size={18} color="#DC2626" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.logoutBtnText}>Keluar dari Akun</Text>
+              <Text style={styles.logoutBtnSubText}>Akhiri sesi login perangkat ini dengan aman</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#DC2626" />
+          </TouchableOpacity>
+
+          <Text style={styles.version}>Sistem Manajemen Sekolah Terpadu • v2.6.4 Modern</Text>
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -1519,150 +1796,195 @@ export default function ProfilScreen() {
           onClose={() => setFeedbackModal(null)}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  rootContainer: {
     flex: 1,
-    backgroundColor: '#044E36',
+    backgroundColor: '#ECFDF5',
   },
-  content: {
-    backgroundColor: '#044E36',
-    paddingBottom: 110,
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 380,
+    overflow: 'hidden',
   },
-  bodyContainer: {
-    backgroundColor: '#F0FDF4',
-    paddingTop: 18,
-    minHeight: 500,
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.88,
   },
 
-  // FULL HERO PROFILE CARD
-  heroContainerFull: {
-    position: 'relative',
-    overflow: 'hidden',
-    alignItems: 'center',
-    paddingTop: 24,
-    paddingBottom: 30,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    shadowColor: '#064E3B',
-    shadowOpacity: 0.35,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 9,
-  },
-  heroDecorCircle1: {
-    position: 'absolute',
-    top: -60,
-    right: -50,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  heroDecorCircle2: {
-    position: 'absolute',
-    bottom: -40,
-    left: -40,
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  heroDecorCircle3: {
-    position: 'absolute',
-    top: 25,
-    left: -25,
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  heroTopBarRow: {
-    width: '100%',
+  // CLEAN TOP HEADER IDENTIK HALAMAN MUTABA’AH
+  cleanTopHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#004D32',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  cleanHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 16.5,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.3,
+    marginHorizontal: 8,
+  },
+  heroBellDot: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+
+  scrollContent: {
+    paddingBottom: 110,
+    paddingTop: 4,
+  },
+
+  // 1. HERO PROFILE CARD IDENTIK TAHFIZH GROUP CARD
+  heroCardContainer: {
+    paddingHorizontal: 16,
     marginBottom: 14,
   },
-  heroTopBarPill: {
+  tahfizhGroupCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  tahfizhGroupCardEmerald: {
+    borderColor: '#A7F3D0',
+  },
+  tahfizhGroupCardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 4.5,
-    borderRadius: 14,
-    gap: 5,
-    shadowColor: '#000000',
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#F0FDF4',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D1FAE5',
   },
-  heroTopBarPillText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#064E3B',
-    letterSpacing: 0.5,
+  tahfizhGroupCardHeaderRowEmerald: {
+    backgroundColor: '#F0FDF4',
   },
-  heroTopLogoutBtn: {
+  tahfizhGroupCardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 14,
-    gap: 5,
-    shadowColor: '#DC2626',
-    shadowOpacity: 0.14,
-    shadowRadius: 4,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: '#FECACA',
+    gap: 9,
+    flex: 1,
   },
-  heroTopLogoutText: {
-    fontSize: 11,
+  tahfizhGroupHeaderIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tahfizhGroupHeaderIconBoxEmerald: {
+    backgroundColor: '#059669',
+  },
+  tahfizhGroupCardTitle: {
+    fontSize: 13,
     fontWeight: '800',
-    color: '#DC2626',
-    letterSpacing: -0.1,
+    letterSpacing: -0.2,
   },
-  heroLoadingBadge: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
+  tahfizhGroupCardSub: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  tahfizhGroupActionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    borderRadius: 20,
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    gap: 4,
   },
-  heroLoadingText: { fontSize: 10.5, color: '#FFFFFF', fontWeight: '700' },
+  tahfizhGroupActionBadgeEmerald: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  tahfizhGroupActionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  activeDotPulse: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  loadingPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
 
-  // AVATAR
+  // HERO PROFILE DETAILS
+  heroProfileCenterWrap: {
+    alignItems: 'center',
+    paddingTop: 16,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+  },
   avatarContainer: {
     position: 'relative',
-    marginBottom: 14,
+    marginBottom: 10,
   },
   heroAvatarWrap: {
-    width: 96,
-    height: 96,
-    borderRadius: 30,
-    borderWidth: 3.5,
-    borderColor: '#FFFFFF',
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 3,
+    borderColor: '#A7F3D0',
     overflow: 'hidden',
-    backgroundColor: '#064E3B',
-    shadowColor: '#000000',
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 9,
+    backgroundColor: '#DCFCE7',
+    shadowColor: '#059669',
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
-  heroAvatarImg: { width: '100%', height: '100%' },
+  heroAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
   avatarLoadingOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -1671,43 +1993,40 @@ const styles = StyleSheet.create({
   },
   avatarCameraBtn: {
     position: 'absolute',
-    bottom: -4,
-    right: -4,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#FFFFFF',
+    bottom: -2,
+    right: -2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#059669',
     borderWidth: 2,
-    borderColor: '#10B981',
+    borderColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
   },
   heroAvatarOnlineDot: {
     position: 'absolute',
     top: 2,
     right: 2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#34D399',
-    borderWidth: 2.5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
     borderColor: '#FFFFFF',
   },
-
-  // USER DETAILS
   heroName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -0.4,
+    color: '#064E3B',
+    letterSpacing: -0.3,
     textAlign: 'center',
-    marginBottom: 6,
-    paddingHorizontal: 10,
+    marginBottom: 5,
+    paddingHorizontal: 8,
   },
   heroBadgesRow: {
     flexDirection: 'row',
@@ -1715,87 +2034,321 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexWrap: 'wrap',
     gap: 6,
-    marginBottom: 6,
+    marginBottom: 5,
   },
   heroRoleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    paddingHorizontal: 11,
-    paddingVertical: 4,
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 2,
+    backgroundColor: '#DCFCE7',
+    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
   },
-  heroRoleBadgeText: { color: '#064E3B', fontSize: 11, fontWeight: '800' },
+  heroRoleBadgeText: {
+    color: '#065F46',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
   heroNiyBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 18,
-    paddingHorizontal: 11,
-    paddingVertical: 4,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: '#BFDBFE',
   },
-  heroNiyBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  heroNiyBadgeText: {
+    color: '#1E40AF',
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
   heroEmail: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.88)',
+    fontSize: 11.5,
+    color: '#475569',
     fontWeight: '500',
     textAlign: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
 
   // HERO STATS ROW
   heroStatsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(2, 44, 34, 0.5)',
-    borderRadius: 20,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
+    borderColor: '#BBF7D0',
     width: '100%',
   },
-  heroStatItem: { flex: 1, alignItems: 'center' },
-  heroStatValue: { fontSize: 14.5, fontWeight: '900', color: '#FFFFFF', letterSpacing: -0.3 },
-  heroStatLabel: { fontSize: 9.5, color: '#A7F3D0', fontWeight: '700', marginTop: 3 },
-  heroStatDivider: { width: 1, height: 26, backgroundColor: 'rgba(255,255,255,0.2)', marginHorizontal: 2 },
-  activeStatIndicator: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  activeStatPulse: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#34D399' },
+  heroStatItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  heroStatValue: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  heroStatLabel: {
+    fontSize: 9.5,
+    color: '#059669',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  heroStatDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: '#A7F3D0',
+    marginHorizontal: 2,
+  },
+  activeStatIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  activeStatPulse: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+  },
 
-  // BUTTON MENU 2x2 GRID
+  // 2. CHILD SELECTOR FOR PARENTS
+  childSelectorWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  childSelectorHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    marginBottom: 10,
+  },
+  childSelectorHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  childSelectorIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  childSelectorTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  childSelectorSub: {
+    fontSize: 10,
+    color: '#059669',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  childCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 10,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  childCountBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  childCardsScrollContent: {
+    paddingHorizontal: 14,
+    gap: 10,
+  },
+  childCard: {
+    width: SCREEN_WIDTH * 0.72,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  childCardSelected: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+    shadowColor: '#059669',
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  childCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  childActivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 4,
+  },
+  childActivePillSelected: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  childActivePillInactive: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  childActivePillText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  childActivePillTextSelected: {
+    color: '#047857',
+  },
+  childActivePillTextInactive: {
+    color: '#64748B',
+  },
+  childUnitPill: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    maxWidth: 95,
+  },
+  childUnitPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1E40AF',
+  },
+  childCardIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  childAvatarWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    overflow: 'hidden',
+    backgroundColor: '#E2E8F0',
+  },
+  childAvatarWrapSelected: {
+    borderColor: '#059669',
+  },
+  childAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  childCardIdentityText: {
+    flex: 1,
+  },
+  childCardName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  childCardNameSelected: {
+    color: '#064E3B',
+    fontWeight: '900',
+  },
+  childClassRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  childClassText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  childNisRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  childNisText: {
+    fontSize: 9.5,
+    fontWeight: '500',
+    color: '#94A3B8',
+  },
+  childSelectedBottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#059669',
+  },
+
+  // 3. 2x2 BUTTON MENU GRID
   menuButtonGridSection: {
     marginHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 14,
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 14,
+    borderRadius: 22,
+    padding: 12,
     borderWidth: 1.5,
-    borderColor: '#E8F5EE',
-    shadowColor: '#064E3B',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
   menuGridHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 12,
-    paddingBottom: 10,
+    marginBottom: 10,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F0FDF4',
   },
   menuGridHeaderIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 9,
     backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1803,13 +2356,13 @@ const styles = StyleSheet.create({
     borderColor: '#86EFAC',
   },
   menuGridHeaderTitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '800',
     color: '#064E3B',
     letterSpacing: -0.2,
   },
   menuGridHeaderSub: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#059669',
     fontWeight: '600',
     marginTop: 1,
@@ -1817,13 +2370,13 @@ const styles = StyleSheet.create({
   menuButtonGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 9,
   },
   menuButtonCard: {
-    width: '48.3%',
+    width: '48.5%',
     backgroundColor: '#F8FAFC',
-    borderRadius: 18,
-    padding: 12,
+    borderRadius: 16,
+    padding: 11,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
     position: 'relative',
@@ -1833,9 +2386,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFDF5',
     borderColor: '#059669',
     shadowColor: '#059669',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
     elevation: 3,
   },
   menuButtonActiveIndicatorBar: {
@@ -1843,26 +2395,26 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 3.5,
+    height: 3,
     backgroundColor: '#059669',
   },
   menuButtonCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   menuButtonIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   menuButtonStatusDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1871,16 +2423,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669',
   },
   menuButtonInactiveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#94A3B8',
   },
   menuButtonCardTitle: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#1E293B',
-    marginBottom: 2,
+    marginBottom: 1.5,
     letterSpacing: -0.2,
   },
   menuButtonCardTitleActive: {
@@ -1888,23 +2440,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   menuButtonCardSub: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#64748B',
     fontWeight: '500',
   },
 
-  // CARD SECTIONS
+  // 4. CARD SECTIONS
   sectionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     marginHorizontal: 16,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#E8F5EE',
-    shadowColor: '#064E3B',
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
     shadowOpacity: 0.07,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
     elevation: 3,
     overflow: 'hidden',
   },
@@ -1912,16 +2464,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#D1FAE5',
     backgroundColor: '#F0FDF4',
   },
   cardSectionIconBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 9,
     backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1929,7 +2481,7 @@ const styles = StyleSheet.create({
     borderColor: '#86EFAC',
   },
   cardSectionTitle: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '800',
     color: '#064E3B',
     letterSpacing: -0.2,
@@ -1937,24 +2489,32 @@ const styles = StyleSheet.create({
   },
   cardSectionBadge: {
     backgroundColor: '#059669',
-    borderRadius: 20,
-    paddingHorizontal: 10,
+    borderRadius: 14,
+    paddingHorizontal: 9,
     paddingVertical: 3,
     maxWidth: 120,
   },
-  cardSectionBadgeText: { fontSize: 9.5, fontWeight: '800', color: '#FFFFFF' },
+  cardSectionBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
   cardHeaderQuickAction: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#DCFCE7',
     paddingHorizontal: 8,
-    paddingVertical: 3.5,
-    borderRadius: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
     gap: 3,
     borderWidth: 1,
     borderColor: '#86EFAC',
   },
-  cardHeaderQuickActionText: { fontSize: 10.5, fontWeight: '800', color: '#065F46' },
+  cardHeaderQuickActionText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
+  },
   statusLivePill: {
     backgroundColor: '#ECFDF5',
     borderWidth: 1,
@@ -1963,93 +2523,136 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
   },
-  statusLivePillText: { fontSize: 9.5, fontWeight: '800', color: '#059669' },
+  statusLivePillText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#059669',
+  },
 
   // INFO ROWS
-  infoRowsContainer: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },
+  infoRowsContainer: {
+    paddingHorizontal: 14,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 11,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F0FDF4',
-    gap: 12,
+    gap: 10,
   },
-  infoRowLast: { borderBottomWidth: 0 },
+  infoRowLast: {
+    borderBottomWidth: 0,
+  },
   infoIconBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  infoTextCol: { flex: 1 },
+  infoTextCol: {
+    flex: 1,
+  },
   infoLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#059669',
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
     marginBottom: 2,
   },
-  infoValue: { fontSize: 13, fontWeight: '700', color: '#0F172A', lineHeight: 18 },
+  infoValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 17,
+  },
 
   // QUICK ACTION BANNER
   quickActionBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#FFFFFF',
     borderRadius: 18,
     marginHorizontal: 16,
     marginBottom: 14,
-    padding: 14,
+    padding: 12,
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
-    gap: 12,
+    gap: 10,
+    shadowColor: '#047857',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
   },
   quickActionIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 11,
     backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#86EFAC',
   },
-  quickActionTitle: { fontSize: 12.5, fontWeight: '800', color: '#064E3B', marginBottom: 2 },
-  quickActionDesc: { fontSize: 11, color: '#047857', lineHeight: 16, fontWeight: '500' },
+  quickActionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginBottom: 2,
+  },
+  quickActionDesc: {
+    fontSize: 10.5,
+    color: '#047857',
+    lineHeight: 15,
+    fontWeight: '500',
+  },
   quickActionPill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#059669',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 10,
     gap: 2,
     shadowColor: '#059669',
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 2,
   },
-  quickActionPillText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
+  quickActionPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
 
   // FORM STYLES
-  formContainer: { padding: 16 },
-  inputDescription: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginBottom: 14,
-    lineHeight: 17,
+  formContainer: {
+    padding: 14,
   },
-  formGroup: { marginBottom: 14 },
-  formRowTwoCol: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  inputDescription: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  formGroup: {
+    marginBottom: 12,
+  },
+  formRowTwoCol: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
   inputFieldLabel: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '700',
     color: '#064E3B',
-    marginBottom: 6,
+    marginBottom: 5,
   },
   formInput: {
     backgroundColor: '#F8FAFC',
@@ -2057,8 +2660,8 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
+    paddingVertical: 9,
+    fontSize: 12.5,
     color: '#0F172A',
     fontWeight: '600',
   },
@@ -2071,24 +2674,31 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 10,
   },
-  inputPrefixIcon: { marginRight: 8 },
+  inputPrefixIcon: {
+    marginRight: 8,
+  },
   inputWithPrefix: {
     flex: 1,
-    paddingVertical: 10,
-    fontSize: 13,
+    paddingVertical: 9,
+    fontSize: 12.5,
     color: '#0F172A',
     fontWeight: '600',
   },
-  inputSuffixBtn: { padding: 6 },
+  inputSuffixBtn: {
+    padding: 6,
+  },
 
   // GENDER SELECTOR
-  genderSelectRow: { flexDirection: 'row', gap: 10 },
+  genderSelectRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   genderOption: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: 12,
     backgroundColor: '#F0FDF4',
     borderWidth: 1.5,
@@ -2099,30 +2709,51 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669',
     borderColor: '#059669',
   },
-  genderOptionText: { fontSize: 11.5, fontWeight: '700', color: '#065F46' },
-  genderOptionTextActive: { color: '#FFFFFF' },
+  genderOptionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  genderOptionTextActive: {
+    color: '#FFFFFF',
+  },
 
   // PASSWORD MATCH ALERT
   passCheckAlert: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 10,
-    marginBottom: 14,
+    marginBottom: 12,
     gap: 6,
   },
-  passCheckAlertMatch: { backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0' },
-  passCheckAlertMismatch: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA' },
-  passCheckAlertText: { fontSize: 11, fontWeight: '700' },
-  passCheckAlertTextMatch: { color: '#059669' },
-  passCheckAlertTextMismatch: { color: '#DC2626' },
+  passCheckAlertMatch: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  passCheckAlertMismatch: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  passCheckAlertText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  passCheckAlertTextMatch: {
+    color: '#059669',
+  },
+  passCheckAlertTextMismatch: {
+    color: '#DC2626',
+  },
 
   // SUBMIT BUTTONS
   saveSubmitBtn: {
     borderRadius: 14,
     overflow: 'hidden',
-    marginTop: 6,
+    marginTop: 4,
     shadowColor: '#059669',
     shadowOpacity: 0.25,
     shadowRadius: 8,
@@ -2133,11 +2764,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 13,
+    paddingVertical: 12,
     gap: 8,
   },
   saveSubmitBtnText: {
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: -0.2,
@@ -2150,61 +2781,37 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#86EFAC',
     borderRadius: 12,
-    paddingVertical: 11,
+    paddingVertical: 10,
     gap: 6,
     marginTop: 4,
   },
   saveSecondaryBtnText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#059669',
   },
-
-  // CHILD CHIPS FOR PARENT
-  childChipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
-  childChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 22,
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1.5,
-    borderColor: '#86EFAC',
-    gap: 4,
-    shadowColor: '#059669',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  childChipActive: { backgroundColor: '#059669', borderColor: '#059669', shadowOpacity: 0.3, shadowRadius: 6, elevation: 3 },
-  childChipText: { fontSize: 12, fontWeight: '700', color: '#065F46', maxWidth: 140 },
-  childChipTextActive: { color: '#FFFFFF' },
-  childChipCheckDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
 
   // SESSION & LOGOUT
   sessionCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#FFFFFF',
     borderRadius: 18,
     marginHorizontal: 16,
     marginBottom: 14,
-    padding: 14,
+    padding: 12,
     borderWidth: 1.5,
-    borderColor: '#BBF7D0',
-    gap: 12,
+    borderColor: '#A7F3D0',
+    gap: 10,
     shadowColor: '#059669',
     shadowOpacity: 0.06,
     shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
+    elevation: 2,
   },
   sessionIconBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2212,44 +2819,57 @@ const styles = StyleSheet.create({
     borderColor: '#86EFAC',
     flexShrink: 0,
   },
-  sessionTextCol: { flex: 1 },
-  sessionTitle: { fontSize: 12.5, fontWeight: '800', color: '#064E3B', marginBottom: 4, letterSpacing: -0.2 },
-  sessionDesc: { fontSize: 11.5, color: '#047857', lineHeight: 17, fontWeight: '500' },
+  sessionTextCol: {
+    flex: 1,
+  },
+  sessionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginBottom: 3,
+    letterSpacing: -0.2,
+  },
+  sessionDesc: {
+    fontSize: 11,
+    color: '#047857',
+    lineHeight: 16,
+    fontWeight: '500',
+  },
   logoutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 16,
-    marginTop: 20,
+    marginTop: 14,
     marginBottom: 10,
     borderRadius: 18,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
     borderColor: '#FECDD3',
-    paddingVertical: 12,
+    paddingVertical: 11,
     paddingHorizontal: 14,
     gap: 12,
     shadowColor: '#DC2626',
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   logoutIconSquare: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     backgroundColor: '#FFE4E6',
     alignItems: 'center',
     justifyContent: 'center',
   },
   logoutBtnText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#E11D48',
     letterSpacing: -0.2,
   },
   logoutBtnSubText: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '500',
     color: '#94A3B8',
     marginTop: 1,
@@ -2258,9 +2878,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#059669',
     fontSize: 10,
-    marginTop: 10,
+    marginTop: 8,
     marginBottom: 8,
-    letterSpacing: 0.8,
+    letterSpacing: 0.5,
     fontWeight: '700',
     opacity: 0.7,
   },

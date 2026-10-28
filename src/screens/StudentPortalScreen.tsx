@@ -125,6 +125,70 @@ export default function StudentPortalScreen() {
   const studentNis = profile?.nis || (user as any)?.student?.nis || '-';
   const studentUnit = profile?.education_unit?.name || (user as any)?.student?.education_unit?.name || 'Sekolah Terpadu';
 
+  // Status Kehadiran Dinamis Siswa (Hadir [Hijau], Libur Sekolah [Kuning], Tidak Hadir [Merah])
+  const attendanceStatus = React.useMemo(() => {
+    const day = new Date().getDay();
+    const isWeekend = day === 0 || day === 6;
+
+    if (isWeekend || profile?.is_holiday) {
+      return {
+        label: 'Libur Sekolah',
+        color: '#D97706',
+        bg: '#FFFBEB',
+        border: '#FDE68A',
+        icon: 'weather-sunny' as const,
+      };
+    }
+
+    const rawStatus = String(
+      profile?.attendance_today?.status_label ||
+      profile?.attendance_today?.label ||
+      profile?.presensi_hari_ini?.status ||
+      profile?.attendance_status ||
+      profile?.status_kehadiran ||
+      profile?.presensi_status ||
+      ''
+    ).toLowerCase().trim();
+
+    if (rawStatus.includes('hadir') || rawStatus.includes('masuk')) {
+      return {
+        label: 'Hadir',
+        color: '#047857',
+        bg: '#ECFDF5',
+        border: '#A7F3D0',
+        icon: 'check-circle' as const,
+      };
+    }
+
+    if (rawStatus.includes('izin') || rawStatus.includes('sakit')) {
+      return {
+        label: rawStatus.includes('sakit') ? 'Sakit' : 'Izin',
+        color: '#E11D48',
+        bg: '#FFF1F2',
+        border: '#FECDD3',
+        icon: 'alert-circle' as const,
+      };
+    }
+
+    if (rawStatus.includes('alpa') || rawStatus.includes('tidak hadir') || rawStatus.includes('alpha')) {
+      return {
+        label: 'Tidak Hadir',
+        color: '#E11D48',
+        bg: '#FFF1F2',
+        border: '#FECDD3',
+        icon: 'close-circle' as const,
+      };
+    }
+
+    return {
+      label: 'Hadir',
+      color: '#047857',
+      bg: '#ECFDF5',
+      border: '#A7F3D0',
+      icon: 'check-circle' as const,
+    };
+  }, [profile]);
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -155,9 +219,22 @@ export default function StudentPortalScreen() {
                 <Text style={styles.studentName} numberOfLines={1}>
                   {studentName}
                 </Text>
-                <Text style={styles.studentClass} numberOfLines={1}>
-                  {studentClass} • {studentUnit}
-                </Text>
+
+                {/* Baris 2: Unit Pendidikan */}
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="school-outline" size={12} color="#D1FAE5" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentUnitText}>
+                    {studentUnit}
+                  </Text>
+                </View>
+
+                {/* Baris 3: Kelas tepat di bawah unit pendidikan */}
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="door-open" size={12} color="#A7F3D0" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentClassText}>
+                    {studentClass}
+                  </Text>
+                </View>
               </View>
             </View>
 
@@ -166,9 +243,22 @@ export default function StudentPortalScreen() {
                 <MaterialCommunityIcons name="card-account-details-outline" size={13} color="#D1FAE5" style={{ marginRight: 5 }} />
                 <Text style={styles.nisPillText}>NIS: {studentNis}</Text>
               </View>
-              <View style={styles.activePill}>
-                <View style={styles.activeDot} />
-                <Text style={styles.activePillText}>Santri Aktif</Text>
+
+              <View
+                style={[
+                  styles.attendanceBadge,
+                  { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={attendanceStatus.icon}
+                  size={12}
+                  color={attendanceStatus.color}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.attendanceBadgeText, { color: attendanceStatus.color }]}>
+                  {attendanceStatus.label}
+                </Text>
               </View>
             </View>
           </LinearGradient>
@@ -177,9 +267,9 @@ export default function StudentPortalScreen() {
         {/* 3-PILL TAB SWITCHER MODERN */}
         <View style={styles.tabContainer}>
           {([
-            { id: 'schedules', label: 'Jadwal KBM', icon: 'clock-time-four' },
-            { id: 'materials', label: 'Bahan Ajar', icon: 'book-multiple' },
-            { id: 'assignments', label: 'Tugas LMS', icon: 'clipboard-text' },
+            { id: 'schedules', label: 'Jadwal Pelajaran', icon: 'calendar-clock' },
+            { id: 'materials', label: 'Materi Belajar', icon: 'book-open-page-variant' },
+            { id: 'assignments', label: 'Tugas LMS', icon: 'clipboard-text-outline' },
           ] as const).map((item) => {
             const isActive = tab === item.id;
             return (
@@ -510,6 +600,35 @@ const styles = StyleSheet.create({
     color: '#E6FFFA',
     marginTop: 1,
     fontWeight: '500',
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#E6FFFA',
+    flexShrink: 1,
+  },
+  studentClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#A7F3D0',
+    flexShrink: 1,
+  },
+  attendanceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  attendanceBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
   },
   identityFooterRow: {
     flexDirection: 'row',

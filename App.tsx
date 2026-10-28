@@ -10,9 +10,11 @@ import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import { Nunito_400Regular } from '@expo-google-fonts/nunito/400Regular';
 import { Nunito_600SemiBold } from '@expo-google-fonts/nunito/600SemiBold';
 import { Nunito_700Bold } from '@expo-google-fonts/nunito/700Bold';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomTabs from './src/navigation/BottomTabs';
 import LoginScreen from './src/screens/LoginScreen';
 import SplashScreen from './src/screens/SplashScreen';
+import OnboardingScreen, { ONBOARDING_STORAGE_KEY } from './src/screens/OnboardingScreen';
 import MaintenanceScreen from './src/screens/MaintenanceScreen';
 import UpdateRequiredScreen from './src/screens/UpdateRequiredScreen';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
@@ -20,6 +22,7 @@ import NetworkStatusBar from './src/components/NetworkStatusBar';
 import { useAuthStore } from './src/stores/authStore';
 import { useMobileConfigStore } from './src/stores/mobileConfigStore';
 import { useServerConfigStore } from './src/stores/serverConfigStore';
+import { offlineCache } from './src/utils/offlineCache';
 import { isForceUpdateRequired } from './src/utils/semver';
 
 const CURRENT_APP_VERSION = '1.0.0';
@@ -37,6 +40,11 @@ export default function App() {
   const [splashFinished, setSplashFinished] = useState(false);
   const handleSplashFinish = React.useCallback(() => {
     setSplashFinished(true);
+  }, []);
+  const [onboardingHydrated, setOnboardingHydrated] = useState(false);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
+  const handleOnboardingFinish = React.useCallback(() => {
+    setOnboardingCompleted(true);
   }, []);
   const [fontTimeout, setFontTimeout] = useState(false);
   const [forceHideSplash, setForceHideSplash] = useState(false);
@@ -56,8 +64,23 @@ export default function App() {
   });
 
   useEffect(() => {
+    // 0. Background self-cleaning offline cache (bebas dari penumpukan cache & SQLITE_FULL)
+    void offlineCache.autoClean();
+
     // 1. Hydrate auth session from storage
     void hydrateAuth();
+
+    // 1b. Check if onboarding was completed (fresh install walkthrough)
+    void AsyncStorage.getItem(ONBOARDING_STORAGE_KEY)
+      .then((val) => {
+        setOnboardingCompleted(val === 'true');
+      })
+      .catch(() => {
+        setOnboardingCompleted(false);
+      })
+      .finally(() => {
+        setOnboardingHydrated(true);
+      });
 
     // 2. Hydrate dynamic server config, then hydrate & refresh app config
     void useServerConfigStore.getState().hydrate().then(() => {
@@ -85,13 +108,17 @@ export default function App() {
   }, []);
 
   const fontsReady = fontsLoaded || fontTimeout;
-  const showingSplash = !forceHideSplash && (!isHydrated || !configHydrated || !splashFinished || !fontsReady);
+  const showingSplash =
+    !forceHideSplash &&
+    (!isHydrated || !configHydrated || !onboardingHydrated || !splashFinished || !fontsReady);
 
   useEffect(() => {
-    if (!showingSplash) {
+    // Sembunyikan native splash screen segera setelah React Native siap me-render UI
+    // sehingga Splash Screen 2 (In-App dengan background gedung, animasi logo & progress bar) tampil
+    if (fontsReady) {
       void ExpoSplashScreen.hideAsync().catch(() => {});
     }
-  }, [showingSplash]);
+  }, [fontsReady]);
 
   // Runtime Guards: Maintenance & Force Update
   const isMaintenance = Boolean(config.system?.maintenance_mode);
@@ -101,10 +128,10 @@ export default function App() {
     Boolean(config.system?.force_update)
   );
 
-  // Dynamic Theme & Safe Fallbacks
+  // Dynamic Theme & Safe Fallbacks (Default Identity: #18A165)
   const theme = config.theme;
-  const primaryColor = isValidHex(theme.primary_color) ? theme.primary_color : '#0E5C44';
-  const secondaryColor = isValidHex(theme.secondary_color) ? theme.secondary_color : '#10B981';
+  const primaryColor = isValidHex(theme.primary_color) ? theme.primary_color : '#18A165';
+  const secondaryColor = isValidHex(theme.secondary_color) ? theme.secondary_color : '#22C57E';
   const accentColor = isValidHex(theme.accent_color) ? theme.accent_color : '#F59E0B';
   const backgroundColor = isValidHex(theme.background_color) ? theme.background_color : '#F7F9FC';
   const surfaceColor = isValidHex(theme.surface_color) ? theme.surface_color : '#FFFFFF';
@@ -172,13 +199,24 @@ export default function App() {
           <MaintenanceScreen />
         ) : isForceUpdate ? (
           <UpdateRequiredScreen currentVersion={CURRENT_APP_VERSION} />
+        ) : !onboardingCompleted && (config.onboarding?.enabled ?? true) ? (
+          <OnboardingScreen onFinish={handleOnboardingFinish} />
         ) : token ? (
           <BottomTabs />
         ) : (
           <LoginScreen />
         )}
         {!showingSplash && <NetworkStatusBar />}
-        <StatusBar hidden={true} style={showingSplash ? 'light' : (!token || isMaintenance ? 'light' : 'dark')} />
+        <StatusBar
+          hidden={true}
+          style={
+            showingSplash || (!onboardingCompleted && (config.onboarding?.enabled ?? true))
+              ? 'light'
+              : !token || isMaintenance
+              ? 'light'
+              : 'dark'
+          }
+        />
       </PaperProvider>
     </ErrorBoundary>
     </SafeAreaProvider>

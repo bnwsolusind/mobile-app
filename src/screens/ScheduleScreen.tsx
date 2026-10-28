@@ -24,12 +24,15 @@ import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
+  isGirlStudent,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { StudentHeroCard } from '../components/StudentHeroCard';
+import { GenericCarousel } from '../components/GenericCarousel';
 import { StudentStickyHeader, useStickyScroll } from '../components/StudentStickyHeader';
 import { StudentIdCardModal } from '../components/StudentIdCardModal';
 import { StudentQrModal } from '../components/StudentQrModal';
@@ -39,14 +42,13 @@ import { StudentNotificationModal } from '../components/StudentNotificationModal
 import TuScheduleWorkspace from '../components/schedule/TuScheduleWorkspace';
 import TeacherScheduleWorkspace from '../components/schedule/TeacherScheduleWorkspace';
 import { resolveUnitName } from '../utils/employeeUtils';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STUDENT_CARD_GAP = 12;
 const STUDENT_PEEK_WIDTH = 26;
-const studentCardWidth = SCREEN_WIDTH - (STUDENT_PEEK_WIDTH * 2) - STUDENT_CARD_GAP;
-const studentSnapInterval = studentCardWidth + STUDENT_CARD_GAP;
-const studentTrackPad = STUDENT_PEEK_WIDTH;
-const centerLoopOffset = studentSnapInterval;
 
 type Child = Record<string, any>;
 type ScheduleItem = Record<string, any>;
@@ -121,11 +123,11 @@ const getMonday = (d: Date): Date => {
 };
 
 const getSubjectStyle = (name: string = '', index: number) => {
-  const n = name.toLowerCase();
+  const n = (name || '').toLowerCase();
   if (n.includes('apel') || n.includes('upacara') || n.includes('senam') || n.includes('baris')) {
     return {
-      bg: '#E6FFFA',
-      color: '#0D9488',
+      bg: '#E0F2FE',
+      color: '#0284C7',
       icon: 'bullhorn-outline',
     };
   }
@@ -145,54 +147,83 @@ const getSubjectStyle = (name: string = '', index: number) => {
   }
   if (n.includes('matematika') || n.includes('hitung') || n.includes('aljabar')) {
     return {
-      bg: '#EFF6FF',
-      color: '#2563EB',
-      icon: 'file-document-outline',
+      bg: '#DCFCE7',
+      color: '#10B981',
+      icon: 'format-list-bulleted-square',
     };
   }
-  if (n.includes('bahasa') || n.includes('indonesia') || n.includes('inggris') || n.includes('arab') || n.includes('literasi')) {
+  if (n.includes('inggris') || n.includes('english')) {
     return {
       bg: '#FFE4E6',
-      color: '#E11D48',
-      icon: 'book-open-variant',
+      color: '#EF4444',
+      icon: 'alpha-a-box',
     };
   }
-  if (n.includes('ipa') || n.includes('sains') || n.includes('biologi') || n.includes('fisika') || n.includes('kimia')) {
+  if (n.includes('indonesia') || n.includes('literasi') || (n.includes('bahasa') && !n.includes('arab'))) {
     return {
       bg: '#E0F2FE',
-      color: '#0284C7',
-      icon: 'flask-outline',
-    };
-  }
-  if (n.includes('ips') || n.includes('sosial') || n.includes('sejarah') || n.includes('geografi')) {
-    return {
-      bg: '#EFF6FF',
       color: '#2563EB',
-      icon: 'file-document-outline',
-    };
-  }
-  if (n.includes('agama') || n.includes('islam') || n.includes('pai') || n.includes('fiqih') || n.includes('akidah')) {
-    return {
-      bg: '#E8F5E9',
-      color: '#16A34A',
-      icon: 'home-roof',
-    };
-  }
-  if (n.includes('tahfizh') || n.includes('quran') || n.includes('hadits')) {
-    return {
-      bg: '#E8F5E9',
-      color: '#16A34A',
       icon: 'book-open-page-variant',
     };
   }
+  if (n.includes('agama') || n.includes('islam') || n.includes('pai') || n.includes('fiqih') || n.includes('akidah') || n.includes('akhlak')) {
+    return {
+      bg: '#FEF3C7',
+      color: '#F59E0B',
+      icon: 'weather-night',
+    };
+  }
+  if (n.includes('ipas') || n.includes('ipa') || n.includes('sains') || n.includes('biologi') || n.includes('fisika') || n.includes('kimia')) {
+    return {
+      bg: '#F3E8FF',
+      color: '#8B5CF6',
+      icon: 'flask',
+    };
+  }
+  if (n.includes('arab')) {
+    return {
+      bg: '#CCFBF1',
+      color: '#0D9488',
+      icon: 'translate',
+    };
+  }
+  if (n.includes('tahfizh') || n.includes('quran') || n.includes('hadits') || n.includes('tajwid')) {
+    return {
+      bg: '#DCFCE7',
+      color: '#059669',
+      icon: 'book-open-variant',
+    };
+  }
+  if (n.includes('pjok') || n.includes('olahraga') || n.includes('penjas')) {
+    return {
+      bg: '#FEF9C3',
+      color: '#D97706',
+      icon: 'run-fast',
+    };
+  }
+  if (n.includes('seni') || n.includes('budaya') || n.includes('sbdp') || n.includes('prakarya')) {
+    return {
+      bg: '#FCE7F3',
+      color: '#DB2777',
+      icon: 'palette',
+    };
+  }
+  if (n.includes('ips') || n.includes('sosial') || n.includes('sejarah') || n.includes('geografi') || n.includes('ppkn') || n.includes('pancasila')) {
+    return {
+      bg: '#E0E7FF',
+      color: '#4F46E5',
+      icon: 'earth',
+    };
+  }
   const palettes = [
-    { bg: '#E6FFFA', color: '#0D9488', icon: 'bullhorn-outline' },
-    { bg: '#EFF6FF', color: '#2563EB', icon: 'file-document-outline' },
-    { bg: '#FFE4E6', color: '#E11D48', icon: 'book-open-variant' },
-    { bg: '#E0F2FE', color: '#0284C7', icon: 'flask-outline' },
-    { bg: '#E8F5E9', color: '#16A34A', icon: 'home-roof' },
-    { bg: '#FEF3C7', color: '#D97706', icon: 'school-outline' },
-    { bg: '#F3E8FF', color: '#9333EA', icon: 'palette-outline' },
+    { bg: '#E0F2FE', color: '#2563EB', icon: 'book-open-page-variant' },
+    { bg: '#DCFCE7', color: '#10B981', icon: 'format-list-bulleted-square' },
+    { bg: '#FEF3C7', color: '#F59E0B', icon: 'weather-night' },
+    { bg: '#FFE4E6', color: '#EF4444', icon: 'alpha-a-box' },
+    { bg: '#F3E8FF', color: '#8B5CF6', icon: 'flask' },
+    { bg: '#CCFBF1', color: '#0D9488', icon: 'translate' },
+    { bg: '#FEF9C3', color: '#D97706', icon: 'run-fast' },
+    { bg: '#FCE7F3', color: '#DB2777', icon: 'palette' },
   ];
   return palettes[index % palettes.length];
 };
@@ -299,27 +330,52 @@ export default function ScheduleScreen({ route, navigation }: any) {
   );
   const globalActiveChildId = useActiveChildStore((s) => s.activeChildId);
   const studentScrollRef = useRef<ScrollView>(null);
+  const prevRouteParamRef = useRef<string | null>(
+    route?.params?.child_id || route?.params?.student_id ? String(route?.params?.child_id || route?.params?.student_id) : null
+  );
 
-  // Sinkronkan selectedChildId saat route params atau global store berubah
+  // Sinkronkan selectedChildId hanya saat route params baru masuk secara eksplisit
   useEffect(() => {
     const incomingId = route?.params?.child_id || route?.params?.student_id;
-    if (incomingId) {
+    if (incomingId && String(incomingId) !== prevRouteParamRef.current) {
+      prevRouteParamRef.current = String(incomingId);
       const strId = String(incomingId);
-      if (strId !== selectedChildId) {
-        setSelectedChildId(strId);
-      }
-      if (strId !== globalActiveChildId) {
-        useActiveChildStore.getState().setActiveChildId(strId);
-      }
-    } else if (globalActiveChildId && globalActiveChildId !== selectedChildId) {
-      setSelectedChildId(String(globalActiveChildId));
+      setSelectedChildId(strId);
+      latestActiveChildIdRef.current = strId;
+      handledParamIdRef.current = strId;
+      useActiveChildStore.getState().setActiveChildId(strId);
     }
-  }, [route?.params?.child_id, route?.params?.student_id, globalActiveChildId, selectedChildId]);
+  }, [route?.params?.child_id, route?.params?.student_id]);
 
   const [activeChildIndex, setActiveChildIndex] = useState<number>(0);
 
-  // Date selection state: otomatis langsung ke hari ini (Sabtu, 17 Oktober 2026)
-  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+  const defaultAcademicYear = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    return now.getMonth() >= 6 ? `${year}/${year + 1}` : `${year - 1}/${year}`;
+  }, []);
+
+  const defaultSemesterName = useMemo(() => {
+    const now = new Date();
+    return now.getMonth() >= 6 ? 'Semester 1' : 'Semester 2';
+  }, []);
+
+  // Date selection state: langsung ke hari KBM aktif (jika dibuka akhir pekan, arahkan default ke Senin pekan berjalan)
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0) {
+      const mon = new Date(now);
+      mon.setDate(now.getDate() - 6);
+      return mon;
+    }
+    if (day === 6) {
+      const mon = new Date(now);
+      mon.setDate(now.getDate() - 5);
+      return mon;
+    }
+    return now;
+  });
   const [selectedScheduleDetail, setSelectedScheduleDetail] = useState<ScheduleItem | null>(null);
 
   // Modal Kalender Pemilih Tanggal Interaktif (TailGrids DatePicker Modal)
@@ -352,6 +408,13 @@ export default function ScheduleScreen({ route, navigation }: any) {
   const [selectedMenuStudent, setSelectedMenuStudent] = useState<any>(null);
   const [selectedWeeklyStudent, setSelectedWeeklyStudent] = useState<any>(null);
   const [selectedNotificationStudent, setSelectedNotificationStudent] = useState<any>(null);
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState<boolean>(false);
+
+  // Floating Toast State untuk Progress & Sukses Load Jadwal Siswa
+  const latestActiveChildIdRef = useRef<string>('');
+  const handledParamIdRef = useRef<string | null>(null);
+  const scheduleAbortControllerRef = useRef<AbortController | null>(null);
+  const scheduleDebounceTimerRef = useRef<any>(null);
 
   const openIdCard = (student: any) => setSelectedIdCardStudent(student);
   const openQrCard = (student: any) => setSelectedQrStudent(student);
@@ -371,25 +434,30 @@ export default function ScheduleScreen({ route, navigation }: any) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [scheduleData, setScheduleData] = useState<any>(null);
 
-  // 1. Load Children if parent (Pertahankan seluruh anak)
+  // 1. Load Children if parent (Pertahankan seluruh anak untuk carousel seimbang)
   useEffect(() => {
     let isMounted = true;
     if (isParent) {
-      const isSingleChild = route?.params?.single_child_only === true;
-      const targetChildId = route?.params?.child_id || route?.params?.student_id || useActiveChildStore.getState().activeChildId;
+      const targetChildId = route?.params?.child_id || route?.params?.student_id;
       const childCacheKey = offlineCache.buildKey('schedule_children', user?.id);
       void (async () => {
         const cached = await offlineCache.get<any>(childCacheKey);
         const cachedList = Array.isArray(cached) ? cached : Array.isArray(cached?.data) ? cached.data : [];
         if (cachedList.length > 0 && isMounted) {
-          const displayCached = (isSingleChild && targetChildId)
-            ? cachedList.filter((c: any) => String(c.id || c.student_id) === String(targetChildId))
-            : cachedList;
-          const safeCached = displayCached.length > 0 ? displayCached : cachedList;
-          setChildren(safeCached);
+          setChildren(cachedList);
           useActiveChildStore.getState().setChildren(cachedList);
-          const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(safeCached[0].id || safeCached[0].student_id);
-          setSelectedChildId(activeId);
+          if (targetChildId) {
+            setSelectedChildId(String(targetChildId));
+            latestActiveChildIdRef.current = String(targetChildId);
+            const foundIdx = cachedList.findIndex((c: any) => String(c.id || c.student_id) === String(targetChildId));
+            if (foundIdx >= 0) setActiveChildIndex(foundIdx);
+          } else if (!selectedChildId) {
+            const fallbackId = globalActiveChildId || String(cachedList[0].id || cachedList[0].student_id);
+            setSelectedChildId(fallbackId);
+            latestActiveChildIdRef.current = String(fallbackId);
+            const fIdx = cachedList.findIndex((c: any) => String(c.id || c.student_id) === fallbackId);
+            setActiveChildIndex(fIdx >= 0 ? fIdx : 0);
+          }
         }
       })();
 
@@ -398,14 +466,20 @@ export default function ScheduleScreen({ route, navigation }: any) {
           const raw = unwrapApiData<any>(res);
           const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
           if (isMounted && arr.length > 0) {
-            const displayList = (isSingleChild && targetChildId)
-              ? arr.filter((c: any) => String(c.id || c.student_id) === String(targetChildId))
-              : arr;
-            const safeList = displayList.length > 0 ? displayList : arr;
-            setChildren(safeList);
+            setChildren(arr);
             useActiveChildStore.getState().setChildren(arr);
-            const activeId = targetChildId || useActiveChildStore.getState().activeChildId || String(safeList[0].id || safeList[0].student_id);
-            setSelectedChildId(activeId);
+            if (targetChildId) {
+              setSelectedChildId(String(targetChildId));
+              latestActiveChildIdRef.current = String(targetChildId);
+              const foundIdx = arr.findIndex((c: any) => String(c.id || c.student_id) === String(targetChildId));
+              if (foundIdx >= 0) setActiveChildIndex(foundIdx);
+            } else if (!selectedChildId) {
+              const fallbackId = globalActiveChildId || String(arr[0].id || arr[0].student_id);
+              setSelectedChildId(fallbackId);
+              latestActiveChildIdRef.current = String(fallbackId);
+              const fIdx = arr.findIndex((c: any) => String(c.id || c.student_id) === fallbackId);
+              setActiveChildIndex(fIdx >= 0 ? fIdx : 0);
+            }
             void offlineCache.set(childCacheKey, arr);
           }
         })
@@ -414,23 +488,38 @@ export default function ScheduleScreen({ route, navigation }: any) {
     return () => {
       isMounted = false;
     };
-  }, [isParent, user?.id, route?.params?.child_id, route?.params?.student_id, route?.params?.single_child_only]);
+  }, [isParent, user?.id, globalActiveChildId, route?.params?.child_id, route?.params?.student_id]);
 
   const hasLoadedRef = useRef<boolean>(false);
 
-  // 2. Load schedules from backend API with date parameter & offline cache
-  const loadSchedules = useCallback(async (showSpinner = false) => {
+  // 2. Load schedules from backend API with date parameter, AbortController, SWR & offline cache
+  const loadSchedules = useCallback(async (explicitChildId?: string | boolean) => {
+    const targetChildId = typeof explicitChildId === 'string'
+      ? explicitChildId 
+      : ((selectedChildId || useActiveChildStore.getState().activeChildId) || undefined);
+    if (targetChildId) {
+      latestActiveChildIdRef.current = String(targetChildId);
+    }
     const dateStr = formatDateISO(selectedDate);
-    const cacheKey = offlineCache.buildKey('schedule', user?.id, `${selectedChildId || 'self'}_${dateStr}`);
+    const cacheKey = offlineCache.buildKey('schedule', user?.id, `${targetChildId || 'self'}_${dateStr}`);
 
-    // Baca cache dulu agar tampil instan
+    // BACA CACHE DULU (0ms RESPON INSTAN - STALE-WHILE-REVALIDATE)
     const cached = await offlineCache.get<any>(cacheKey);
     if (cached) {
       setScheduleData(cached);
-      if (!hasLoadedRef.current) setLoading(false);
-    } else if (showSpinner) {
+      setLoading(false);
+    } else {
+      // Jika belum ada cache sama sekali, set loading
+      setScheduleData(null);
       setLoading(true);
     }
+
+    // BATALKAN REQUEST SEBELUMNYA AGAR TIDAK MENUMPUK DI ANTRIAN JARINGAN (ZERO NETWORK QUEUE)
+    if (scheduleAbortControllerRef.current) {
+      scheduleAbortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    scheduleAbortControllerRef.current = abortController;
 
     try {
       if (isTeacher && !isParent) {
@@ -476,32 +565,44 @@ export default function ScheduleScreen({ route, navigation }: any) {
         setScheduleData(data);
         void offlineCache.set(cacheKey, data);
       } else {
-        const res = await mobileApiService.getPortalSchedules({
-          child_id: selectedChildId,
-          date: dateStr,
-        });
+        const res = await mobileApiService.getPortalSchedules(
+          {
+            child_id: targetChildId,
+            date: dateStr,
+          },
+          { signal: abortController.signal }
+        );
         const data = unwrapApiData<any>(res) || {};
-        setScheduleData(data);
-        void offlineCache.set(cacheKey, data);
+
+        // Pastikan response disimpan jika cocok dengan anak yang sedang aktif
+        if (!targetChildId || !latestActiveChildIdRef.current || latestActiveChildIdRef.current === String(targetChildId)) {
+          setScheduleData(data);
+          void offlineCache.set(cacheKey, data);
+        }
       }
-    } catch {
-      // Jika offline dan belum ada cache, set empty object bukan crash
+    } catch (err: any) {
+      if (err?.name === 'CanceledError' || err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
+        return;
+      }
       if (!cached) {
         setScheduleData(null);
       }
     } finally {
-      setLoading(false);
-      hasLoadedRef.current = true;
+      if (!targetChildId || !latestActiveChildIdRef.current || latestActiveChildIdRef.current === String(targetChildId)) {
+        setLoading(false);
+        hasLoadedRef.current = true;
+      }
     }
-  }, [selectedChildId, selectedDate, user?.id]);
+  }, [selectedChildId, selectedDate, user?.id, isTeacher, isParent]);
 
   // 3. Load Exam Schedules (PTS, PAS, PAT & Ujian CBT Portal)
   const loadExamSchedules = useCallback(async () => {
     try {
       setLoadingExams(true);
-      const activeChild = children.find((c) => String(c.id) === String(selectedChildId)) || children[0];
-      const kelasId = activeChild?.class_id || (scheduleData?.student?.class_id ? String(scheduleData.student.class_id) : undefined);
+      setExamSchedules([]);
       const targetChildId = selectedChildId || useActiveChildStore.getState().activeChildId || undefined;
+      const activeChild = children.find((c) => String(c.id || c.student_id) === String(targetChildId)) || children[0];
+      const kelasId = activeChild?.class_id || activeChild?.kelas_id || activeChild?.kelas?.id || (scheduleData?.student?.class_id ? String(scheduleData.student.class_id) : undefined);
 
       const [examRes, cbtRes] = await Promise.allSettled([
         mobileApiService.getExamSchedules({ kelas_id: kelasId }),
@@ -629,6 +730,7 @@ export default function ScheduleScreen({ route, navigation }: any) {
         isSelected: iso === selISO,
         isToday: iso === todayISO,
         isWeekend,
+        isHoliday: isWeekend,
         dateObj: d,
       };
     });
@@ -688,17 +790,24 @@ export default function ScheduleScreen({ route, navigation }: any) {
 
   // Jadwal dasar hari ini sebelum filter mapel
   const dayBaseSchedules: ScheduleItem[] = useMemo(() => {
-    const targetDayOfWeek = selectedDate.getDay(); // 0=Min, 1=Sen, ..., 6=Sab
+    const jsDay = selectedDate.getDay(); // 0=Min, 1=Sen, ..., 6=Sab
+    const targetDayIso = jsDay === 0 ? 7 : jsDay;
 
-    if (Array.isArray(scheduleData?.all_schedules)) {
+    // Prioritas 1: Jika backend mengembalikan today_schedules untuk tanggal terpilih
+    if (Array.isArray(scheduleData?.today_schedules) && scheduleData.today_schedules.length > 0) {
+      return scheduleData.today_schedules;
+    }
+
+    // Prioritas 2: Filter dari all_schedules berdasarkan hari ISO (1=Sen s/d 7=Min) atau JS day (0-6)
+    if (Array.isArray(scheduleData?.all_schedules) && scheduleData.all_schedules.length > 0) {
       return scheduleData.all_schedules.filter(
-        (s: any) => Number(s.day_of_week) === targetDayOfWeek
+        (s: any) => Number(s.day_of_week) === targetDayIso || Number(s.day_of_week) === jsDay
       );
     }
+
     if (Array.isArray(scheduleData?.today_schedules)) {
       return scheduleData.today_schedules;
     }
-    // Tidak ada data dari backend → kembalikan array kosong (tampilkan empty state)
     return [];
   }, [scheduleData, selectedDate]);
 
@@ -727,65 +836,110 @@ export default function ScheduleScreen({ route, navigation }: any) {
   }, [dayBaseSchedules, selectedSubjectFilter, searchQuery]);
 
   const safeChildren = Array.isArray(children) ? children : [];
-  const studentLoopCount = safeChildren.length;
-  const safeCenter = studentLoopCount > 0 ? ((activeChildIndex % studentLoopCount) + studentLoopCount) % studentLoopCount : 0;
 
-  const loopWindow = useMemo(() => {
-    const n = studentLoopCount;
-    if (n <= 1) return { list: safeChildren, realIdx: [0] };
-    const cur = ((activeChildIndex % n) + n) % n;
-    const prev = (cur - 1 + n) % n;
-    const next = (cur + 1) % n;
-    return {
-      list: [safeChildren[prev], safeChildren[cur], safeChildren[next]],
-      realIdx: [prev, cur, next],
-    };
-  }, [safeChildren, activeChildIndex, studentLoopCount]);
+  const studentCardWidth = useMemo(() => {
+    return safeChildren.length > 1
+      ? SCREEN_WIDTH - 16 - STUDENT_CARD_GAP - STUDENT_PEEK_WIDTH
+      : SCREEN_WIDTH - 32;
+  }, [safeChildren.length]);
 
-  const syncLoopChildId = useCallback((newIdx: number) => {
-    if (!safeChildren || safeChildren.length === 0) return;
-    const n = safeChildren.length;
-    const norm = ((newIdx % n) + n) % n;
-    const targetChild = safeChildren[norm];
-    if (targetChild) {
-      const targetId = String(targetChild.id || targetChild.student_id);
-      setSelectedChildId(targetId);
-      useActiveChildStore.getState().setActiveChildId(targetId);
+  const studentSnapInterval = useMemo(() => {
+    return studentCardWidth + STUDENT_CARD_GAP;
+  }, [studentCardWidth]);
+
+  const studentTrackPad = useMemo(() => {
+    return (SCREEN_WIDTH - studentCardWidth) / 2;
+  }, [studentCardWidth]);
+
+  // Real-time tracking titik dot carousel saat gesture drag/swipe berlangsung
+  const [visualDotIndex, setVisualDotIndex] = useState<number | null>(null);
+  const currentActiveDotIndex = visualDotIndex !== null ? visualDotIndex : activeChildIndex;
+
+  const scrollToActiveChild = useCallback((idx: number, animated = false): void => {
+    if (safeChildren.length <= 1) return;
+    const clamped = Math.max(0, Math.min(safeChildren.length - 1, idx));
+    studentScrollRef.current?.scrollTo({ x: clamped * studentSnapInterval, animated });
+  }, [safeChildren.length, studentSnapInterval]);
+
+  const syncLoopChildId = useCallback((realIdx: number) => {
+    const selChild = safeChildren[realIdx];
+    const sid = selChild?.id || selChild?.student_id;
+    if (sid) {
+      const strSid = String(sid);
+      setSelectedChildId(strSid);
+      useActiveChildStore.getState().setActiveChildId(strSid);
     }
   }, [safeChildren]);
 
-  const recenterLoop = useCallback(() => {
-    if (studentLoopCount > 1) {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset, animated: false });
-    }
-  }, [studentLoopCount]);
+  const goToLoopChild = useCallback((targetIndex: number, isDirectTap = false) => {
+    if (safeChildren.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(safeChildren.length - 1, targetIndex));
+    const targetChild = safeChildren[clampedIndex];
+    if (!targetChild) return;
 
-  const goToLoopChild = useCallback((targetRealIdx: number) => {
-    if (studentLoopCount <= 1) {
-      setActiveChildIndex(0);
-      syncLoopChildId(0);
-      return;
+    const sid = String(targetChild.id || targetChild.student_id || '');
+    const sFullName = targetChild.full_name || targetChild.nama_lengkap || targetChild.name || targetChild.nama || 'Ananda';
+    const sNickname = targetChild.nickname || targetChild.nama || targetChild.name || sFullName.split(' ')[0] || 'Ananda';
+
+    latestActiveChildIdRef.current = sid;
+    handledParamIdRef.current = sid;
+    if (prevRouteParamRef) prevRouteParamRef.current = sid;
+
+    // Geser visual carousel segera untuk 60fps tanpa jeda UI
+    setActiveChildIndex(clampedIndex);
+
+    // Hapus timer debounce sebelumnya jika user masih menggeser kartu dengan cepat
+    if (scheduleDebounceTimerRef.current) {
+      clearTimeout(scheduleDebounceTimerRef.current);
     }
-    const n = studentLoopCount;
-    const cur = safeCenter;
-    const target = ((targetRealIdx % n) + n) % n;
-    if (target === cur) {
-      recenterLoop();
-      return;
-    }
-    setActiveChildIndex(target);
-    syncLoopChildId(target);
-    const forwardStep = (target - cur + n) % n;
-    const backwardStep = (cur - target + n) % n;
-    if (forwardStep <= backwardStep) {
-      studentScrollRef.current?.scrollTo({ x: centerLoopOffset * 2, animated: true });
+
+    const executeChildSwitch = (childId: string) => {
+      setSelectedChildId(childId);
+      latestActiveChildIdRef.current = childId;
+      handledParamIdRef.current = childId;
+      if (prevRouteParamRef) prevRouteParamRef.current = childId;
+      useActiveChildStore.getState().setActiveChildId(childId);
+      try {
+        navigation?.setParams?.({ child_id: childId, student_id: childId });
+      } catch (_) {}
+      void loadSchedules(childId);
+    };
+
+    if (isDirectTap) {
+      executeChildSwitch(sid);
     } else {
-      studentScrollRef.current?.scrollTo({ x: 0, animated: true });
+      // Debounce 200ms saat swipe gesture agar antrean burst HTTP tidak terbentuk
+      scheduleDebounceTimerRef.current = setTimeout(() => {
+        executeChildSwitch(sid);
+      }, 200);
     }
-    setTimeout(() => {
-      recenterLoop();
-    }, 280);
-  }, [studentLoopCount, safeCenter, syncLoopChildId, recenterLoop]);
+  }, [safeChildren, loadSchedules, navigation]);
+
+  useEffect(() => {
+    return () => {
+      if (scheduleDebounceTimerRef.current) clearTimeout(scheduleDebounceTimerRef.current);
+      if (scheduleAbortControllerRef.current) scheduleAbortControllerRef.current.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    const incomingId = route?.params?.child_id || route?.params?.student_id;
+    if (incomingId && safeChildren.length > 0 && handledParamIdRef.current !== String(incomingId)) {
+      handledParamIdRef.current = String(incomingId);
+      const foundIdx = safeChildren.findIndex((c: any) => String(c.id || c.student_id) === String(incomingId));
+      if (foundIdx >= 0) {
+        goToLoopChild(foundIdx, true);
+      }
+    }
+  }, [route?.params?.child_id, route?.params?.student_id, safeChildren, goToLoopChild]);
+
+  // Posisikan scroll ke kartu yang aktif saat awal load atau lebar card berubah
+  useEffect(() => {
+    if (safeChildren.length <= 1) return;
+    requestAnimationFrame(() => {
+      scrollToActiveChild(activeChildIndex, false);
+    });
+  }, [safeChildren.length, studentSnapInterval, activeChildIndex, scrollToActiveChild]);
 
   useEffect(() => {
     if (safeChildren.length > 0 && selectedChildId) {
@@ -907,1353 +1061,755 @@ export default function ScheduleScreen({ route, navigation }: any) {
     : null) || scheduleData?.student || (user as any)?.student || user;
   const heroFirstName = activeChild ? String(activeChild.name || activeChild.nama_lengkap || '').trim().split(' ')[0] : undefined;
 
+  const studentFullName = activeChild
+    ? String(activeChild.name || activeChild.nama_lengkap || activeChild.full_name || (user as any)?.name || 'Ananda').trim()
+    : String((user as any)?.name || 'Ananda');
+
+  const studentUnit = activeChild
+    ? String(
+        activeChild.unit?.name ||
+        activeChild.unit_name ||
+        activeChild.education_unit?.name ||
+        resolveUnitName(activeChild?.education_unit || activeChild?.unit || activeChild) ||
+        ''
+      ).trim()
+    : '';
+
+  const studentClass = activeChild
+    ? String(
+        activeChild.class?.name ||
+        activeChild.kelas?.name ||
+        activeChild.class_name ||
+        (activeChild.grade ? `Kelas ${activeChild.grade}` : '')
+      ).trim()
+    : '';
+
+  const studentSubtitleParts = [studentUnit, studentClass].filter(Boolean);
+  const studentSubtitle = studentSubtitleParts.join('  ·  ');
+  const studentPhotoUrl = getProfileImageUrl(activeChild);
+  const isGirl = isGirlStudent(activeChild);
+  const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
+  const studentAvatarSource = studentPhotoUrl ? { uri: studentPhotoUrl } : defaultAvatar;
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini — Single Source of Truth selaras dengan HomeScreen
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(activeChild);
+  }, [activeChild]);
+
+  // Deteksi Dinamis Fullday vs Boarding (100% data riil dari backend tanpa hardcode)
+  const isBoarding = useMemo(() => {
+    const rawProgramType = String(
+      activeChild?.program_type ||
+      activeChild?.education_unit?.program_type ||
+      activeChild?.unit?.program_type ||
+      scheduleData?.student?.program_type ||
+      ''
+    ).toLowerCase();
+
+    const rawLevel = String(
+      activeChild?.level ||
+      activeChild?.education_unit?.level ||
+      activeChild?.unit?.level ||
+      activeChild?.kelas?.jenjang ||
+      activeChild?.kelas?.unitPendidikan?.level ||
+      scheduleData?.student?.level ||
+      ''
+    ).toUpperCase();
+
+    const unitStr = String(
+      studentUnit ||
+      activeChild?.unit?.name ||
+      activeChild?.education_unit?.name ||
+      scheduleData?.student?.unit ||
+      ''
+    ).toUpperCase();
+
+    return (
+      rawProgramType === 'boarding' ||
+      rawLevel === 'PONPES' ||
+      rawLevel === 'MAHAD' ||
+      unitStr.includes('PONPES') ||
+      unitStr.includes('PESANTREN') ||
+      unitStr.includes('ASRAMA') ||
+      unitStr.includes('MAHAD')
+    );
+  }, [activeChild, scheduleData, studentUnit]);
+
+  const programTypeLabel = isBoarding
+    ? 'Boarding School (Pesantren 24 Jam)'
+    : 'Fullday School (07:15 - 16:00 WIB)';
+
+  const programOperatingHours = useMemo(() => {
+    if (activeChild?.jam_kegiatan) return activeChild.jam_kegiatan;
+    if (activeChild?.education_unit?.jam_kegiatan) return activeChild.education_unit.jam_kegiatan;
+    if (activeChild?.kelas?.unitPendidikan?.jam_kegiatan) return activeChild.kelas.unitPendidikan.jam_kegiatan;
+    if (scheduleData?.student?.jam_kegiatan) return scheduleData.student.jam_kegiatan;
+    return isBoarding ? '24 Jam (Pengasuhan Asrama & Halaqah)' : '07:15 - 16:00 WIB';
+  }, [activeChild, scheduleData, isBoarding]);
+
   return (
     <View style={styles.rootContainer}>
-      {/* 0. STICKY HEADER BERSAMA (identik Tugas/Materi/Nilai) */}
-      <StudentStickyHeader
-        scrollY={scrollY}
-        topInset={topInset}
-        title="Jadwal Pelajaran"
-        navigation={navigation}
-        route={route}
-        student={activeChild}
-        user={user}
-        childrenList={safeChildren}
-        selectedChildId={selectedChildId}
-        onSelectChild={(cid, idx) => {
-          setSelectedChildId(cid);
-          useActiveChildStore.getState().setActiveChildId(cid);
-          const foundIdx = typeof idx === 'number' && idx >= 0
-            ? idx
-            : safeChildren.findIndex((c) => String(c.id || c.student_id) === String(cid));
-          if (foundIdx >= 0) {
-            goToLoopChild(foundIdx);
-          }
-        }}
-        middleAction={{
-          label: 'Tugas',
-          icon: 'clipboard-text-clock-outline',
-          onPress: () => navigation?.navigate('Tugas' as any),
-        }}
-        onOpenIdCard={(s) => openIdCard(s)}
-        onOpenQr={(s) => openQrCard(s)}
-        onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-        onOpenMenu={(s) => setSelectedMenuStudent(s)}
-        onOpenNotifications={(s) => setSelectedNotificationStudent(s || activeChild)}
-      />
-
-      <View style={styles.sheetContainer}>
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN UTAMA, JERNIH & CRISP) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#FFFFFF', '#F4FAF7', '#EAF7F0']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0.5, 0.82, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
 
-        <Animated.ScrollView
-          style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: bottomInset + 120 }]}
-          onScroll={handleMainScroll}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#18A165']} progressViewOffset={topInset + 10} />
-          }
+      {/* ── TOP HEADER IDENTIK HALAMAN UTAMA (TOMBOL KARTU PUTIH MINT GREEN SHADOW) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
         >
-          {/* ── 0. TOP BAR STATIS (Ketika Belum Di-Scroll) ── */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#064E3B', '#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
 
-            <View style={styles.staticTopBarRow}>
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Jadwal Pelajaran
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => setIsDatePickerModalVisible(true)}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kalender"
+        >
+          <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#004D32" />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: bottomInset + 30 }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#0D6B42']} />
+        }
+      >
+        <View style={styles.cleanScrollInner}>
+          {/* 1. STUDENT PROFILE SECTION (TERBUKA, INDAH, DENGAN TOMBOL GANTI SISWA AKTIF) */}
+          <View style={styles.studentProfileRow}>
+            {/* Circular Avatar dengan mint ring */}
+            <TouchableOpacity
+              activeOpacity={safeChildren.length > 1 ? 0.75 : 1}
+              onPress={safeChildren.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+              style={styles.studentAvatarRing}
+            >
+              <Image
+                source={studentAvatarSource}
+                style={styles.studentAvatarImg}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+
+            {/* Profile Info */}
+            <View style={styles.studentProfileInfoCol}>
               <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
+                activeOpacity={safeChildren.length > 1 ? 0.75 : 1}
+                onPress={safeChildren.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                style={styles.studentNameRow}
               >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#047857" />
+                <Text numberOfLines={1} style={styles.studentProfileName}>
+                  {studentFullName}
+                </Text>
               </TouchableOpacity>
 
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>
-                  Jadwal Pelajaran
-                </Text>
-                <View style={styles.heroSubtitleBadge}>
-                  <MaterialCommunityIcons name="account-school" size={11} color="#D1FAE5" style={{ marginRight: 4 }} />
-                  <Text numberOfLines={1} style={styles.heroModuleSubtitle}>
-                    {heroFirstName ? `Ananda ${heroFirstName}` : 'Jadwal KBM & Ujian Terpadu'}
+              {/* Baris 2: Unit Pendidikan */}
+              {studentUnit ? (
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                    {studentUnit}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Baris 3: Kelas Siswa tepat di bawah Unit Pendidikan */}
+              {studentClass ? (
+                <View style={styles.studentMetaRow}>
+                  <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                  <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                    {studentClass}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran di Sebelahnya */}
+              <View style={styles.studentActionBadgeRow}>
+                {safeChildren.length > 1 && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowChildSelectorModal(true)}
+                    style={styles.parentGantiAnakBtn}
+                  >
+                    <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                    <MaterialCommunityIcons name="chevron-down" size={15} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+
+                <View
+                  style={[
+                    styles.attendanceStatusBadge,
+                    { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={attendanceStatus.icon}
+                    size={12}
+                    color={attendanceStatus.color}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                    {attendanceStatus.label}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          {/* 1.2. BANNER TAHUN AJARAN AKTIF & JADWAL OPERASIONAL ANANDA (FULLDAY / BOARDING) */}
+          <View style={styles.academicYearBanner}>
+            <LinearGradient
+              colors={isBoarding ? ['#EEF2FF', '#F5F3FF', '#F8FAFC'] : ['#ECFDF5', '#F0FDF4', '#F8FAFC']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.academicYearGradient}
+            >
+              {/* Top Colored Accent Strip */}
+              <View
+                style={[
+                  styles.academicYearAccentStrip,
+                  { backgroundColor: isBoarding ? '#6366F1' : '#059669' },
+                ]}
+              />
+
+              {/* Row 1: Badge Tahun Ajaran & Status Aktif */}
+              <View style={styles.academicYearHeaderRow}>
+                <View
+                  style={[
+                    styles.academicYearBadge,
+                    isBoarding && { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="calendar-check"
+                    size={13.5}
+                    color={isBoarding ? '#4F46E5' : '#047857'}
+                  />
+                  <Text
+                    style={[
+                      styles.academicYearBadgeText,
+                      isBoarding && { color: '#4338CA' },
+                    ]}
+                  >
+                    Tahun Ajaran {scheduleData?.academic_year || activeChild?.kelas?.tahun_ajaran?.name || defaultAcademicYear}
+                    {scheduleData?.semester_name ? ` · ${scheduleData.semester_name}` : ` · ${defaultSemesterName}`}
+                  </Text>
+                </View>
+
+                <View style={styles.activePillBadge}>
+                  <View style={styles.activeGreenDot} />
+                  <Text style={styles.activePillText}>Aktif</Text>
+                </View>
+              </View>
+
+              {/* Title & Subtitle Operasional */}
+              <Text style={styles.operationalScheduleTitle}>
+                Jadwal Operasional Ananda {studentFullName}
+              </Text>
+              <Text style={styles.operationalScheduleSub} numberOfLines={1}>
+                {studentUnit || 'Unit Pendidikan'} {studentClass ? ` · ${studentClass}` : ''}
+              </Text>
+
+              {/* Row 2: Lencana Program Sekolah (Fullday vs Boarding) */}
+              <View style={styles.programTypeBadgeWrapper}>
+                <View
+                  style={[
+                    styles.programTypeBadge,
+                    isBoarding ? styles.programTypeBadgeBoarding : styles.programTypeBadgeFullday,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={isBoarding ? 'mosque' : 'weather-sunny'}
+                    size={14}
+                    color={isBoarding ? '#4338CA' : '#047857'}
+                  />
+                  <Text
+                    style={[
+                      styles.programTypeBadgeText,
+                      isBoarding ? styles.programTypeBadgeTextBoarding : styles.programTypeBadgeTextFullday,
+                    ]}
+                  >
+                    {programTypeLabel}
                   </Text>
                 </View>
               </View>
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
+              {/* Row 3: Meta Info Chips (Jam Operasional, Ruangan, Lingkup Kegiatan) */}
+              <View style={styles.operationalMetaRow}>
+                <View style={styles.operationalMetaItem}>
+                  <View style={[styles.metaIconSquircle, isBoarding && { backgroundColor: '#E0E7FF' }]}>
+                    <MaterialCommunityIcons
+                      name="clock-time-four-outline"
+                      size={12.5}
+                      color={isBoarding ? '#4F46E5' : '#059669'}
+                    />
+                  </View>
+                  <Text style={[styles.operationalMetaText, isBoarding && { color: '#3730A3' }]}>
+                    {programOperatingHours}
+                  </Text>
+                </View>
+
+                {studentClass ? (
+                  <View style={styles.operationalMetaItem}>
+                    <View style={[styles.metaIconSquircle, isBoarding && { backgroundColor: '#E0E7FF' }]}>
+                      <MaterialCommunityIcons
+                        name="door-open"
+                        size={12.5}
+                        color={isBoarding ? '#4F46E5' : '#059669'}
+                      />
+                    </View>
+                    <Text style={[styles.operationalMetaText, isBoarding && { color: '#3730A3' }]}>
+                      {studentClass}
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.operationalMetaItem}>
+                  <View style={[styles.metaIconSquircle, isBoarding && { backgroundColor: '#E0E7FF' }]}>
+                    <MaterialCommunityIcons
+                      name={isBoarding ? 'home-group' : 'school-outline'}
+                      size={12.5}
+                      color={isBoarding ? '#4F46E5' : '#059669'}
+                    />
+                  </View>
+                  <Text style={[styles.operationalMetaText, isBoarding && { color: '#3730A3' }]}>
+                    {isBoarding ? 'KBM & Halaqah Asrama' : 'KBM Terpadu'}
+                  </Text>
+                </View>
+              </View>
+            </LinearGradient>
+          </View>
+
+          {/* 1.3. REKAP JAM BELAJAR (JP) & METRIK OPERASIONAL KBM (4 KARTU KPI) */}
+          <View style={styles.kpiContainerBlock}>
+            <View style={styles.kpiRow}>
+              {/* CARD 1: Sesi / JP (EMERALD) */}
+              <View style={[styles.kpiCard, styles.kpiCardEmerald]}>
+                <LinearGradient
+                  colors={['#ECFDF5', '#F0FDF4']}
+                  style={styles.kpiCardGradient}
+                >
+                  <View style={styles.kpiTop}>
+                    <Text style={[styles.kpiLabel, { color: '#047857' }]}>Rekap Jam Belajar (JP)</Text>
+                    <View style={[styles.kpiIconBadge, { backgroundColor: '#D1FAE5' }]}>
+                      <MaterialCommunityIcons name="book-clock-outline" size={15} color="#059669" />
+                    </View>
+                  </View>
+                  <Text style={[styles.kpiValue, { color: '#065F46' }]}>
+                    {scheduleKpi.totalSessions} JP / Sesi
+                  </Text>
+                  <Text style={[styles.kpiSub, { color: '#047857' }]}>
+                    {scheduleKpi.totalSessions > 0
+                      ? (isBoarding ? 'Sesi KBM & Halaqah' : 'Total Jam Pelajaran')
+                      : 'Tidak Ada Sesi'}
+                  </Text>
+                </LinearGradient>
+              </View>
+
+              {/* CARD 2: Waktu Belajar (SKY BLUE) */}
+              <View style={[styles.kpiCard, styles.kpiCardSky]}>
+                <LinearGradient
+                  colors={['#EFF6FF', '#DBEAFE']}
+                  style={styles.kpiCardGradient}
+                >
+                  <View style={styles.kpiTop}>
+                    <Text style={[styles.kpiLabel, { color: '#1D4ED8' }]}>Waktu Belajar</Text>
+                    <View style={[styles.kpiIconBadge, { backgroundColor: '#DBEAFE' }]}>
+                      <MaterialCommunityIcons name="clock-time-four-outline" size={15} color="#2563EB" />
+                    </View>
+                  </View>
+                  <Text style={[styles.kpiValue, { color: '#1E40AF' }]}>
+                    {scheduleKpi.startTime} - {scheduleKpi.endTime}
+                  </Text>
+                  <Text style={[styles.kpiSub, { color: '#2563EB' }]}>
+                    {isBoarding ? 'WIB (Sesi Belajar)' : 'WIB Terjadwal'}
+                  </Text>
+                </LinearGradient>
+              </View>
+            </View>
+
+            <View style={[styles.kpiRow, { marginTop: 8 }]}>
+              {/* CARD 3: Mapel (PURPLE) */}
+              <View style={[styles.kpiCard, styles.kpiCardPurple]}>
+                <LinearGradient
+                  colors={['#FAF5FF', '#F3E8FF']}
+                  style={styles.kpiCardGradient}
+                >
+                  <View style={styles.kpiTop}>
+                    <Text style={[styles.kpiLabel, { color: '#6D28D9' }]}>Mata Pelajaran</Text>
+                    <View style={[styles.kpiIconBadge, { backgroundColor: '#EDE9FE' }]}>
+                      <MaterialCommunityIcons name="notebook-outline" size={15} color="#7C3AED" />
+                    </View>
+                  </View>
+                  <Text style={[styles.kpiValue, { color: '#5B21B6' }]}>
+                    {scheduleKpi.uniqueSubjects} Mapel
+                  </Text>
+                  <Text style={[styles.kpiSub, { color: '#7C3AED' }]}>Bidang Studi Terjadwal</Text>
+                </LinearGradient>
+              </View>
+
+              {/* CARD 4: Status Operasional (AMBER / EMERALD) */}
+              <View
+                style={[
+                  styles.kpiCard,
+                  scheduleKpi.isWeekend ? styles.kpiCardAmber : styles.kpiCardEmerald,
+                ]}
               >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#047857" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
+                <LinearGradient
+                  colors={scheduleKpi.isWeekend ? ['#FFFBEB', '#FEF9C3'] : ['#ECFDF5', '#F0FDF4']}
+                  style={styles.kpiCardGradient}
+                >
+                  <View style={styles.kpiTop}>
+                    <Text
+                      style={[
+                        styles.kpiLabel,
+                        { color: scheduleKpi.isWeekend ? '#B45309' : '#047857' },
+                      ]}
+                    >
+                      Status Hari Ini
+                    </Text>
+                    <View
+                      style={[
+                        styles.kpiIconBadge,
+                        { backgroundColor: scheduleKpi.isWeekend ? '#FEF3C7' : '#D1FAE5' },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={scheduleKpi.isWeekend ? 'weather-sunny' : 'calendar-check-outline'}
+                        size={15}
+                        color={scheduleKpi.isWeekend ? '#D97706' : '#059669'}
+                      />
+                    </View>
+                  </View>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.kpiValue,
+                      { color: scheduleKpi.isWeekend ? '#92400E' : '#065F46' },
+                    ]}
+                  >
+                    {scheduleKpi.isWeekend ? 'Akhir Pekan' : 'KBM Aktif'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.kpiSub,
+                      { color: scheduleKpi.isWeekend ? '#B45309' : '#047857' },
+                    ]}
+                  >
+                    {scheduleKpi.isWeekend
+                      ? 'Libur Pembelajaran'
+                      : `${scheduleKpi.totalSessions} Sesi Berjalan`}
+                  </Text>
+                </LinearGradient>
+              </View>
             </View>
           </View>
 
-          {/* Badan Halaman Konten */}
-          <View style={styles.bodyContentWrapper}>
-            {/* 1. CONTAINER DATA SISWA & UNIT PENDIDIKAN DENGAN ANIMASI FADE SCROLL */}
-            {safeChildren.length > 0 ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  {
-                    opacity: bodyCardOpacity,
-                    transform: [{ translateY: bodyCardTranslateY }],
-                  },
-                ]}
-              >
-                {safeChildren.length === 1 ? (
-                  <View style={styles.singleHeroCardContainer}>
-                    <StudentHeroCard
-                      child={safeChildren[0]}
-                      isSelected={true}
-                      isSingleChild={true}
-                      showActionButtons={true}
-                      cardLabel="Kartu Siswa"
-                      calendarLabel="Jadwal"
-                      portalLabel="Menu"
-                      onPressCard={() => openIdCard(safeChildren[0])}
-                      onPressQr={() => openQrCard(safeChildren[0])}
-                      onPressWeeklyReport={() => setSelectedWeeklyStudent(safeChildren[0])}
-                      onPressNotifications={() => setSelectedNotificationStudent(safeChildren[0])}
-                      onPressPortal={() => setSelectedMenuStudent(safeChildren[0])}
-                    />
-                  </View>
-                ) : (
-                  <>
-                    <ScrollView
-                      ref={studentScrollRef}
-                      horizontal
-                      nestedScrollEnabled={true}
-                      showsHorizontalScrollIndicator={false}
-                      contentOffset={{ x: centerLoopOffset, y: 0 }}
-                      contentContainerStyle={[
-                        styles.studentCardsTrack,
-                        { paddingHorizontal: studentTrackPad },
-                      ]}
-                      decelerationRate="fast"
-                      snapToInterval={studentSnapInterval}
-                      snapToAlignment="start"
-                      disableIntervalMomentum
-                      onMomentumScrollEnd={(e) => {
-                        if (studentLoopCount === 0) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                          requestAnimationFrame(() => {
-                            recenterLoop();
-                          });
-                        } else {
-                          recenterLoop();
-                        }
-                      }}
-                      onScrollEndDrag={(e) => {
-                        if (studentLoopCount === 0) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                        }
-                      }}
-                      scrollEventThrottle={16}
-                      style={styles.heroCardScrollContainer}
-                    >
-                      {loopWindow.list.map((child: any, sIdx: number) => {
-                        const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                        const isCardActive = realIdx === safeCenter;
-                        return (
-                          <StudentHeroCard
-                            key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                            child={child}
-                            isSelected={isCardActive}
-                            isSingleChild={false}
-                            showActionButtons={true}
-                            cardWidth={studentCardWidth}
-                            cardLabel="Kartu Siswa"
-                            calendarLabel="Jadwal"
-                            portalLabel="Menu"
-                            onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                            onPressCard={() => openIdCard(child)}
-                            onPressQr={() => openQrCard(child)}
-                            onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                            onPressNotifications={() => setSelectedNotificationStudent(child)}
-                            onPressPortal={() => setSelectedMenuStudent(child)}
-                          />
-                        );
-                      })}
-                    </ScrollView>
-
-                    {/* DOT INDIKATOR SCROLL SISWA */}
-                    <View style={styles.paginationDotsRow}>
-                      {safeChildren.map((_, dotIdx) => {
-                        const isDotActive = dotIdx === safeCenter;
-                        return (
-                          <TouchableOpacity
-                            key={dotIdx}
-                            activeOpacity={0.7}
-                            onPress={() => goToLoopChild(dotIdx)}
-                            style={[
-                              styles.paginationDot,
-                              isDotActive && styles.paginationDotActive,
-                            ]}
-                          />
-                        );
-                      })}
-                    </View>
-                  </>
-                )}
-              </Animated.View>
-            ) : scheduleData?.student ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  {
-                    opacity: bodyCardOpacity,
-                    transform: [{ translateY: bodyCardTranslateY }],
-                  },
-                ]}
-              >
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={scheduleData.student}
-                    isSelected={true}
-                    isSingleChild={true}
-                    showActionButtons={true}
-                    onPressCard={() => openIdCard(scheduleData.student)}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(scheduleData.student)}
-                    onPressNotifications={() => setSelectedNotificationStudent(scheduleData.student)}
-                    onPressQr={() => openQrCard(scheduleData.student)}
-                    onPressPortal={() => setSelectedMenuStudent(scheduleData.student)}
-                  />
+          {/* 1.4. TAB SWITCHER: JADWAL HARIAN VS SEMUA JADWAL VS UJIAN (100% VISIBLE & HIGH CONTRAST) */}
+          <View style={styles.tabSwitcherContainer}>
+            {/* TAB 1: JADWAL HARIAN */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('kbm')}
+              style={styles.tabSwitcherBtnItem}
+            >
+              {activeTab === 'kbm' ? (
+                <LinearGradient
+                  colors={['#064E3B', '#047857']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.tabSwitcherPillBase, styles.tabSwitcherPillActiveKbm]}
+                >
+                  <MaterialCommunityIcons name="calendar-clock" size={15} color="#FFFFFF" />
+                  <Text numberOfLines={1} style={styles.tabSwitcherTextActive}>
+                    Jadwal Harian
+                  </Text>
+                </LinearGradient>
+              ) : (
+                <View style={[styles.tabSwitcherPillBase, styles.tabSwitcherPillInactive]}>
+                  <MaterialCommunityIcons name="calendar-clock" size={15} color="#047857" />
+                  <Text numberOfLines={1} style={styles.tabSwitcherTextInactive}>
+                    Jadwal Harian
+                  </Text>
                 </View>
-              </Animated.View>
-            ) : user ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  {
-                    opacity: bodyCardOpacity,
-                    transform: [{ translateY: bodyCardTranslateY }],
-                  },
-                ]}
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#18A165" />
-                    <Text style={styles.sectionTitle}>Data Pengguna & Unit</Text>
-                  </View>
+              )}
+            </TouchableOpacity>
+
+            {/* TAB 2: SEMUA JADWAL */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('semua')}
+              style={styles.tabSwitcherBtnItem}
+            >
+              {activeTab === 'semua' ? (
+                <LinearGradient
+                  colors={['#0F766E', '#0D9488']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.tabSwitcherPillBase, styles.tabSwitcherPillActiveSemua]}
+                >
+                  <MaterialCommunityIcons name="calendar-month-outline" size={15} color="#FFFFFF" />
+                  <Text numberOfLines={1} style={styles.tabSwitcherTextActive}>
+                    Semua Jadwal
+                  </Text>
+                </LinearGradient>
+              ) : (
+                <View style={[styles.tabSwitcherPillBase, styles.tabSwitcherPillInactive]}>
+                  <MaterialCommunityIcons name="calendar-month-outline" size={15} color="#0D9488" />
+                  <Text numberOfLines={1} style={styles.tabSwitcherTextInactive}>
+                    Semua Jadwal
+                  </Text>
                 </View>
+              )}
+            </TouchableOpacity>
 
-                {(() => {
-                  const userName = String(user?.name || user?.full_name || user?.nama_lengkap || 'Pengguna');
-                  const userRole = typeof user?.role === 'string' ? user.role : (Array.isArray(user?.roles) && user.roles[0] ? String(user.roles[0]) : 'Pengguna');
-                  const userUnit = resolveUnitName(user) || String((user as any)?.unit_name || (user as any)?.education_unit?.name || 'Unit Pendidikan Terpadu');
-                  const avatarUri = getProfileImageUrl(user);
-
-                  return (
-                    <LinearGradient
-                      colors={['#0D6B42', '#18A165', '#2BD988']}
-                      locations={[0, 0.55, 1]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.childCardHeroSizeSingle}
-                    >
-                      <View style={styles.cardDecorCircle} />
-
-                      <View style={styles.childHeroTopRow}>
-                        <View style={styles.avatarBorderWrapHero}>
-                          {avatarUri ? (
-                            <Image
-                              source={{ uri: avatarUri }}
-                              style={styles.childAvatarImgHero}
-                              resizeMode="cover"
-                            />
-                          ) : (
-                            <Text style={styles.avatarInitialText}>{userName.charAt(0).toUpperCase()}</Text>
-                          )}
-                        </View>
-                        <View style={styles.childInfoCol}>
-                          <Text numberOfLines={1} style={styles.childNameHero}>
-                            {userName}
-                          </Text>
-                          <Text style={styles.childSubInfoHero}>
-                            Status: {userRole}
-                          </Text>
-                          <View style={styles.studentUnitBadge}>
-                            <MaterialCommunityIcons name="school" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                            <Text numberOfLines={1} style={styles.studentUnitText}>
-                              {userUnit}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.selectedActionBtnRight}>
-                          <MaterialCommunityIcons name="check-circle" size={18} color="#18A165" />
-                          <Text style={styles.selectedActionBtnText}>Aktif</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.studentAttributesGrid}>
-                        <View style={styles.studentAttrBox}>
-                          <Text style={styles.studentAttrLabel}>Peran</Text>
-                          <Text numberOfLines={1} style={styles.studentAttrValue}>{userRole}</Text>
-                        </View>
-                        <View style={styles.studentAttrDivider} />
-                        <View style={styles.studentAttrBox}>
-                          <Text style={styles.studentAttrLabel}>Status Akun</Text>
-                          <Text numberOfLines={1} style={styles.studentAttrValue}>Terverifikasi</Text>
-                        </View>
-                        <View style={styles.studentAttrDivider} />
-                        <View style={styles.studentAttrBox}>
-                          <Text style={styles.studentAttrLabel}>Sesi KBM</Text>
-                          <Text numberOfLines={1} style={[styles.studentAttrValue, { color: '#DEF7EC' }]}>{safeDisplaySchedules.length} Sesi</Text>
-                        </View>
-                      </View>
-                    </LinearGradient>
-                  );
-                })()}
-              </Animated.View>
-            ) : null}
-
-            {/* 1.5. RINGKASAN METRIK JADWAL BERWARNA (TAILGRIDS HARMONIZED EMERALD SUMMARY) */}
-            <View style={styles.emeraldSummaryContainer}>
-              <View style={styles.summaryHeaderContainer}>
-                <View style={styles.summaryTitleRow}>
-                  <LinearGradient
-                    colors={['#059669', '#047857']}
-                    style={styles.sectionIconBadgeModern}
-                  >
-                    <MaterialCommunityIcons name="calendar-clock" size={17} color="#FFFFFF" />
-                  </LinearGradient>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sectionTitleBold}>Ringkasan Jadwal & KBM</Text>
-                    <Text style={styles.summarySubtitleText}>
-                      {scheduleKpi.totalSessions > 0
-                        ? `${scheduleKpi.totalSessions} sesi KBM aktif · ${formattedSelectedDate}`
-                        : `Tidak ada sesi KBM · ${formattedSelectedDate}`}
-                    </Text>
-                  </View>
-                  {scheduleKpi.isToday && (
-                    <View style={styles.summaryTodayBadge}>
-                      <View style={styles.summaryTodayDot} />
-                      <Text style={styles.summaryTodayBadgeText}>Hari Ini</Text>
-                    </View>
-                  )}
+            {/* TAB 3: JADWAL UJIAN */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('exam')}
+              style={styles.tabSwitcherBtnItem}
+            >
+              {activeTab === 'exam' ? (
+                <LinearGradient
+                  colors={['#1E3A8A', '#2563EB']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.tabSwitcherPillBase, styles.tabSwitcherPillActiveExam]}
+                >
+                  <MaterialCommunityIcons name="file-document-edit-outline" size={15} color="#FFFFFF" />
+                  <Text numberOfLines={1} style={styles.tabSwitcherTextActive}>
+                    Jadwal Ujian
+                  </Text>
+                </LinearGradient>
+              ) : (
+                <View style={[styles.tabSwitcherPillBase, styles.tabSwitcherPillInactive]}>
+                  <MaterialCommunityIcons name="file-document-edit-outline" size={15} color="#2563EB" />
+                  <Text numberOfLines={1} style={styles.tabSwitcherTextInactive}>
+                    Jadwal Ujian
+                  </Text>
                 </View>
-              </View>
+              )}
+            </TouchableOpacity>
+          </View>
 
-              {/* 4 KPI Cards Modern (2 Baris x 2 Kolom) */}
-              <View style={styles.kpiContainer}>
-                <View style={styles.kpiRow}>
-                  {/* CARD 1: TOTAL SESI (EMERALD) */}
-                  <View style={[styles.kpiCard, styles.kpiCardEmerald]}>
-                    <LinearGradient
-                      colors={['#ECFDF5', '#F0FDF4']}
-                      style={styles.kpiCardGradient}
-                    >
-                      <View style={styles.kpiTop}>
-                        <Text style={[styles.kpiLabel, { color: '#047857' }]}>Sesi KBM</Text>
-                        <View style={[styles.kpiIconBadge, { backgroundColor: '#D1FAE5' }]}>
-                          <MaterialCommunityIcons name="book-clock-outline" size={14} color="#059669" />
-                        </View>
-                      </View>
-                      <Text style={[styles.kpiValue, { color: '#065F46' }]}>
-                        {scheduleKpi.totalSessions} Sesi
-                      </Text>
-                      <Text style={[styles.kpiSub, { color: '#047857' }]}>Total Terjadwal</Text>
-                    </LinearGradient>
-                  </View>
-
-                  {/* CARD 2: JAM MULAI (SKY BLUE) */}
-                  <View style={[styles.kpiCard, styles.kpiCardSky]}>
-                    <LinearGradient
-                      colors={['#EFF6FF', '#DBEAFE']}
-                      style={styles.kpiCardGradient}
-                    >
-                      <View style={styles.kpiTop}>
-                        <Text style={[styles.kpiLabel, { color: '#1D4ED8' }]}>Jam Mulai</Text>
-                        <View style={[styles.kpiIconBadge, { backgroundColor: '#DBEAFE' }]}>
-                          <MaterialCommunityIcons name="clock-outline" size={14} color="#2563EB" />
-                        </View>
-                      </View>
-                      <Text style={[styles.kpiValue, { color: '#1E40AF' }]}>
-                        {scheduleKpi.startTime}
-                      </Text>
-                      <Text style={[styles.kpiSub, { color: '#2563EB' }]}>Waktu Masuk</Text>
-                    </LinearGradient>
-                  </View>
-                </View>
-
-                <View style={styles.kpiRow}>
-                  {/* CARD 3: TOTAL MAPEL (PURPLE) */}
-                  <View style={[styles.kpiCard, styles.kpiCardPurple]}>
-                    <LinearGradient
-                      colors={['#FAF5FF', '#F3E8FF']}
-                      style={styles.kpiCardGradient}
-                    >
-                      <View style={styles.kpiTop}>
-                        <Text style={[styles.kpiLabel, { color: '#6D28D9' }]}>Mata Pelajaran</Text>
-                        <View style={[styles.kpiIconBadge, { backgroundColor: '#EDE9FE' }]}>
-                          <MaterialCommunityIcons name="notebook-outline" size={14} color="#7C3AED" />
-                        </View>
-                      </View>
-                      <Text style={[styles.kpiValue, { color: '#5B21B6' }]}>
-                        {scheduleKpi.uniqueSubjects} Mapel
-                      </Text>
-                      <Text style={[styles.kpiSub, { color: '#7C3AED' }]}>Bidang Studi</Text>
-                    </LinearGradient>
-                  </View>
-
-                  {/* CARD 4: STATUS (AMBER / EMERALD) */}
-                  <View
-                    style={[
-                      styles.kpiCard,
-                      scheduleKpi.isWeekend ? styles.kpiCardAmber : styles.kpiCardEmerald,
-                    ]}
-                  >
-                    <LinearGradient
-                      colors={scheduleKpi.isWeekend ? ['#FFFBEB', '#FEF9C3'] : ['#ECFDF5', '#F0FDF4']}
-                      style={styles.kpiCardGradient}
-                    >
-                      <View style={styles.kpiTop}>
-                        <Text
-                          style={[
-                            styles.kpiLabel,
-                            { color: scheduleKpi.isWeekend ? '#B45309' : '#047857' },
-                          ]}
-                        >
-                          Status Hari Ini
-                        </Text>
-                        <View
-                          style={[
-                            styles.kpiIconBadge,
-                            { backgroundColor: scheduleKpi.isWeekend ? '#FEF3C7' : '#D1FAE5' },
-                          ]}
-                        >
-                          <MaterialCommunityIcons
-                            name={scheduleKpi.isWeekend ? 'weather-sunny' : 'check-circle-outline'}
-                            size={14}
-                            color={scheduleKpi.isWeekend ? '#D97706' : '#059669'}
-                          />
-                        </View>
-                      </View>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.kpiValue,
-                          { color: scheduleKpi.isWeekend ? '#92400E' : '#065F46' },
-                        ]}
-                      >
-                        {scheduleKpi.isWeekend ? 'Akhir Pekan' : 'KBM Aktif'}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.kpiSub,
-                          { color: scheduleKpi.isWeekend ? '#B45309' : '#047857' },
-                        ]}
-                      >
-                        {scheduleKpi.isWeekend ? 'Libur Pembelajaran' : 'Kegiatan Belajar'}
-                      </Text>
-                    </LinearGradient>
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* 2. CARD HARI & TANGGAL BELAJAR (DENGAN TAB HARIAN, SEMUA JADWAL, UJIAN DI DALAMNYA) */}
-            {/* 2. CARD HARI & TANGGAL BELAJAR (DENGAN TAB HARIAN, SEMUA JADWAL, UJIAN DI DALAMNYA) */}
-            <View style={styles.dayStripContainer}>
-              {/* HEADER CARD DENGAN STYLED BACKGROUND EMERALD HALUS */}
-              <LinearGradient
-                colors={['#ECFDF5', '#F0FDF4']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.dayStripHeaderBanner}
-              >
-                <View style={styles.dayStripHeaderTopRow}>
-                  <View style={styles.dayStripHeaderLeft}>
-                    {/* ICON MENYESUAIKAN DENGAN STYLE ICON RINGKASAN JADWAL (GRADIENT + SHADOW) */}
-                    <LinearGradient
-                      colors={['#059669', '#047857']}
-                      style={styles.sectionIconBadgeModern}
-                    >
-                      <MaterialCommunityIcons name="calendar-range" size={17} color="#FFFFFF" />
-                    </LinearGradient>
-                    <View style={styles.dayStripTitleColumn}>
-                      <Text style={styles.sectionTitleBold}>Hari & Tanggal Belajar</Text>
-                      <Text numberOfLines={1} style={styles.summarySubtitleText}>
-                        {activeTab === 'kbm'
-                          ? formattedSelectedDate
-                          : activeTab === 'semua'
-                          ? 'Jadwal Mingguan Lengkap'
-                          : 'Jadwal Penilaian & Ujian'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => setIsDatePickerModalVisible(true)}
-                    style={styles.openCalendarBtn}
-                    accessibilityLabel="Buka Kalender Pemilih Tanggal"
-                  >
-                    <MaterialCommunityIcons name="calendar-month-outline" size={14} color="#047857" />
-                    <Text numberOfLines={1} style={styles.openCalendarBtnText}>Kalender</Text>
-                  </TouchableOpacity>
-                </View>
-              </LinearGradient>
-
-              {/* CARD BODY DENGAN JARAK PRESISI & RAPI */}
-              <View style={[styles.dayStripBody, activeTab !== 'kbm' && styles.dayStripBodyCompact]}>
-                {/* TAB SWITCHER: HARIAN VS SEMUA JADWAL VS UJIAN */}
-                <View style={[styles.tabSwitcherWrap, activeTab !== 'kbm' && styles.tabSwitcherWrapCompact]}>
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={() => setActiveTab('kbm')}
-                    style={[
-                      styles.tabSwitcherBtn,
-                      activeTab === 'kbm' && styles.tabSwitcherBtnActiveKbm,
-                    ]}
-                  >
-                    {activeTab === 'kbm' && (
-                      <LinearGradient
-                        colors={['#064E3B', '#047857', '#059669']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={StyleSheet.absoluteFill}
-                      />
-                    )}
-                    <View
-                      style={[
-                        styles.tabSwitcherIconSquircle,
-                        activeTab === 'kbm' ? styles.tabSwitcherIconSquircleActiveKbm : styles.tabSwitcherIconSquircleInactive,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name="calendar-clock"
-                        size={15}
-                        color={activeTab === 'kbm' ? '#FFFFFF' : '#047857'}
-                      />
-                    </View>
-                    <View style={styles.tabSwitcherTextWrap}>
-                      <Text
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.75}
-                        style={[
-                          styles.tabSwitcherText,
-                          activeTab === 'kbm' && styles.tabSwitcherTextActiveKbm,
-                        ]}
-                      >
-                        Harian
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={() => setActiveTab('semua')}
-                    style={[
-                      styles.tabSwitcherBtn,
-                      activeTab === 'semua' && styles.tabSwitcherBtnActiveSemua,
-                    ]}
-                  >
-                    {activeTab === 'semua' && (
-                      <LinearGradient
-                        colors={['#0F766E', '#0D9488', '#14B8A6']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={StyleSheet.absoluteFill}
-                      />
-                    )}
-                    <View
-                      style={[
-                        styles.tabSwitcherIconSquircle,
-                        activeTab === 'semua' ? styles.tabSwitcherIconSquircleActiveSemua : styles.tabSwitcherIconSquircleInactive,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name="calendar-month-outline"
-                        size={15}
-                        color={activeTab === 'semua' ? '#FFFFFF' : '#0D9488'}
-                      />
-                    </View>
-                    <View style={styles.tabSwitcherTextWrap}>
-                      <Text
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.75}
-                        style={[
-                          styles.tabSwitcherText,
-                          activeTab === 'semua' && styles.tabSwitcherTextActiveSemua,
-                        ]}
-                      >
-                        Semua Jadwal
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={() => setActiveTab('exam')}
-                    style={[
-                      styles.tabSwitcherBtn,
-                      activeTab === 'exam' && styles.tabSwitcherBtnActiveExam,
-                    ]}
-                  >
-                    {activeTab === 'exam' && (
-                      <LinearGradient
-                        colors={['#1E3A8A', '#1D4ED8', '#2563EB']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={StyleSheet.absoluteFill}
-                      />
-                    )}
-                    <View
-                      style={[
-                        styles.tabSwitcherIconSquircle,
-                        activeTab === 'exam' ? styles.tabSwitcherIconSquircleActiveExam : styles.tabSwitcherIconSquircleInactive,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name="file-document-edit-outline"
-                        size={15}
-                        color={activeTab === 'exam' ? '#FFFFFF' : '#2563EB'}
-                      />
-                    </View>
-                    <View style={styles.tabSwitcherTextWrap}>
-                      <Text
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.75}
-                        style={[
-                          styles.tabSwitcherText,
-                          activeTab === 'exam' && styles.tabSwitcherTextActiveExam,
-                        ]}
-                      >
-                        Ujian
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Baris 3: Tombol Pintas Ke Hari Ini (Hanya muncul saat tab Harian dan bukan hari ini) */}
-                {activeTab === 'kbm' && !scheduleKpi.isToday && (
-                  <TouchableOpacity
-                    activeOpacity={0.82}
-                    onPress={() => setSelectedDate(new Date())}
-                    style={styles.quickTodayBannerRow}
-                    accessibilityLabel="Pilih Hari Ini Tanggal 17 Oktober"
-                  >
-                    <View style={styles.quickTodayBannerLeft}>
-                      <View style={styles.quickTodayIconCircle}>
-                        <MaterialCommunityIcons name="calendar-today" size={12} color="#047857" />
-                      </View>
-                      <Text numberOfLines={1} style={styles.quickTodayBannerText}>
-                        Kembali ke Hari Ini (Sabtu, 17 Okt 2026)
-                      </Text>
-                    </View>
-                    <View style={styles.quickTodayActionPill}>
-                      <Text style={styles.quickTodayActionPillText}>Pilih</Text>
-                      <MaterialCommunityIcons name="chevron-right" size={13} color="#FFFFFF" />
-                    </View>
-                  </TouchableOpacity>
-                )}
-
-                {/* Day Strip Row (Hanya muncul saat tab Harian) */}
-              {activeTab === 'kbm' && (
+          {activeTab === 'kbm' ? (
+            <>
+              {/* 2. DAY STRIP (Sen, Sel, Rab, Kam, Jum - TEPAT DI BAWAH PROFIL SISWA) */}
+              <View style={styles.cleanDayStripWrapper}>
                 <ScrollView
                   ref={dayScrollRef}
                   horizontal
                   showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.dayStripRow}
+                  contentContainerStyle={styles.cleanDayStripScroll}
                 >
                   {weekDays.map((item) => {
                     const isSel = item.isSelected;
-                    const isWeekend = item.isWeekend;
+                    const isHoliday = item.isHoliday || item.isWeekend;
                     return (
                       <TouchableOpacity
                         key={item.iso}
                         activeOpacity={0.8}
                         onPress={() => setSelectedDate(item.dateObj)}
                         style={[
-                          styles.dayPillBtn,
-                          isWeekend && styles.dayPillBtnWeekend,
-                          item.isToday && !isSel && styles.dayPillBtnToday,
-                          isSel && styles.dayPillBtnActive,
+                          styles.cleanDayPillBtn,
+                          isHoliday
+                            ? (isSel ? styles.cleanDayPillBtnHolidayActive : styles.cleanDayPillBtnHoliday)
+                            : (isSel ? styles.cleanDayPillBtnActive : styles.cleanDayPillBtnInactive),
                         ]}
                       >
-                        {isSel && (
-                          <LinearGradient
-                            colors={['#064E3B', '#047857', '#059669']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={StyleSheet.absoluteFill}
-                          />
-                        )}
-                        {item.isToday && (
-                          <View style={[styles.todayIndicatorTag, isSel && styles.todayIndicatorTagActive]}>
-                            <View style={[styles.todayDot, isSel && styles.todayDotActive]} />
-                            <Text style={[styles.todayTagText, isSel && styles.todayTagTextActive]}>Hari Ini</Text>
-                          </View>
-                        )}
+                        <View style={styles.cleanDayPillHeader}>
+                          <Text
+                            style={[
+                              styles.cleanDayPillName,
+                              isHoliday && styles.cleanDayPillNameHoliday,
+                              isSel && (isHoliday ? styles.cleanDayPillNameHolidayActive : styles.cleanDayPillNameActive),
+                            ]}
+                          >
+                            {item.dayName}
+                          </Text>
+                          {isHoliday && !isSel && (
+                            <View style={styles.holidayMiniDot} />
+                          )}
+                        </View>
                         <Text
                           style={[
-                            styles.dayPillName,
-                            isWeekend && !isSel && styles.dayPillNameWeekend,
-                            item.isToday && !isSel && styles.dayPillNameToday,
-                            isSel && styles.dayPillNameActive,
+                            styles.cleanDayPillDate,
+                            isHoliday && styles.cleanDayPillDateHoliday,
+                            isSel && (isHoliday ? styles.cleanDayPillDateHolidayActive : styles.cleanDayPillDateActive),
                           ]}
                         >
-                          {item.dayName}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dayPillNumber,
-                            isWeekend && !isSel && styles.dayPillNumberWeekend,
-                            item.isToday && !isSel && styles.dayPillNumberToday,
-                            isSel && styles.dayPillNumberActive,
-                          ]}
-                        >
-                          {item.dayNum}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dayPillMonth,
-                            isWeekend && !isSel && styles.dayPillMonthWeekend,
-                            item.isToday && !isSel && styles.dayPillMonthToday,
-                            isSel && styles.dayPillMonthActive,
-                          ]}
-                        >
-                          {item.monthShort}
+                          {item.dateStr}
                         </Text>
                       </TouchableOpacity>
                     );
                   })}
                 </ScrollView>
-              )}
               </View>
-            </View>
 
-            {activeTab === 'kbm' ? (
-              <>
-                {/* 3. DATE CARD DENGAN PILIHAN TANGGAL INTERAKTIF (TANGGAL 17 & KALENDER) */}
-                <TouchableOpacity
-                  activeOpacity={0.88}
-                  onPress={() => setIsDatePickerModalVisible(true)}
-                  style={styles.dateHeaderRow}
-                  accessibilityRole="button"
-                  accessibilityLabel="Pilih Tanggal Jadwal atau Buka Kalender"
-                >
-                  <LinearGradient
-                    colors={['#ECFDF5', '#F0FDF4', '#FFFFFF']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                  <View style={styles.dateHeaderIconBox}>
-                    <LinearGradient
-                      colors={['#059669', '#10B981']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={StyleSheet.absoluteFill}
-                    />
-                    <MaterialCommunityIcons name="calendar-clock" size={20} color="#FFFFFF" />
-                  </View>
-                  <View style={{ flex: 1, paddingRight: 6 }}>
-                    <View style={styles.dateHeaderBadgeRow}>
-                      <Text style={styles.dateHeaderSub}>
-                        {scheduleKpi.isToday ? 'HARI INI · TANGGAL TERPILIH' : 'JADWAL PEMBELAJARAN'}
-                      </Text>
-                      {scheduleKpi.isToday && (
-                        <View style={styles.todayPillBadgeSmall}>
-                          <View style={styles.todayPillDotSmall} />
-                          <Text style={styles.todayPillTextSmall}>Hari Ini (17 Okt)</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text numberOfLines={1} style={styles.dateHeaderTitle}>
-                      {formattedSelectedDate}
-                    </Text>
-                    <Text style={styles.dateHeaderTapHint}>
-                      Ketuk card ini untuk memilih tanggal lain / kalender
-                    </Text>
-                  </View>
+              {/* 3. SCHEDULE CARDS LIST (2 KOLOM: WAKTU DI KIRI, CARD DI KANAN) */}
+              {loading ? (
+                <ActivityIndicator color="#0D6B42" style={{ marginVertical: 32 }} />
+              ) : safeDisplaySchedules.length > 0 ? (
+                <View style={styles.cleanScheduleListContainer}>
+                  {safeDisplaySchedules.map((item, idx) => {
+                    const isActivity = item.activity_type === 'activity' || (item.activity_type && item.activity_type !== 'kbm');
+                    const subjName = isActivity
+                      ? (item.activity_name || 'Kegiatan')
+                      : (item.subject?.name || item.subject?.nama_mapel || 'Mata Pelajaran');
+                    const styleMeta = getSubjectStyle(subjName, idx);
+                    const rawTime = item.time_display || (item.time_start && item.time_end ? `${item.time_start.slice(0, 5)} - ${item.time_end.slice(0, 5)}` : '07.30 - 08.15');
+                    const timeParts = rawTime.replace(/:/g, '.').split('-');
+                    const timeStart = timeParts[0]?.trim() || '';
+                    const timeEnd = timeParts[1]?.trim() || '';
+                    const teacherName = isActivity
+                      ? (item.teacher?.name || 'Umum / Mandiri')
+                      : (item.teacher?.name || item.teacher?.nama_lengkap || 'Guru Pengampu');
+                    const roomName = item.room || 'Ruang Kelas';
+                    const isOngoing = item.is_ongoing;
+                    const attMeta = item.attendance ? getAttendanceMeta(item.attendance) : null;
 
-                  <View style={styles.dateHeaderRightCluster}>
-                    <View style={styles.dateHeaderEditIconBox}>
-                      <MaterialCommunityIcons name="calendar-search" size={17} color="#059669" />
-                    </View>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Tombol Cepat Kembali ke Hari Ini (17 Okt) Jika Sedang Memilih Tanggal Lain */}
-                {!scheduleKpi.isToday && (
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedDate(new Date())}
-                    style={styles.backToTodayBannerBtn}
-                  >
-                    <LinearGradient
-                      colors={['#064E3B', '#047857', '#059669']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={StyleSheet.absoluteFill}
-                    />
-                    <MaterialCommunityIcons name="calendar-today" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.backToTodayBannerBtnText}>
-                      Kembali ke Jadwal Hari Ini (Sabtu, 17 Oktober 2026)
-                    </Text>
-                  </TouchableOpacity>
-                )}
-
-                {/* 3.5 UNIFIED FILTER CARD JADWAL (Tepat di Atas Jalur Pembelajaran Hari Ini) */}
-                <View style={styles.scheduleFilterCard}>
-                  <View style={styles.scheduleFilterCardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
-                      <MaterialCommunityIcons name="filter-variant" size={16} color="#059669" />
-                      <Text numberOfLines={1} style={styles.scheduleFilterCardTitle}>Filter Jadwal & Pelajaran</Text>
-                      {(selectedSubjectFilter !== 'all' || searchQuery.length > 0) && (
-                        <View style={styles.filterBadgeCount}>
-                          <Text style={styles.filterBadgeCountText}>
-                            {selectedSubjectFilter !== 'all' && searchQuery.length > 0 ? '2 Aktif' : '1 Aktif'}
+                    return (
+                      <View key={item.id || idx} style={styles.cleanScheduleRow}>
+                        {/* Kolom Waktu di Kiri */}
+                        <View style={styles.cleanTimeCol}>
+                          <Text style={[styles.cleanTimeStartText, isOngoing && { color: '#059669' }]}>
+                            {timeStart}
                           </Text>
+                          <View style={styles.timelineDashRow}>
+                            <View style={[styles.timelineMiniLine, { backgroundColor: isOngoing ? '#10B981' : '#CBD5E1' }]} />
+                            <Text style={styles.cleanTimeEndText}>{timeEnd}</Text>
+                          </View>
                         </View>
-                      )}
-                    </View>
-                    {(selectedSubjectFilter !== 'all' || searchQuery.length > 0) && (
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => {
-                          setSelectedSubjectFilter('all');
-                          setSearchQuery('');
-                        }}
-                        style={{ flexShrink: 0 }}
-                      >
-                        <Text style={styles.scheduleFilterResetBtn}>Reset Filter</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
 
-                  {/* In-Card Search Input Bar */}
-                  <View style={styles.scheduleSearchBox}>
-                    <MaterialCommunityIcons name="magnify" size={18} color="#64748B" />
-                    <TextInput
-                      placeholder="Cari mapel, guru pengampu, ruang kelas..."
-                      placeholderTextColor="#94A3B8"
-                      value={searchQuery}
-                      onChangeText={setSearchQuery}
-                      style={styles.scheduleSearchInput}
-                    />
-                    {searchQuery ? (
-                      <TouchableOpacity onPress={() => setSearchQuery('')}>
-                        <MaterialCommunityIcons name="close-circle" size={16} color="#94A3B8" />
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-
-                  {/* Scrollable Subject Scope Pills */}
-                  {safeAvailableSubjects.length > 0 && (
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.scheduleScopeTabsScroll}
-                    >
-                      {/* Tombol Semua Mapel */}
-                      <TouchableOpacity
-                        activeOpacity={0.75}
-                        onPress={() => setSelectedSubjectFilter('all')}
-                        style={[
-                          styles.scheduleScopePill,
-                          selectedSubjectFilter === 'all' && styles.scheduleScopePillActive,
-                        ]}
-                      >
-                        <MaterialCommunityIcons
-                          name="apps"
-                          size={13}
-                          color={selectedSubjectFilter === 'all' ? '#047857' : '#64748B'}
-                        />
-                        <Text
-                          numberOfLines={1}
+                        {/* Kolom Card di Kanan */}
+                        <TouchableOpacity
+                          activeOpacity={0.88}
+                          onPress={() => setSelectedScheduleDetail(item)}
                           style={[
-                            styles.scheduleScopePillText,
-                            selectedSubjectFilter === 'all' && styles.scheduleScopePillTextActive,
+                            styles.cleanCardRight,
+                            { borderLeftColor: styleMeta.color, borderLeftWidth: 3.5 },
+                            isOngoing && styles.cleanCardRightOngoing,
                           ]}
                         >
-                          Semua ({safeAvailableSubjects.length})
-                        </Text>
-                      </TouchableOpacity>
-
-                      {/* Mapel Individual dengan Style Warna Semantik */}
-                      {safeAvailableSubjects.map((sub, sIdx) => {
-                        const isSel = selectedSubjectFilter === sub.name || selectedSubjectFilter === sub.id;
-                        const sStyle = getSubjectStyle(sub.name, sIdx);
-                        return (
-                          <TouchableOpacity
-                            key={sub.id || sIdx}
-                            activeOpacity={0.75}
-                            onPress={() => setSelectedSubjectFilter(sub.name)}
-                            style={[
-                              styles.scheduleScopePill,
-                              isSel && {
-                                backgroundColor: '#FFFFFF',
-                                borderColor: sStyle.color,
-                                borderWidth: 1.2,
-                                shadowColor: sStyle.color,
-                                shadowOpacity: 0.15,
-                              },
-                            ]}
-                          >
+                          {/* Squircle Pastel Icon Box */}
+                          <View style={[styles.cleanSquircleIconBox, { backgroundColor: styleMeta.bg }]}>
                             <MaterialCommunityIcons
-                              name={(sStyle.icon as any) || 'book-outline'}
-                              size={13}
-                              color={isSel ? sStyle.color : '#64748B'}
+                              name={styleMeta.icon as any}
+                              size={26}
+                              color={styleMeta.color}
                             />
-                            <Text
-                              numberOfLines={1}
-                              style={[
-                                styles.scheduleScopePillText,
-                                isSel && { color: sStyle.color, fontWeight: '800' },
-                              ]}
-                            >
-                              {sub.name}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  )}
-                </View>
-
-              {/* 4. MILESTONE SCHEDULE TIMELINE */}
-              {loading ? (
-                <ActivityIndicator color="#18A165" style={{ marginVertical: 32 }} />
-              ) : safeDisplaySchedules.length > 0 ? (
-                <View style={styles.milestoneContainer}>
-                  {/* Milestone Tracker Summary Bar */}
-                  <LinearGradient
-                    colors={['#064E3B', '#047857', '#059669']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.milestoneSummaryBar}
-                  >
-                    <View style={styles.milestoneSummaryLeft}>
-                      <View style={styles.milestoneSummaryIconSquircle}>
-                        <MaterialCommunityIcons name="map-marker-path" size={16} color="#FFFFFF" />
-                      </View>
-                      <View>
-                        <Text style={styles.milestoneSummaryTitle}>Jalur Pembelajaran Hari Ini</Text>
-                        <Text style={styles.milestoneSummarySub}>Urutan Sesi Pembelajaran & Kegiatan</Text>
-                      </View>
-                    </View>
-                    <View style={styles.milestoneSummaryBadge}>
-                      <Text style={styles.milestoneSummaryBadgeText}>
-                        {safeDisplaySchedules.length} Sesi
-                      </Text>
-                    </View>
-                  </LinearGradient>
-
-                  {/* Milestone Items List */}
-                  <View style={styles.milestoneList}>
-                    {safeDisplaySchedules.map((item, idx) => {
-                      const isActivity = item.activity_type === 'activity' || (item.activity_type && item.activity_type !== 'kbm');
-                      const styleMeta = getSubjectStyle(item.subject?.name, idx);
-                      const rawTime = item.time_display || (item.time_start && item.time_end ? `${item.time_start.slice(0, 5)} - ${item.time_end.slice(0, 5)}` : '08.00 - 09.00');
-                      const timeText = rawTime.replace(/:/g, '.');
-                      const timeParts = timeText.split('-').map((s: string) => s.trim());
-                      const timeStart = timeParts[0] || '08.00';
-                      const timeEnd = timeParts[1] || '09.00';
-                      const teacherName = isActivity
-                        ? (item.teacher?.name || 'Umum / Mandiri')
-                        : item.teacher?.name;
-                      const roomName = item.room;
-                      const status = getSessionTimelineStatus(item.time_start || timeStart, item.time_end || timeEnd, selectedDate);
-                      const isPast = status === 'past';
-                      const isCurrent = status === 'current';
-                      const isUpcoming = status === 'upcoming';
-                      const isFirst = idx === 0;
-                      const isLast = idx === displaySchedules.length - 1;
-
-                      return (
-                        <View key={item.id || idx} style={styles.milestoneRow}>
-                          {/* Column 1: Time */}
-                          <View style={styles.milestoneTimeCol}>
-                            <Text style={[styles.milestoneTimeStart, isCurrent && styles.milestoneTimeStartCurrent]}>
-                              {timeStart}
-                            </Text>
-                            <Text style={styles.milestoneTimeEnd}>
-                              {timeEnd}
-                            </Text>
-                            {isCurrent && (
-                              <View style={styles.liveIndicatorPill}>
-                                <View style={styles.liveIndicatorDot} />
-                                <Text style={styles.liveIndicatorText}>LIVE</Text>
-                              </View>
-                            )}
                           </View>
 
-                          {/* Column 2: Milestone Node & Connecting Spine */}
-                          <View style={styles.milestoneSpineCol}>
-                            {/* Top Line Segment */}
-                            <View
-                              style={[
-                                styles.milestoneSpineTop,
-                                isFirst && { opacity: 0 },
-                                (isPast || isCurrent) && styles.milestoneSpinePast,
-                              ]}
-                            />
-
-                            {/* Node Circle */}
-                            <View
-                              style={[
-                                styles.milestoneNode,
-                                isPast && styles.milestoneNodePast,
-                                isCurrent && styles.milestoneNodeCurrent,
-                                isUpcoming && [
-                                  styles.milestoneNodeUpcoming,
-                                  {
-                                    borderColor: `${styleMeta.color}80`,
-                                    backgroundColor: `${styleMeta.color}12`,
-                                  },
-                                ],
-                              ]}
-                            >
-                              {isPast ? (
-                                <MaterialCommunityIcons name="check" size={13} color="#FFFFFF" />
-                              ) : isCurrent ? (
-                                <View style={styles.milestoneNodeCurrentInner} />
-                              ) : (
-                                <Text
-                                  style={[
-                                    styles.milestoneNodeNumber,
-                                    { color: styleMeta.color, fontWeight: '900' },
-                                  ]}
-                                >
-                                  {idx + 1}
-                                </Text>
+                          {/* Rincian Teks */}
+                          <View style={styles.cleanTextCol}>
+                            <View style={styles.cleanCardTitleRow}>
+                              <Text numberOfLines={1} style={styles.cleanSubjectTitle}>
+                                {subjName}
+                              </Text>
+                              {isOngoing && (
+                                <View style={styles.ongoingBadgePill}>
+                                  <View style={styles.ongoingPulseDot} />
+                                  <Text style={styles.ongoingBadgeText}>Aktif</Text>
+                                </View>
+                              )}
+                              {attMeta && attMeta.label !== 'Belum Dicatat' && (
+                                <View style={[styles.attBadgePill, { backgroundColor: attMeta.bg, borderColor: attMeta.border }]}>
+                                  <MaterialCommunityIcons name={attMeta.icon as any} size={10} color={attMeta.color} />
+                                  <Text style={[styles.attBadgeText, { color: attMeta.color }]}>{attMeta.label}</Text>
+                                </View>
                               )}
                             </View>
 
-                            {/* Bottom Line Segment */}
-                            <View
-                              style={[
-                                styles.milestoneSpineBottom,
-                                isLast && { opacity: 0 },
-                                isPast && styles.milestoneSpinePast,
-                              ]}
-                            />
+                            {/* Lokasi Ruang & Guru dengan badge aksen warna */}
+                            <View style={styles.cleanMetaBadgeRow}>
+                              <View style={[styles.cleanRoomBadge, { backgroundColor: styleMeta.bg }]}>
+                                <MaterialCommunityIcons name="door-open" size={11.5} color={styleMeta.color} />
+                                <Text numberOfLines={1} style={[styles.cleanRoomText, { color: styleMeta.color }]}>
+                                  {roomName}
+                                </Text>
+                              </View>
+                              <View style={styles.cleanTeacherBadge}>
+                                <MaterialCommunityIcons name="account-outline" size={12} color="#64748B" />
+                                <Text numberOfLines={1} style={styles.cleanTeacherText}>
+                                  {teacherName}
+                                </Text>
+                              </View>
+                            </View>
                           </View>
 
-                          {/* Column 3: Milestone Card */}
-                          <TouchableOpacity
-                            activeOpacity={0.88}
-                            onPress={() => setSelectedScheduleDetail(item)}
-                            style={[
-                              styles.milestoneCard,
-                              {
-                                borderColor: isCurrent ? '#059669' : `${styleMeta.color}45`,
-                                borderLeftWidth: 5.5,
-                                borderLeftColor: isCurrent ? '#059669' : styleMeta.color,
-                                shadowColor: styleMeta.color,
-                              },
-                              isPast && styles.milestoneCardPast,
-                            ]}
-                          >
-                            <LinearGradient
-                              colors={
-                                isCurrent
-                                  ? ['#ECFDF5', '#F0FDF4', '#FFFFFF']
-                                  : [styleMeta.bg, '#FFFFFF', '#FFFFFF']
-                              }
-                              start={{ x: 0, y: 0 }}
-                              end={{ x: 1, y: 0.85 }}
-                              style={styles.milestoneCardGradient}
-                            >
-                              {/* Header: Sesi badge & live status */}
-                              <View style={styles.milestoneCardHeader}>
-                                <View
-                                  style={[
-                                    styles.sessionBadge,
-                                    {
-                                      backgroundColor: isCurrent
-                                        ? '#059669'
-                                        : isActivity
-                                        ? '#2563EB'
-                                        : styleMeta.color,
-                                      borderColor: isCurrent
-                                        ? '#047857'
-                                        : isActivity
-                                        ? '#1D4ED8'
-                                        : styleMeta.color,
-                                    },
-                                  ]}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.sessionBadgeText,
-                                      {
-                                        color: '#FFFFFF',
-                                        fontWeight: '900',
-                                      },
-                                    ]}
-                                  >
-                                    {isActivity ? 'KEGIATAN' : `SESI #${idx + 1}`}
-                                  </Text>
-                                </View>
-
-                                {isCurrent ? (
-                                  <View style={styles.currentStatusBadge}>
-                                    <View style={styles.currentStatusDot} />
-                                    <Text style={styles.currentStatusText}>Sedang Berlangsung</Text>
-                                  </View>
-                                ) : isPast ? (
-                                  <View style={styles.pastStatusBadge}>
-                                    <MaterialCommunityIcons name="check-circle" size={12} color="#10B981" style={{ marginRight: 3 }} />
-                                    <Text style={styles.pastStatusText}>Selesai</Text>
-                                  </View>
-                                ) : (
-                                  <View
-                                    style={[
-                                      styles.upcomingBadgePill,
-                                      {
-                                        backgroundColor: '#FFFFFF',
-                                        borderColor: `${styleMeta.color}45`,
-                                      },
-                                    ]}
-                                  >
-                                    <MaterialCommunityIcons name="clock-outline" size={12} color={styleMeta.color} style={{ marginRight: 3 }} />
-                                    <Text style={[styles.upcomingStatusText, { color: styleMeta.color }]}>
-                                      Akan Datang
-                                    </Text>
-                                  </View>
-                                )}
-                              </View>
-
-                              {/* Content: Subject + Icon + Teacher + Room */}
-                              <View style={styles.milestoneCardBody}>
-                                <View
-                                  style={[
-                                    styles.milestoneIconBox,
-                                    {
-                                      backgroundColor: '#FFFFFF',
-                                      borderColor: isActivity ? '#BFDBFE' : `${styleMeta.color}45`,
-                                      borderWidth: 1.5,
-                                      shadowColor: styleMeta.color,
-                                      shadowOpacity: 0.12,
-                                      shadowRadius: 4,
-                                      elevation: 2,
-                                    },
-                                  ]}
-                                >
-                                  <MaterialCommunityIcons
-                                    name={isActivity ? 'star-outline' : (styleMeta.icon as any)}
-                                    size={23}
-                                    color={isActivity ? '#2563EB' : styleMeta.color}
-                                  />
-                                </View>
-
-                                <View style={styles.milestoneInfoCol}>
-                                  <Text numberOfLines={2} style={styles.milestoneSubjectTitle}>
-                                    {item.subject?.name || 'Mata Pelajaran'}
-                                  </Text>
-
-                                  <View style={styles.milestoneMetaDetails}>
-                                    {teacherName ? (
-                                      <View style={styles.metaRow}>
-                                        <MaterialCommunityIcons
-                                          name={isActivity ? 'account-outline' : 'account-tie-outline'}
-                                          size={13}
-                                          color={styleMeta.color}
-                                          style={{ marginRight: 4 }}
-                                        />
-                                        <Text numberOfLines={1} style={styles.metaText}>
-                                          {isActivity ? `Pembina: ${teacherName}` : teacherName}
-                                        </Text>
-                                      </View>
-                                    ) : null}
-
-                                    {roomName ? (
-                                      <View style={styles.metaRow}>
-                                        <MaterialCommunityIcons
-                                          name="door-open"
-                                          size={13}
-                                          color="#059669"
-                                          style={{ marginRight: 4 }}
-                                        />
-                                        <Text numberOfLines={1} style={[styles.metaText, { color: '#047857' }]}>{roomName}</Text>
-                                      </View>
-                                    ) : null}
-                                  </View>
-                                </View>
-
-                                <View
-                                  style={[
-                                    styles.milestoneChevronWrap,
-                                    {
-                                      backgroundColor: '#FFFFFF',
-                                      borderColor: `${styleMeta.color}35`,
-                                      borderWidth: 1.2,
-                                    },
-                                  ]}
-                                >
-                                  <MaterialCommunityIcons
-                                    name="chevron-right"
-                                    size={18}
-                                    color={styleMeta.color}
-                                  />
-                                </View>
-                              </View>
-
-                              {/* Card Footer: Status Presensi Sesi & Action Hint (Harmonisasi TailGrids Card) */}
-                              <View style={styles.milestoneCardFooter}>
-                                {(() => {
-                                  const att = item.attendance;
-                                  const attMeta = att && att.status ? getAttendanceMeta(att) : null;
-                                  if (attMeta) {
-                                    return (
-                                      <View style={[styles.cardAttPill, { backgroundColor: attMeta.bg, borderColor: attMeta.border }]}>
-                                        <MaterialCommunityIcons name={attMeta.icon as any} size={11} color={attMeta.color} />
-                                        <Text numberOfLines={1} style={[styles.cardAttPillText, { color: attMeta.color }]}>
-                                          {attMeta.label}
-                                        </Text>
-                                      </View>
-                                    );
-                                  }
-                                  return (
-                                    <View style={styles.cardAttPendingPill}>
-                                      <MaterialCommunityIcons name="clock-outline" size={11} color="#64748B" />
-                                      <Text numberOfLines={1} style={styles.cardAttPendingText}>
-                                        Presensi KBM
-                                      </Text>
-                                    </View>
-                                  );
-                                })()}
-                                <View style={styles.cardTapHint}>
-                                  <Text style={styles.cardTapHintText}>Ketuk rincian</Text>
-                                  <MaterialCommunityIcons name="arrow-right" size={12} color={styleMeta.color} />
-                                </View>
-                              </View>
-                            </LinearGradient>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              ) : safeDayBaseSchedules.length > 0 && safeDisplaySchedules.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <MaterialCommunityIcons name="book-off-outline" size={44} color="#94A3B8" />
-                  <Text style={styles.emptyTitle}>
-                    {searchQuery ? `Tidak Ditemukan "${searchQuery}"` : `Tidak Ada Jadwal ${selectedSubjectFilter}`}
-                  </Text>
-                  <Text style={styles.emptyText}>
-                    {searchQuery
-                      ? `Tidak ada mata pelajaran atau guru yang cocok dengan pencarian "${searchQuery}" pada ${formattedSelectedDate}.`
-                      : `Tidak ada sesi untuk mata pelajaran "${selectedSubjectFilter}" pada ${formattedSelectedDate}.`}
-                  </Text>
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => {
-                      setSelectedSubjectFilter('all');
-                      setSearchQuery('');
-                    }}
-                    style={styles.emptyResetBtn}
-                  >
-                    <Text style={styles.emptyResetBtnText}>Reset Filter & Tampilkan Semua</Text>
-                  </TouchableOpacity>
+                          {/* Panah Aksi */}
+                          <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E1" style={{ marginLeft: 4 }} />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
                 </View>
               ) : (
-                <View style={styles.holidayScheduleCard}>
-                  <LinearGradient
-                    colors={['#ECFDF5', '#F0FDF4', '#FFFFFF']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                  <View style={styles.holidayIconCircle}>
-                    <MaterialCommunityIcons name="weather-sunny" size={32} color="#059669" />
-                  </View>
-                  <Text style={styles.holidayCardTitle}>
-                    {selectedDate.getDay() === 0 || selectedDate.getDay() === 6
-                      ? 'Hari Ini Libur Pembelajaran (Akhir Pekan)'
-                      : 'Tidak Ada KBM Terjadwal'}
-                  </Text>
-                  <Text style={styles.holidayCardText}>
-                    {selectedDate.getDay() === 0 || selectedDate.getDay() === 6
-                      ? `Tidak ada sesi KBM tatap muka reguler pada ${formattedSelectedDate}. Ananda dapat beristirahat, muraja'ah mandiri, atau menyiapkan perlengkapan belajar pekan depan.`
-                      : `Tidak ada mata pelajaran atau kegiatan terjadwal untuk ${formattedSelectedDate}.`}
-                  </Text>
+                <View style={[
+                  styles.cleanEmptyContainer,
+                  (selectedDate.getDay() === 0 || selectedDate.getDay() === 6) && styles.cleanHolidayEmptyContainer
+                ]}>
+                  {(selectedDate.getDay() === 0 || selectedDate.getDay() === 6) ? (
+                    <>
+                      <View style={styles.holidayBadgePill}>
+                        <MaterialCommunityIcons name="calendar-heart" size={13} color="#E11D48" />
+                        <Text style={styles.holidayBadgeText}>Tanggal Merah · Libur Akhir Pekan</Text>
+                      </View>
+                      <View style={styles.holidayIconCircle}>
+                        <MaterialCommunityIcons name="weather-sunny" size={38} color="#E11D48" />
+                      </View>
+                      <Text style={styles.cleanHolidayTitle}>
+                        Libur Pembelajaran (KBM Off)
+                      </Text>
+                      <Text style={styles.cleanHolidaySub}>
+                        Tidak ada sesi KBM tatap muka terjadwal pada {formattedSelectedDate}. Ananda dapat beristirahat, muraja'ah mandiri, atau berkegiatan bersama keluarga.
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.normalEmptyIconCircle}>
+                        <MaterialCommunityIcons name="calendar-clock-outline" size={38} color="#0D6B42" />
+                      </View>
+                      <Text style={styles.cleanEmptyTitle}>
+                        Tidak Ada Jadwal Terjadwal
+                      </Text>
+                      <Text style={styles.cleanEmptySub}>
+                        Tidak ada sesi KBM untuk hari {formattedSelectedDate}.
+                      </Text>
+                    </>
+                  )}
 
-                  <View style={styles.holidayActionsRow}>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => setSelectedDate(getMonday(selectedDate))}
-                      style={styles.holidayMondayShortcutBtn}
-                    >
-                      <LinearGradient
-                        colors={['#064E3B', '#047857', '#059669']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={StyleSheet.absoluteFill}
-                      />
-                      <MaterialCommunityIcons name="calendar-arrow-right" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
-                      <Text style={styles.holidayMondayShortcutBtnText}>Lihat Jadwal KBM Hari Senin</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => setIsDatePickerModalVisible(true)}
-                      style={styles.holidayCalendarPickerBtn}
-                    >
-                      <MaterialCommunityIcons name="calendar-month-outline" size={17} color="#059669" style={{ marginRight: 6 }} />
-                      <Text style={styles.holidayCalendarPickerBtnText}>Pilih Tanggal Lain / Buka Kalender</Text>
-                    </TouchableOpacity>
-
-                    {!scheduleKpi.isToday && (
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={() => setSelectedDate(new Date())}
-                        style={styles.holidayTodayShortcutBtn}
-                      >
-                        <MaterialCommunityIcons name="calendar-today" size={16} color="#047857" style={{ marginRight: 6 }} />
-                        <Text style={styles.holidayTodayShortcutBtnText}>Pilih Hari Ini (Sabtu, 17 Oktober 2026)</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedDate(getMonday(selectedDate))}
+                    style={styles.cleanMondayBtn}
+                  >
+                    <MaterialCommunityIcons name="calendar-arrow-right" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.cleanMondayBtnText}>Lihat Jadwal Hari Senin</Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </>
@@ -2282,116 +1838,136 @@ export default function ScheduleScreen({ route, navigation }: any) {
                 </View>
               </LinearGradient>
 
-              {/* Format Switcher: Daftar per Hari vs Matriks Tabel */}
-              <View style={styles.semuaFormatSwitcherRow}>
+              {/* Format Switcher: Daftar per Hari vs Matriks Tabel (Gaya Segmented Pill) */}
+              <View style={styles.semuaFormatSwitcherContainer}>
                 <TouchableOpacity
-                  activeOpacity={0.8}
+                  activeOpacity={0.85}
                   onPress={() => setSemuaViewFormat('list')}
-                  style={[
-                    styles.semuaFormatPill,
-                    semuaViewFormat === 'list' && styles.semuaFormatPillActive,
-                  ]}
+                  style={styles.semuaFormatBtnItem}
                 >
-                  <MaterialCommunityIcons
-                    name="format-list-bulleted"
-                    size={15}
-                    color={semuaViewFormat === 'list' ? '#065F46' : '#64748B'}
-                  />
-                  <Text
-                    style={[
-                      styles.semuaFormatPillText,
-                      semuaViewFormat === 'list' && styles.semuaFormatPillTextActive,
-                    ]}
-                  >
-                    Daftar Semua Hari
-                  </Text>
+                  {semuaViewFormat === 'list' ? (
+                    <LinearGradient
+                      colors={['#065F46', '#0D9488']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.semuaFormatPillActiveGradient}
+                    >
+                      <MaterialCommunityIcons name="format-list-bulleted" size={15} color="#FFFFFF" />
+                      <Text numberOfLines={1} style={styles.semuaFormatTextActive}>
+                        Daftar Semua Hari
+                      </Text>
+                    </LinearGradient>
+                  ) : (
+                    <View style={styles.semuaFormatPillInactive}>
+                      <MaterialCommunityIcons name="format-list-bulleted" size={15} color="#065F46" />
+                      <Text numberOfLines={1} style={styles.semuaFormatTextInactive}>
+                        Daftar Semua Hari
+                      </Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  activeOpacity={0.8}
+                  activeOpacity={0.85}
                   onPress={() => setSemuaViewFormat('matrix')}
-                  style={[
-                    styles.semuaFormatPill,
-                    semuaViewFormat === 'matrix' && styles.semuaFormatPillActive,
-                  ]}
+                  style={styles.semuaFormatBtnItem}
                 >
-                  <MaterialCommunityIcons
-                    name="table-large"
-                    size={15}
-                    color={semuaViewFormat === 'matrix' ? '#065F46' : '#64748B'}
-                  />
-                  <Text
-                    style={[
-                      styles.semuaFormatPillText,
-                      semuaViewFormat === 'matrix' && styles.semuaFormatPillTextActive,
-                    ]}
-                  >
-                    Tabel Matriks Mingguan
-                  </Text>
+                  {semuaViewFormat === 'matrix' ? (
+                    <LinearGradient
+                      colors={['#065F46', '#0D9488']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.semuaFormatPillActiveGradient}
+                    >
+                      <MaterialCommunityIcons name="table-large" size={15} color="#FFFFFF" />
+                      <Text numberOfLines={1} style={styles.semuaFormatTextActive}>
+                        Tabel Matriks Mingguan
+                      </Text>
+                    </LinearGradient>
+                  ) : (
+                    <View style={styles.semuaFormatPillInactive}>
+                      <MaterialCommunityIcons name="table-large" size={15} color="#065F46" />
+                      <Text numberOfLines={1} style={styles.semuaFormatTextInactive}>
+                        Tabel Matriks Mingguan
+                      </Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               </View>
 
               {/* Filter Cepat Hari (untuk Format Daftar) */}
               {semuaViewFormat === 'list' && (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.semuaDayFilterScroll}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => setSemuaSelectedDay('all')}
-                    style={[
-                      styles.semuaDayFilterBtn,
-                      semuaSelectedDay === 'all' && styles.semuaDayFilterBtnActive,
-                    ]}
+                <View style={styles.semuaDayFilterWrap}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.semuaDayFilterScroll}
                   >
-                    <Text
-                      style={[
-                        styles.semuaDayFilterBtnText,
-                        semuaSelectedDay === 'all' && styles.semuaDayFilterBtnTextActive,
-                      ]}
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => setSemuaSelectedDay('all')}
+                      style={styles.semuaDayFilterBtnItem}
                     >
-                      Semua Hari
-                    </Text>
-                  </TouchableOpacity>
-                  {[
-                    { id: 1, name: 'Senin' },
-                    { id: 2, name: 'Selasa' },
-                    { id: 3, name: 'Rabu' },
-                    { id: 4, name: 'Kamis' },
-                    { id: 5, name: 'Jumat' },
-                    { id: 6, name: 'Sabtu' },
-                    { id: 0, name: 'Ahad' },
-                  ].map((d) => {
-                    const isSel = semuaSelectedDay === d.id;
-                    const count = allWeekSchedules.filter((s: any) => {
-                      const dotw = Number(s.day_of_week);
-                      return dotw === d.id || (d.id === 0 && dotw === 7);
-                    }).length;
-
-                    return (
-                      <TouchableOpacity
-                        key={d.id}
-                        activeOpacity={0.8}
-                        onPress={() => setSemuaSelectedDay(d.id)}
-                        style={[
-                          styles.semuaDayFilterBtn,
-                          isSel && styles.semuaDayFilterBtnActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.semuaDayFilterBtnText,
-                            isSel && styles.semuaDayFilterBtnTextActive,
-                          ]}
+                      {semuaSelectedDay === 'all' ? (
+                        <LinearGradient
+                          colors={['#064E3B', '#047857']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.semuaDayFilterPillActive}
                         >
-                          {d.name} ({count})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                          <Text style={styles.semuaDayFilterTextActive}>Semua Hari</Text>
+                        </LinearGradient>
+                      ) : (
+                        <View style={styles.semuaDayFilterPillInactive}>
+                          <Text style={styles.semuaDayFilterTextInactive}>Semua Hari</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    {[
+                      { id: 1, name: 'Senin' },
+                      { id: 2, name: 'Selasa' },
+                      { id: 3, name: 'Rabu' },
+                      { id: 4, name: 'Kamis' },
+                      { id: 5, name: 'Jumat' },
+                      { id: 6, name: 'Sabtu' },
+                      { id: 0, name: 'Ahad' },
+                    ].map((d) => {
+                      const isSel = semuaSelectedDay === d.id;
+                      const count = allWeekSchedules.filter((s: any) => {
+                        const dotw = Number(s.day_of_week);
+                        return dotw === d.id || (d.id === 0 && dotw === 7);
+                      }).length;
+
+                      return (
+                        <TouchableOpacity
+                          key={d.id}
+                          activeOpacity={0.85}
+                          onPress={() => setSemuaSelectedDay(d.id)}
+                          style={styles.semuaDayFilterBtnItem}
+                        >
+                          {isSel ? (
+                            <LinearGradient
+                              colors={['#064E3B', '#047857']}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 1 }}
+                              style={styles.semuaDayFilterPillActive}
+                            >
+                              <Text style={styles.semuaDayFilterTextActive}>
+                                {d.name} ({count})
+                              </Text>
+                            </LinearGradient>
+                          ) : (
+                            <View style={styles.semuaDayFilterPillInactive}>
+                              <Text style={styles.semuaDayFilterTextInactive}>
+                                {d.name} ({count})
+                              </Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
               )}
 
               {/* TAMPILAN FORMAT 1: DAFTAR SEMUA HARI */}
@@ -2636,40 +2212,46 @@ export default function ScheduleScreen({ route, navigation }: any) {
               {safeExamCategories.length > 0 && (
                 <View style={styles.examCategoryFilterRow}>
                   <TouchableOpacity
-                    style={[
-                      styles.examCategoryPill,
-                      selectedExamCategory === 'all' && styles.examCategoryPillActive,
-                    ]}
+                    style={styles.examCategoryBtnItem}
                     onPress={() => setSelectedExamCategory('all')}
-                    activeOpacity={0.8}
+                    activeOpacity={0.85}
                   >
-                    <Text
-                      style={[
-                        styles.examCategoryPillText,
-                        selectedExamCategory === 'all' && styles.examCategoryPillTextActive,
-                      ]}
-                    >
-                      Semua Kategori
-                    </Text>
+                    {selectedExamCategory === 'all' ? (
+                      <LinearGradient
+                        colors={['#1E3A8A', '#2563EB']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.examFilterPillActive}
+                      >
+                        <Text style={styles.examFilterTextActive}>Semua Kategori</Text>
+                      </LinearGradient>
+                    ) : (
+                      <View style={styles.examFilterPillInactive}>
+                        <Text style={styles.examFilterTextInactive}>Semua Kategori</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                   {safeExamCategories.map((c) => (
                     <TouchableOpacity
                       key={c.id}
-                      style={[
-                        styles.examCategoryPill,
-                        selectedExamCategory === c.id && styles.examCategoryPillActive,
-                      ]}
+                      style={styles.examCategoryBtnItem}
                       onPress={() => setSelectedExamCategory(c.id)}
-                      activeOpacity={0.8}
+                      activeOpacity={0.85}
                     >
-                      <Text
-                        style={[
-                          styles.examCategoryPillText,
-                          selectedExamCategory === c.id && styles.examCategoryPillTextActive,
-                        ]}
-                      >
-                        {c.name}
-                      </Text>
+                      {selectedExamCategory === c.id ? (
+                        <LinearGradient
+                          colors={['#1E3A8A', '#2563EB']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.examFilterPillActive}
+                        >
+                          <Text style={styles.examFilterTextActive}>{c.name}</Text>
+                        </LinearGradient>
+                      ) : (
+                        <View style={styles.examFilterPillInactive}>
+                          <Text style={styles.examFilterTextInactive}>{c.name}</Text>
+                        </View>
+                      )}
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -2752,8 +2334,7 @@ export default function ScheduleScreen({ route, navigation }: any) {
             </Text>
           </View>
         </View>
-      </Animated.ScrollView>
-    </View>
+      </ScrollView>
 
       {/* SCHEDULE DETAIL MODAL (KBM & KEGIATAN SEKOLAH) */}
       <Modal
@@ -3318,14 +2899,809 @@ export default function ScheduleScreen({ route, navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* ── MODAL PILIH ANANDA (JIKA LEBIH DARI 1 ANAK) ── */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {safeChildren.map((c, idx) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = c.name || c.nama_lengkap || 'Ananda';
+                const cUnit = c.unit?.name || c.unit_name || c.education_unit?.name || resolveUnitName(c) || '';
+                const cClass = c.class?.name || c.kelas?.nama_kelas || c.kelas?.name || c.class_name || '';
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      goToLoopChild(idx, true);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={[styles.childModalItemName, isSelected && { color: '#0D6B42', fontWeight: '800' }]}>
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#0D6B42" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // CLEAN SCREEN STYLES (EXACT 1:1 MATCH WITH MOCKUP SCREENSHOT)
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    ...(StyleSheet.absoluteFill as any),
+    opacity: 1,
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cleanHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  cleanScrollInner: {
+    flex: 1,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentProfileSubtitle: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#047857',
+    marginTop: 2,
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  // BANNER TAHUN AJARAN AKTIF & JADWAL OPERASIONAL ANANDA
+  academicYearBanner: {
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 14,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.09,
+    shadowRadius: 8,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  academicYearGradient: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderRadius: 19,
+    position: 'relative',
+  },
+  academicYearAccentStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3.5,
+  },
+  academicYearHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    marginTop: 2,
+  },
+  academicYearBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8.5,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 5,
+  },
+  academicYearBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  activePillBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 7.5,
+    paddingVertical: 3,
+    borderRadius: 999,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  activeGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  activePillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  operationalScheduleTitle: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 20,
+    marginTop: 3,
+  },
+  operationalScheduleSub: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#047857',
+    marginTop: 2,
+  },
+  programTypeBadgeWrapper: {
+    marginTop: 7,
+    marginBottom: 3,
+  },
+  programTypeBadge: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 9,
+    borderWidth: 1.2,
+    gap: 5,
+  },
+  programTypeBadgeFullday: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  programTypeBadgeBoarding: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  programTypeBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: -0.1,
+  },
+  programTypeBadgeTextFullday: {
+    color: '#047857',
+  },
+  programTypeBadgeTextBoarding: {
+    color: '#4338CA',
+  },
+  operationalMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 8,
+  },
+  operationalMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  metaIconSquircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    backgroundColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  operationalMetaText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  kpiContainerBlock: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+  },
+  tabSwitcherContainer: {
+    flexDirection: 'row',
+    gap: 6,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    backgroundColor: '#F1F5F9',
+    padding: 4,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  cleanDayStripWrapper: {
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  cleanDayStripScroll: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  cleanDayPillBtn: {
+    borderRadius: 14,
+    width: 63,
+    height: 58,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cleanDayPillBtnActive: {
+    backgroundColor: '#0D6B42',
+    shadowColor: '#0D6B42',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cleanDayPillBtnInactive: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  cleanDayPillBtnHoliday: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1.2,
+    borderColor: '#FECDD3',
+    shadowColor: '#E11D48',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  cleanDayPillBtnHolidayActive: {
+    backgroundColor: '#E11D48',
+    shadowColor: '#E11D48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.28,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  cleanDayPillHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  cleanDayPillName: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  cleanDayPillNameActive: {
+    color: '#FFFFFF',
+  },
+  cleanDayPillNameHoliday: {
+    color: '#E11D48',
+  },
+  cleanDayPillNameHolidayActive: {
+    color: '#FFFFFF',
+  },
+  holidayMiniDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#E11D48',
+  },
+  cleanDayPillDate: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  cleanDayPillDateActive: {
+    color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  cleanDayPillDateHoliday: {
+    color: '#F43F5E',
+    fontWeight: '600',
+  },
+  cleanDayPillDateHolidayActive: {
+    color: '#FFE4E6',
+    fontWeight: '600',
+  },
+  cleanScheduleListContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  cleanScheduleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cleanTimeCol: {
+    width: 68,
+    paddingRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cleanTimeStartText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F2C23',
+    letterSpacing: -0.2,
+  },
+  timelineDashRow: {
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  timelineMiniLine: {
+    width: 2,
+    height: 8,
+    borderRadius: 1,
+    marginBottom: 2,
+  },
+  cleanTimeEndText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B',
+    letterSpacing: -0.1,
+  },
+  cleanCardRight: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cleanCardRightOngoing: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#FCFDFD',
+    shadowColor: '#10B981',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  cleanSquircleIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cleanTextCol: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  cleanCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  cleanSubjectTitle: {
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+    flexShrink: 1,
+  },
+  ongoingBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 4,
+  },
+  ongoingPulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+  },
+  ongoingBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  attBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    gap: 3,
+  },
+  attBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  cleanMetaBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 5,
+  },
+  cleanRoomBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+    gap: 3,
+  },
+  cleanRoomText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  cleanTeacherBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  cleanTeacherText: {
+    fontSize: 11.5,
+    fontWeight: '500',
+    color: '#64748B',
+    maxWidth: 130,
+  },
+  cleanEmptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 36,
+    paddingHorizontal: 24,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 5,
+    elevation: 1,
+  },
+  cleanHolidayEmptyContainer: {
+    backgroundColor: '#FFF8F8',
+    borderColor: '#FECDD3',
+    borderWidth: 1.5,
+    shadowColor: '#E11D48',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  holidayBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFE4E6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FDA4AF',
+    gap: 5,
+    marginBottom: 12,
+  },
+  holidayBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#BE123C',
+  },
+  holidayIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#FFE4E6',
+    borderWidth: 2,
+    borderColor: '#FECDD3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  normalEmptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 2,
+    borderColor: '#86EFAC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  cleanHolidayTitle: {
+    fontSize: 16.5,
+    fontWeight: '800',
+    color: '#9F1239',
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  cleanHolidaySub: {
+    fontSize: 12.5,
+    color: '#881337',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+    opacity: 0.85,
+  },
+  cleanEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E293B',
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  cleanEmptySub: {
+    fontSize: 12.5,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  cleanMondayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0D6B42',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 14,
+    marginTop: 18,
+    shadowColor: '#0D6B42',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cleanMondayBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#0D6B42',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  childModalItemSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
   rootContainer: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#ECFDF5',
   },
   sheetContainer: {
     flex: 1,
@@ -3440,9 +3816,39 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
   },
 
-  // DATA ANANDA (CARD ANANDA - PRESERVED UNCHANGED)
+  studentToastFloatingBox: {
+    position: 'absolute',
+    alignSelf: 'center',
+    zIndex: 9999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(6, 78, 59, 0.95)',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.5)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 12,
+    maxWidth: SCREEN_WIDTH - 40,
+  },
+  studentToastText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+
+  // DATA ANANDA (CARD ANANDA - HARMONIZED WITH CAROUSEL FULL-WIDTH)
+  studentCarouselContainerBlock: {
+    marginHorizontal: -16,
+    marginBottom: 4,
+  },
   studentContainerBlock: {
-    marginBottom: 8,
+    marginBottom: 4,
   },
   containerBlock: {
     marginBottom: 16,
@@ -3814,61 +4220,65 @@ const styles = StyleSheet.create({
   },
   kpiCard: {
     flex: 1,
-    borderRadius: 16,
-    borderWidth: 1.2,
+    borderRadius: 18,
+    borderWidth: 1.5,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 2,
     overflow: 'hidden',
   },
   kpiCardGradient: {
-    paddingVertical: 10,
-    paddingHorizontal: 11,
-    borderRadius: 15,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16.5,
     justifyContent: 'space-between',
-    minHeight: 74,
+    minHeight: 82,
   },
   kpiCardEmerald: {
     borderColor: '#A7F3D0',
+    backgroundColor: '#FFFFFF',
   },
   kpiCardSky: {
-    borderColor: '#BFDBFE',
+    borderColor: '#BAE6FD',
+    backgroundColor: '#FFFFFF',
   },
   kpiCardPurple: {
     borderColor: '#E9D5FF',
+    backgroundColor: '#FFFFFF',
   },
   kpiCardAmber: {
     borderColor: '#FDE68A',
+    backgroundColor: '#FFFFFF',
   },
   kpiTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 5,
   },
   kpiLabel: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    letterSpacing: 0.1,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: -0.1,
   },
   kpiIconBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
+    width: 28,
+    height: 28,
+    borderRadius: 8.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
   kpiValue: {
-    fontSize: 14.5,
+    fontSize: 15.5,
     fontWeight: '900',
-    letterSpacing: -0.2,
+    letterSpacing: -0.3,
   },
   kpiSub: {
-    fontSize: 9.5,
-    fontWeight: '600',
-    marginTop: 2,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 3,
   },
   // Fallbacks for legacy/other workspace references if any
   kpiGridContainer: {
@@ -4655,17 +5065,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  holidayIconCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#D1FAE5',
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
   holidayCardTitle: {
     fontSize: 15,
     fontWeight: '900',
@@ -5298,171 +5697,243 @@ const styles = StyleSheet.create({
   tabSwitcherWrapCompact: {
     marginBottom: 0,
   },
-  tabSwitcherBtn: {
+  tabSwitcherBtnItem: {
+    flex: 1,
+    height: 42,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  tabSwitcherPillBase: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    gap: 5,
+    paddingHorizontal: 6,
     borderRadius: 14,
+  },
+  tabSwitcherPillActiveKbm: {
+    backgroundColor: '#047857',
+    shadowColor: '#047857',
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  tabSwitcherPillActiveSemua: {
+    backgroundColor: '#0D9488',
+    shadowColor: '#0D9488',
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  tabSwitcherPillActiveExam: {
+    backgroundColor: '#2563EB',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  tabSwitcherPillInactive: {
     backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
+    borderWidth: 1.2,
     borderColor: '#E2E8F0',
-    overflow: 'hidden',
-    position: 'relative',
     shadowColor: '#000000',
     shadowOpacity: 0.04,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
-  tabSwitcherBtnActiveKbm: {
-    borderColor: '#047857',
-    shadowColor: '#059669',
-    shadowOpacity: 0.22,
-    shadowRadius: 6,
-    elevation: 4,
+  tabSwitcherTextActive: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.1,
   },
-  tabSwitcherBtnActiveSemua: {
-    borderColor: '#0D9488',
-    shadowColor: '#14B8A6',
-    shadowOpacity: 0.22,
-    shadowRadius: 6,
-    elevation: 4,
+  tabSwitcherTextInactive: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.1,
   },
-  tabSwitcherBtnActiveExam: {
-    borderColor: '#1D4ED8',
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.22,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  tabSwitcherIconSquircle: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 4,
-  },
-  tabSwitcherIconSquircleActiveKbm: {
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-  },
-  tabSwitcherIconSquircleActiveSemua: {
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-  },
-  tabSwitcherIconSquircleActiveExam: {
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-  },
-  tabSwitcherIconSquircleInactive: {
-    backgroundColor: '#F1F5F9',
-  },
-  tabSwitcherTextWrap: {
-    justifyContent: 'center',
+  tabSwitcherBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 14,
   },
   tabSwitcherText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  tabSwitcherTextActiveKbm: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-  },
-  tabSwitcherTextActiveSemua: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-  },
-  tabSwitcherTextActiveExam: {
-    color: '#FFFFFF',
-    fontWeight: '900',
+    fontWeight: '800',
+    color: '#0F172A',
   },
 
   // ── SEMUA JADWAL STYLES ──
   semuaContainer: {
     marginTop: 4,
     marginBottom: 12,
+    paddingHorizontal: 16,
   },
   semuaSummaryBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    shadowColor: '#0D9488',
+    shadowOpacity: 0.16,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 6,
+    elevation: 3,
   },
   semuaSummaryIconSquircle: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: 10,
     backgroundColor: 'rgba(255, 255, 255, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  semuaFormatSwitcherRow: {
+  semuaFormatSwitcherContainer: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     marginBottom: 12,
+    backgroundColor: '#F1F5F9',
+    padding: 4,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  semuaFormatPill: {
+  semuaFormatBtnItem: {
+    flex: 1,
+    height: 42,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  semuaFormatPillActiveGradient: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 9,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    backgroundColor: '#0D9488',
+    shadowColor: '#0D9488',
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  semuaFormatPillInactive: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    borderWidth: 1.2,
     borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
-  semuaFormatPillActive: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  semuaFormatPillText: {
+  semuaFormatTextActive: {
     fontSize: 11.5,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  semuaFormatPillTextActive: {
-    color: '#065F46',
     fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.1,
+  },
+  semuaFormatTextInactive: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.1,
+  },
+  semuaDayFilterWrap: {
+    marginHorizontal: -16,
+    marginBottom: 14,
   },
   semuaDayFilterScroll: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  semuaDayFilterBtnItem: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  semuaDayFilterPillActive: {
+    paddingHorizontal: 14,
+    paddingVertical: 7.5,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#047857',
+    shadowColor: '#047857',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  semuaDayFilterPillInactive: {
+    paddingHorizontal: 14,
+    paddingVertical: 7.5,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  semuaDayFilterTextActive: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  semuaDayFilterTextInactive: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  // Fallbacks for legacy/other workspace references if any
+  semuaFormatSwitcherRow: {
+    flexDirection: 'row',
     gap: 6,
-    paddingBottom: 10,
+    marginBottom: 12,
+  },
+  semuaFormatPill: {
+    flex: 1,
+    paddingVertical: 8,
   },
   semuaDayFilterBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  semuaDayFilterBtnActive: {
-    backgroundColor: '#0D9488',
-    borderColor: '#0D9488',
-  },
-  semuaDayFilterBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  semuaDayFilterBtnTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '900',
   },
   semuaDaySection: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   semuaDayHeaderRow: {
     flexDirection: 'row',
@@ -5505,24 +5976,29 @@ const styles = StyleSheet.create({
   semuaSessionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    padding: 10,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
+    gap: 12,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
     borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 3,
+    elevation: 1,
   },
   semuaSessionIconSquircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   semuaSessionTimeText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '900',
-    color: '#065F46',
+    color: '#047857',
   },
   semuaSessionRoomText: {
     fontSize: 10,
@@ -5530,22 +6006,27 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   semuaSessionTitleText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#0F172A',
   },
   semuaSessionTeacherText: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '600',
     color: '#64748B',
     marginTop: 1,
   },
   semuaMatrixContainer: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderRadius: 20,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   semuaMatrixHintRow: {
     flexDirection: 'row',
@@ -5649,15 +6130,18 @@ const styles = StyleSheet.create({
   examContainer: {
     marginTop: 4,
     marginBottom: 8,
+    paddingHorizontal: 16,
   },
   examSummaryBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 18,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 14,
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
     shadowColor: '#1E3A8A',
     shadowOpacity: 0.16,
     shadowOffset: { width: 0, height: 3 },
@@ -5665,18 +6149,22 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   examSummaryIconSquircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   examSummaryBadgePill: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 10,
+    shadowColor: '#000000',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   examCategoryFilterRow: {
     flexDirection: 'row',
@@ -5684,36 +6172,56 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 14,
   },
-  examCategoryPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6.5,
+  examCategoryBtnItem: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  examFilterPillActive: {
+    paddingHorizontal: 14,
+    paddingVertical: 7.5,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.25,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  examFilterPillInactive: {
+    paddingHorizontal: 14,
+    paddingVertical: 7.5,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
+    borderWidth: 1.2,
     borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 1,
   },
-  examCategoryPillActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#1D4ED8',
-  },
-  examCategoryPillText: {
+  examFilterTextActive: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  examCategoryPillTextActive: {
+    fontWeight: '900',
     color: '#FFFFFF',
+  },
+  examFilterTextInactive: {
+    fontSize: 11,
     fontWeight: '800',
+    color: '#0F172A',
   },
   examCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
+    borderRadius: 20,
+    padding: 16,
     marginBottom: 12,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
+    borderColor: '#BFDBFE',
+    shadowColor: '#1E3A8A',
+    shadowOpacity: 0.06,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,

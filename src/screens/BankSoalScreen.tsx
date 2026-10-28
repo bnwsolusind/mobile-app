@@ -20,16 +20,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../stores/authStore';
 import { getApiErrorMessage } from '../services/api';
+import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
   DEFAULT_STUDENT_GIRL_AVATAR,
+  getStudentAvatarSource,
+  isGirlStudent,
 } from '../utils/profile';
 import { offlineCache } from '../utils/offlineCache';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { useDebounce } from '../hooks/useDebounce';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
 import { TeacherStickyHeader } from '../components/TeacherStickyHeader';
@@ -41,6 +45,8 @@ import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal
 
 import { isParentRole, isStudentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
 import TeacherBankSoalWorkspace from '../components/teacher/TeacherBankSoalWorkspace';
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STUDENT_CARD_GAP = 12;
@@ -65,11 +71,17 @@ export type BankSoalItem = {
   indikator?: string;
   gambar_path?: string;
   mata_pelajaran_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  user_answer?: string;
+  is_completed?: boolean;
   subject?: { id?: string; name?: string; code?: string };
   kisi_kisi?: {
     id?: string;
     judul_kisi?: string;
     jenis_ujian?: string;
+    created_at?: string;
+    tanggal_ujian?: string;
     guru?: { id?: string; name?: string; nama_lengkap?: string; full_name?: string };
     kelas?: { id?: string; name?: string; nama_kelas?: string };
   };
@@ -207,17 +219,51 @@ export default function BankSoalScreen({ route }: any) {
   const [error, setError] = useState<string | null>(null);
   const [questions, setQuestions] = useState<BankSoalItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 350);
   const [selectedSubjectModal, setSelectedSubjectModal] = useState<SubjectGroup | null>(null);
+
+  // ── Filter States (Mapel, Tanggal, Belum Dikerjakan) ──
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('all');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<'all' | 'today' | '7days' | '30days' | 'custom'>('all');
+  const [customSelectedDate, setCustomSelectedDate] = useState<string | null>(null);
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'uncompleted' | 'completed'>('all');
+
+  // Filter Modals & Calendar
+  const [showSubjectFilterModal, setShowSubjectFilterModal] = useState(false);
+  const [showDateFilterModal, setShowDateFilterModal] = useState(false);
+  const [calendarViewDate, setCalendarViewDate] = useState(() => new Date());
+
+  // Modal Questions Filter (Semua Soal vs Belum Dikerjakan)
+  const [modalFilterStatus, setModalFilterStatus] = useState<'all' | 'uncompleted'>('all');
 
   // Interactive study mode: tracking user selected option and revealed answers
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [revealedSolutions, setRevealedSolutions] = useState<Record<string, boolean>>({});
 
-  // Reset pengerjaan latihan & modal jika siswa berganti
+  // Muat riwayat jawaban tersimpan (persistent) untuk siswa yang aktif
   useEffect(() => {
-    setSelectedAnswers({});
+    const targetChild = isParent ? selectedChildId : (user as any)?.student?.id || user?.id;
+    if (!targetChild) return;
+    const ansCacheKey = offlineCache.buildKey('bank_soal_answers', user?.id, String(targetChild));
+    let isMounted = true;
+    void (async () => {
+      const saved = await offlineCache.get<Record<string, string>>(ansCacheKey);
+      if (isMounted && saved && typeof saved === 'object') {
+        setSelectedAnswers(saved);
+      } else if (isMounted) {
+        setSelectedAnswers({});
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [isParent, selectedChildId, user?.id]);
+
+  // Reset modal jika siswa berganti
+  useEffect(() => {
     setRevealedSolutions({});
     setSelectedSubjectModal(null);
+    setModalFilterStatus('all');
   }, [selectedChildId]);
 
   // 1. Load Children if parent with offline cache
@@ -334,6 +380,111 @@ export default function BankSoalScreen({ route }: any) {
   );
   const resolvedName = displayName;
 
+  const [showChildSelectorModal, setShowChildSelectorModal] = useState(false);
+
+  const activeStudentGender = useMemo(() => {
+    const raw = String(activeStudent?.gender || activeStudent?.jenis_kelamin || '').toLowerCase();
+    if (raw.includes('p') || raw.includes('wanita') || raw.includes('perempuan') || raw.includes('female')) {
+      return 'female';
+    }
+    return 'male';
+  }, [activeStudent]);
+
+  const studentAvatarSource = useMemo(() => {
+    return getStudentAvatarSource(activeStudent);
+  }, [activeStudent]);
+
+  const studentFullName = useMemo(() => {
+    return String(resolvedName || 'Nama Santri');
+  }, [resolvedName]);
+
+  const studentUnit = useMemo(() => {
+    return String(resolvedUnit || 'Unit Pendidikan');
+  }, [resolvedUnit]);
+
+  const studentClass = useMemo(() => {
+    return String(resolvedClass || 'Kelas');
+  }, [resolvedClass]);
+
+  // Resolusi Dinamis Status Kehadiran Siswa Hari Ini — Single Source of Truth selaras dengan HomeScreen
+  const attendanceStatus = useMemo(() => {
+    return getStudentAttendanceStatus(activeStudent);
+  }, [activeStudent]);
+
+  // ── Helper: Cek Status Pengerjaan Butir Soal ──
+  const isQuestionCompleted = useCallback(
+    (q: BankSoalItem): boolean => {
+      if (Boolean(selectedAnswers[q.id])) return true;
+      if (Boolean(q.user_answer) || Boolean(q.is_completed)) return true;
+      return false;
+    },
+    [selectedAnswers]
+  );
+
+  // ── Helper: Cek Filter Rentang Tanggal ──
+  const isQuestionInDateRange = useCallback(
+    (q: BankSoalItem): boolean => {
+      if (selectedDateFilter === 'all') return true;
+      const rawDate = q.created_at || q.kisi_kisi?.created_at || q.kisi_kisi?.tanggal_ujian;
+      if (!rawDate) return true;
+      const qDate = new Date(rawDate);
+      if (isNaN(qDate.getTime())) return true;
+
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const qTime = qDate.getTime();
+
+      if (selectedDateFilter === 'today') {
+        return qTime >= todayStart;
+      }
+      if (selectedDateFilter === '7days') {
+        const sevenDaysAgo = todayStart - 7 * 24 * 60 * 60 * 1000;
+        return qTime >= sevenDaysAgo;
+      }
+      if (selectedDateFilter === '30days') {
+        const thirtyDaysAgo = todayStart - 30 * 24 * 60 * 60 * 1000;
+        return qTime >= thirtyDaysAgo;
+      }
+      if (selectedDateFilter === 'custom' && customSelectedDate) {
+        const [y, m, d] = customSelectedDate.split('-').map(Number);
+        const targetStart = new Date(y, m - 1, d).getTime();
+        const targetEnd = targetStart + 24 * 60 * 60 * 1000;
+        return qTime >= targetStart && qTime < targetEnd;
+      }
+      return true;
+    },
+    [selectedDateFilter, customSelectedDate]
+  );
+
+  // ── Helper: Cek Filter Status Belum Dikerjakan vs Selesai ──
+  const isQuestionInStatusRange = useCallback(
+    (q: BankSoalItem): boolean => {
+      if (selectedStatusFilter === 'all') return true;
+      const completed = isQuestionCompleted(q);
+      if (selectedStatusFilter === 'uncompleted') return !completed;
+      if (selectedStatusFilter === 'completed') return completed;
+      return true;
+    },
+    [selectedStatusFilter, isQuestionCompleted]
+  );
+
+  // ── Daftar Seluruh Mata Pelajaran (Untuk Modal Filter Mapel) ──
+  const allSubjectsList = useMemo(() => {
+    const map = new Map<string, { name: string; count: number; uncompletedCount: number }>();
+    questions.forEach((q) => {
+      const sName = q.subject?.name || q.kisi_kisi?.judul_kisi || 'Mata Pelajaran Umum';
+      if (!map.has(sName)) {
+        map.set(sName, { name: sName, count: 0, uncompletedCount: 0 });
+      }
+      const item = map.get(sName)!;
+      item.count += 1;
+      if (!isQuestionCompleted(q)) {
+        item.uncompletedCount += 1;
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [questions, isQuestionCompleted]);
+
   // ── Subject Groups Calculation (Sesuai Siswa Aktif) ──
   const subjectGroups = useMemo<SubjectGroup[]>(() => {
     const map = new Map<string, SubjectGroup>();
@@ -363,37 +514,119 @@ export default function BankSoalScreen({ route }: any) {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [questions]);
 
-  // Filtered Subject Groups by Search Query
+  // ── Filtered Subject Groups (Mapel, Tanggal, Belum Dikerjakan, dan Pencarian) ──
   const filteredSubjectGroups = useMemo(() => {
-    if (!searchQuery.trim()) return subjectGroups;
-    const q = searchQuery.toLowerCase();
-    return subjectGroups.filter((g) => {
-      return (
-        g.name.toLowerCase().includes(q) ||
-        (g.code && g.code.toLowerCase().includes(q)) ||
-        (g.teacherName && g.teacherName.toLowerCase().includes(q)) ||
-        g.questions.some((item) =>
-          (item.pertanyaan || '').toLowerCase().includes(q) ||
-          (item.indikator || '').toLowerCase().includes(q)
-        )
-      );
+    const map = new Map<string, SubjectGroup>();
+
+    questions.forEach((q) => {
+      const sName = q.subject?.name || q.kisi_kisi?.judul_kisi || 'Mata Pelajaran Umum';
+      const sId = q.mata_pelajaran_id || q.subject?.id || sName;
+      const sCode = q.subject?.code;
+      const teacher = q.kisi_kisi?.guru?.nama_lengkap || q.kisi_kisi?.guru?.name;
+
+      // 1. Filter Mapel
+      if (selectedSubjectFilter !== 'all' && sName !== selectedSubjectFilter && sId !== selectedSubjectFilter) {
+        return;
+      }
+
+      // 2. Filter Tanggal
+      if (!isQuestionInDateRange(q)) {
+        return;
+      }
+
+      // 3. Filter Status Pengerjaan (Belum Dikerjakan / Selesai)
+      if (!isQuestionInStatusRange(q)) {
+        return;
+      }
+
+      // 4. Pencarian Teks (Debounced)
+      if (debouncedSearchQuery.trim()) {
+        const query = debouncedSearchQuery.toLowerCase();
+        const matchSubject = sName.toLowerCase().includes(query) || (sCode && sCode.toLowerCase().includes(query));
+        const matchTeacher = Boolean(teacher && teacher.toLowerCase().includes(query));
+        const matchQuestion =
+          (q.pertanyaan || '').toLowerCase().includes(query) ||
+          (q.indikator || '').toLowerCase().includes(query);
+        if (!matchSubject && !matchTeacher && !matchQuestion) {
+          return;
+        }
+      }
+
+      if (!map.has(sId)) {
+        map.set(sId, {
+          id: sId,
+          name: sName,
+          code: sCode,
+          questionsCount: 0,
+          questions: [],
+          teacherName: teacher,
+        });
+      }
+
+      const grp = map.get(sId)!;
+      grp.questionsCount += 1;
+      grp.questions.push(q);
+      if (!grp.teacherName && teacher) grp.teacherName = teacher;
     });
-  }, [subjectGroups, searchQuery]);
 
-  // Ringkasan KPI
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [
+    questions,
+    selectedSubjectFilter,
+    isQuestionInDateRange,
+    isQuestionInStatusRange,
+    debouncedSearchQuery,
+  ]);
+
+  // ── Ringkasan KPI Real-Time ──
   const stats = useMemo(() => {
+    const totalSubjects = subjectGroups.length;
+    const totalQuestions = questions.length;
+    const completedCount = questions.filter(isQuestionCompleted).length;
+    const uncompletedCount = Math.max(0, totalQuestions - completedCount);
+    const progressPercent = totalQuestions > 0 ? Math.round((completedCount / totalQuestions) * 100) : 0;
     return {
-      totalSubjects: subjectGroups.length,
-      totalQuestions: questions.length,
+      totalSubjects,
+      totalQuestions,
+      completedCount,
+      uncompletedCount,
+      progressPercent,
     };
-  }, [subjectGroups.length, questions.length]);
+  }, [subjectGroups.length, questions, isQuestionCompleted]);
 
-  // Toggle user answer selection (for multiple choice study practice)
+  // Indikator apakah ada filter aktif
+  const hasActiveFilters = useMemo(() => {
+    return (
+      selectedSubjectFilter !== 'all' ||
+      selectedDateFilter !== 'all' ||
+      selectedStatusFilter !== 'all' ||
+      Boolean(debouncedSearchQuery.trim())
+    );
+  }, [selectedSubjectFilter, selectedDateFilter, selectedStatusFilter, debouncedSearchQuery]);
+
+  // Reset Seluruh Filter
+  const handleResetAllFilters = useCallback(() => {
+    setSelectedSubjectFilter('all');
+    setSelectedDateFilter('all');
+    setCustomSelectedDate(null);
+    setSelectedStatusFilter('all');
+    setSearchQuery('');
+  }, []);
+
+  // Toggle user answer selection with persistent offline cache
   const handleSelectOption = (questionId: string, optionKey: string) => {
-    setSelectedAnswers((prev) => ({
-      ...prev,
-      [questionId]: optionKey,
-    }));
+    setSelectedAnswers((prev) => {
+      const next = {
+        ...prev,
+        [questionId]: optionKey,
+      };
+      const targetChild = isParent ? selectedChildId : (user as any)?.student?.id || user?.id;
+      if (targetChild) {
+        const ansCacheKey = offlineCache.buildKey('bank_soal_answers', user?.id, String(targetChild));
+        void offlineCache.set(ansCacheKey, next);
+      }
+      return next;
+    });
   };
 
   // Toggle solution reveal
@@ -427,71 +660,53 @@ export default function BankSoalScreen({ route }: any) {
 
   return (
     <View style={styles.container}>
-      {/* ── Sticky Header Bersama ── */}
-      {!isTeacherOnly ? (
-        <StudentStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Bank Soal & Latihan"
-          navigation={navigation}
-          route={route}
-          student={activeStudent}
-          user={user}
-          childrenList={children}
-          selectedChildId={selectedChildId}
-          onSelectChild={(cid, idx) => {
-            setSelectedChildId(cid);
-            useActiveChildStore.getState().setActiveChildId(cid);
-            setSelectedSubjectModal(null);
-            const foundIdx = children.findIndex((c) => String(c.id || c.student_id) === String(cid));
-            if (foundIdx >= 0) goToLoopChild(foundIdx);
-          }}
-          middleAction={{
-            label: 'Kisi-kisi',
-            icon: 'file-question',
-            onPress: () => navigation?.navigate('KisiKisi'),
-          }}
-          onOpenIdCard={(s) => openIdCard(s)}
-          onOpenQr={(s) => openQrCard(s)}
-          onOpenWeeklyReport={(s) => setSelectedWeeklyStudent(s)}
-          onOpenMenu={(s) => setSelectedMenuStudent(s)}
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN JADWAL & UTAMA, JERNIH & CRISP) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
         />
-      ) : (
-        <TeacherStickyHeader
-          scrollY={scrollY}
-          topInset={topInset}
-          title="Bank Soal CBT"
-          navigation={navigation}
-          route={route}
-          quickChips={[
-            {
-              id: 'total_soal',
-              label: `Bank Soal (${questions.length})`,
-              icon: 'database-outline',
-              active: true,
-            },
-            {
-              id: 'total_mapel',
-              label: `${subjectGroups.length} Mapel`,
-              icon: 'book-open-page-variant',
-              iconColor: '#2563EB',
-            },
-          ]}
-        />
-      )}
-
-      {/* ── Main Sheet Container (identik Jadwal) ── */}
-      <View style={styles.sheetContainer}>
         <LinearGradient
-          colors={['#FFFFFF', '#F4FAF7', '#EAF7F0']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
+          locations={[0, 0.45, 1]}
           style={StyleSheet.absoluteFill}
         />
+      </View>
 
+      {/* ── TOP HEADER IDENTIK HALAMAN UTAMA (TOMBOL KARTU PUTIH MINT GREEN SHADOW) ── */}
+      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={handleBack}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Kembali"
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#004D32" />
+        </TouchableOpacity>
+
+        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
+          Bank Soal & Latihan
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => navigation?.navigate('Notifikasi')}
+          style={styles.cleanHeaderIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Notifikasi"
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#004D32" />
+          {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Main Sheet Container ── */}
+      <View style={styles.sheetContainer}>
         <Animated.ScrollView
           style={styles.screen}
-          contentContainerStyle={[styles.mainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
+          contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
           showsVerticalScrollIndicator={false}
           onScroll={handleMainScroll}
           scrollEventThrottle={16}
@@ -504,269 +719,497 @@ export default function BankSoalScreen({ route }: any) {
             />
           }
         >
-          {/* ── Static Top Bar (standard — menghilang saat scroll) ── */}
-          <View style={[styles.staticTopBarWrapper, { paddingTop: topInset + 8 }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroDecorCircle1} />
-            <View style={styles.heroDecorCircle2} />
+          <View style={styles.cleanScrollInner}>
+            {/* ── Data Ananda / Card Siswa / Teacher Hero Card ── */}
+            <View style={styles.bodyContentWrapper}>
+              {isTeacherOnly ? (
+                <TeacherHeroCard
+                  title={String((user as any)?.name || (user as any)?.username || 'Guru Pengajar')}
+                  badgeText="Bank Soal Guru"
+                  badgeIcon="database-outline"
+                  stats={[
+                    {
+                      label: 'Total Soal',
+                      value: questions.length,
+                      icon: 'database-outline',
+                      color: '#10B981',
+                    },
+                    {
+                      label: 'Mata Pelajaran',
+                      value: subjectGroups.length,
+                      icon: 'book-open-page-variant',
+                      color: '#38BDF8',
+                    },
+                    {
+                      label: 'Latihan CBT',
+                      value: stats.totalSubjects,
+                      icon: 'checkbox-marked-circle-outline',
+                      color: '#A7F3D0',
+                    },
+                  ]}
+                />
+              ) : (
+                /* OPEN STUDENT PROFILE ROW (GOLD STANDARD) */
+                <View style={styles.studentProfileRow}>
+                  {/* 60x60 Avatar with Mint Ring (Klik untuk lihat KTS Siswa Terpilih) */}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedIdCardStudent(activeStudent)}
+                    style={styles.studentAvatarRing}
+                  >
+                    <Image
+                      source={studentAvatarSource}
+                      style={styles.studentAvatarImg}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
 
-            <View style={styles.staticTopBarRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleBack}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
-              </TouchableOpacity>
+                  {/* 3-tier identity & action */}
+                  <View style={styles.studentProfileInfoCol}>
+                    <TouchableOpacity
+                      activeOpacity={children && children.length > 1 ? 0.75 : 1}
+                      onPress={children && children.length > 1 ? () => setShowChildSelectorModal(true) : undefined}
+                      style={styles.studentNameRow}
+                    >
+                      <Text numberOfLines={1} style={styles.studentProfileName}>
+                        {studentFullName}
+                      </Text>
+                    </TouchableOpacity>
 
-              <View style={styles.heroTitleCenterCol}>
-                <Text numberOfLines={1} style={styles.heroModuleTitle}>Bank Soal & Latihan</Text>
-                <Text numberOfLines={1} style={styles.heroModuleSubtitle}>Butir Soal & Latihan Mandiri</Text>
-              </View>
+                    {/* Baris 2: Unit Pendidikan */}
+                    {studentUnit ? (
+                      <View style={styles.studentMetaRow}>
+                        <MaterialCommunityIcons name="school-outline" size={12} color="#047857" style={{ marginRight: 4 }} />
+                        <Text numberOfLines={1} style={styles.studentProfileUnitText}>
+                          {studentUnit}
+                        </Text>
+                      </View>
+                    ) : null}
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.heroSquircleBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons name="bell-outline" size={20} color="#059669" />
-                {unreadNotificationCount > 0 && <View style={styles.heroBellDot} />}
-              </TouchableOpacity>
-            </View>
-          </View>
+                    {/* Baris 3: Kelas Siswa */}
+                    {studentClass ? (
+                      <View style={styles.studentMetaRow}>
+                        <MaterialCommunityIcons name="door-open" size={12} color="#065F46" style={{ marginRight: 4 }} />
+                        <Text numberOfLines={1} style={styles.studentProfileClassText}>
+                          {studentClass.toLowerCase().startsWith('kelas') ? studentClass : `Kelas ${studentClass}`}
+                        </Text>
+                      </View>
+                    ) : null}
 
-          {/* ── Data Ananda / Card Siswa / Teacher Hero Card ── */}
-          <View style={styles.bodyContentWrapper}>
-            {isTeacherOnly ? (
-              <TeacherHeroCard
-                title={String((user as any)?.name || (user as any)?.username || 'Guru Pengajar')}
-                badgeText="Bank Soal Guru"
-                badgeIcon="database-outline"
-                stats={[
-                  {
-                    label: 'Total Soal',
-                    value: questions.length,
-                    icon: 'database-outline',
-                    color: '#10B981',
-                  },
-                  {
-                    label: 'Mata Pelajaran',
-                    value: subjectGroups.length,
-                    icon: 'book-open-page-variant',
-                    color: '#38BDF8',
-                  },
-                  {
-                    label: 'Latihan CBT',
-                    value: stats.totalSubjects,
-                    icon: 'checkbox-marked-circle-outline',
-                    color: '#A7F3D0',
-                  },
-                ]}
-              />
-            ) : children && children.length > 0 ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] },
-                ]}
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#059669" />
-                    <Text style={styles.sectionTitle}>Data Ananda</Text>
+                    {/* Baris Aksi: Tombol Ganti Siswa + Lencana Status Kehadiran */}
+                    <View style={styles.studentActionBadgeRow}>
+                      {children && children.length > 1 && (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => setShowChildSelectorModal(true)}
+                          style={styles.parentGantiAnakBtn}
+                        >
+                          <Text style={styles.parentGantiAnakBtnText}>Ganti Siswa</Text>
+                          <MaterialCommunityIcons name="chevron-down" size={14} color="#FFFFFF" />
+                        </TouchableOpacity>
+                      )}
+
+                      <View
+                        style={[
+                          styles.attendanceStatusBadge,
+                          { backgroundColor: attendanceStatus.bg, borderColor: attendanceStatus.border },
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={attendanceStatus.icon}
+                          size={12}
+                          color={attendanceStatus.color}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={[styles.attendanceStatusText, { color: attendanceStatus.color }]}>
+                          {attendanceStatus.label}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-                  {children.length > 1 && (
-                    <View style={styles.studentCardCountBadge}>
-                      <Text style={styles.studentCardCountBadgeText}>
-                        {safeCenter + 1} dari {children.length} Ananda
+                </View>
+              )}
+
+              {/* ── HERO KPI GROUP CARD (TAILGRIDS SCREEN STYLE) ── */}
+              <View style={[styles.bankSoalGroupCard, { marginTop: 6 }]}>
+                <LinearGradient
+                  colors={['#059669', '#047857']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.bankSoalGroupHeaderGradient}
+                >
+                  <View style={styles.bankSoalGroupHeaderLeft}>
+                    <View style={styles.bankSoalGroupHeaderIconBoxWhite}>
+                      <MaterialCommunityIcons name="database-outline" size={18} color="#047857" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text numberOfLines={1} style={styles.bankSoalGroupTitleWhite}>
+                        Bank Soal & Latihan Mandiri
+                      </Text>
+                      <Text numberOfLines={1} style={styles.bankSoalGroupSubWhite}>
+                        Akses butir soal terkurasi per bidang studi
                       </Text>
                     </View>
+                  </View>
+                  <View style={styles.bankSoalGroupBadge}>
+                    <MaterialCommunityIcons name="check-decagram" size={12} color="#047857" style={{ marginRight: 3 }} />
+                    <Text style={styles.bankSoalGroupBadgeText}>
+                      {stats.totalQuestions} Soal
+                    </Text>
+                  </View>
+                </LinearGradient>
+
+                {/* 2 Kolom KPI Atas: Mata Pelajaran & Total Butir Soal (Lega & Rapi) */}
+                <View style={styles.kpiRowModern}>
+                  {/* Card 1: Mata Pelajaran */}
+                  <View style={[styles.kpiCardModern, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}>
+                    <View style={[styles.kpiIconWrap, { backgroundColor: '#D1FAE5' }]}>
+                      <MaterialCommunityIcons name="book-open-page-variant-outline" size={20} color="#047857" />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text numberOfLines={1} style={styles.kpiLabelModern}>Mata Pelajaran</Text>
+                      <Text style={[styles.kpiValueModern, { color: '#047857' }]}>{stats.totalSubjects}</Text>
+                      <Text numberOfLines={1} style={styles.kpiSubModern}>Total Bidang Studi</Text>
+                    </View>
+                  </View>
+
+                  {/* Card 2: Total Butir Soal */}
+                  <View style={[styles.kpiCardModern, { borderColor: '#BAE6FD', backgroundColor: '#F0F9FF' }]}>
+                    <View style={[styles.kpiIconWrap, { backgroundColor: '#E0F2FE' }]}>
+                      <MaterialCommunityIcons name="file-document-edit-outline" size={20} color="#0284C7" />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text numberOfLines={1} style={styles.kpiLabelModern}>Total Butir Soal</Text>
+                      <Text style={[styles.kpiValueModern, { color: '#0284C7' }]}>{stats.totalQuestions}</Text>
+                      <Text numberOfLines={1} style={styles.kpiSubModern}>{stats.completedCount} Selesai Dikerjakan</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Banner Bawah: Status Pengerjaan & Progress Bar Interaktif */}
+                <View style={styles.kpiProgressBannerWrapper}>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setSelectedStatusFilter((prev) => (prev === 'uncompleted' ? 'all' : 'uncompleted'))}
+                    style={[
+                      styles.kpiProgressBanner,
+                      stats.uncompletedCount > 0
+                        ? selectedStatusFilter === 'uncompleted'
+                          ? styles.kpiProgressBannerAmberActive
+                          : styles.kpiProgressBannerAmber
+                        : styles.kpiProgressBannerEmerald,
+                    ]}
+                  >
+                    <View style={styles.kpiProgressBannerTop}>
+                      <View style={styles.kpiProgressBannerLeft}>
+                        <View
+                          style={[
+                            styles.kpiStatusIconBox,
+                            {
+                              backgroundColor: stats.uncompletedCount > 0 ? '#FEF3C7' : '#D1FAE5',
+                            },
+                          ]}
+                        >
+                          <MaterialCommunityIcons
+                            name={stats.uncompletedCount > 0 ? 'clock-alert-outline' : 'check-decagram'}
+                            size={18}
+                            color={stats.uncompletedCount > 0 ? '#D97706' : '#059669'}
+                          />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <Text numberOfLines={1} style={styles.kpiProgressBannerTitle}>
+                            {stats.uncompletedCount > 0
+                              ? `${stats.uncompletedCount} Soal Belum Dikerjakan`
+                              : 'Semua Soal Latihan Selesai! 🎉'}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.kpiProgressBannerSub}>
+                            {stats.completedCount} dari {stats.totalQuestions} butir soal selesai ({stats.progressPercent}%)
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View
+                        style={[
+                          styles.kpiProgressFilterPill,
+                          selectedStatusFilter === 'uncompleted' && styles.kpiProgressFilterPillActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.kpiProgressFilterPillText,
+                            selectedStatusFilter === 'uncompleted' && styles.kpiProgressFilterPillTextActive,
+                          ]}
+                        >
+                          {selectedStatusFilter === 'uncompleted' ? 'Filter Aktif' : 'Tampilkan Belum'}
+                        </Text>
+                        <MaterialCommunityIcons
+                          name={selectedStatusFilter === 'uncompleted' ? 'check' : 'chevron-right'}
+                          size={13}
+                          color={selectedStatusFilter === 'uncompleted' ? '#FFFFFF' : '#B45309'}
+                        />
+                      </View>
+                    </View>
+
+                    {/* Mini Progress Bar */}
+                    <View style={styles.kpiMiniProgressBarBg}>
+                      <View
+                        style={[
+                          styles.kpiMiniProgressBarFill,
+                          {
+                            width: `${Math.min(Math.max(stats.progressPercent, 0), 100)}%`,
+                            backgroundColor: stats.uncompletedCount === 0 ? '#059669' : '#10B981',
+                          },
+                        ]}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Search Bar (TailGrids Emerald Style) */}
+              <View style={styles.searchContainerModern}>
+                <MaterialCommunityIcons name="magnify" size={20} color="#059669" style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInputModern}
+                  placeholder="Cari mata pelajaran atau butir soal..."
+                  placeholderTextColor="#94A3B8"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  returnKeyType="search"
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* ── FILTER SECTION (STATUS PENGERJAAN, MAPEL, TANGGAL) ── */}
+              <View style={styles.filterSectionContainer}>
+                {/* Baris 1: Filter Cepat Status Pengerjaan */}
+                {/* Baris 1: Filter Cepat Status Pengerjaan (Pill Horizontal Scrollable) */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.statusFilterScrollContent}
+                  style={styles.statusFilterScroll}
+                >
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedStatusFilter('all')}
+                    style={[
+                      styles.statusFilterChip,
+                      selectedStatusFilter === 'all' && styles.statusFilterChipActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="layers-outline"
+                      size={14}
+                      color={selectedStatusFilter === 'all' ? '#047857' : '#64748B'}
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text
+                      style={[
+                        styles.statusFilterChipText,
+                        selectedStatusFilter === 'all' && styles.statusFilterChipTextActive,
+                      ]}
+                    >
+                      Semua ({stats.totalQuestions})
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedStatusFilter('uncompleted')}
+                    style={[
+                      styles.statusFilterChip,
+                      selectedStatusFilter === 'uncompleted' && styles.statusFilterChipAmberActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="clock-alert-outline"
+                      size={14}
+                      color={selectedStatusFilter === 'uncompleted' ? '#B45309' : '#D97706'}
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text
+                      style={[
+                        styles.statusFilterChipText,
+                        selectedStatusFilter === 'uncompleted' && styles.statusFilterChipAmberTextActive,
+                      ]}
+                    >
+                      Belum Dikerjakan ({stats.uncompletedCount})
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedStatusFilter('completed')}
+                    style={[
+                      styles.statusFilterChip,
+                      selectedStatusFilter === 'completed' && styles.statusFilterChipEmeraldActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="checkbox-marked-circle-outline"
+                      size={14}
+                      color={selectedStatusFilter === 'completed' ? '#047857' : '#059669'}
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text
+                      style={[
+                        styles.statusFilterChipText,
+                        selectedStatusFilter === 'completed' && styles.statusFilterChipEmeraldTextActive,
+                      ]}
+                    >
+                      Selesai ({stats.completedCount})
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+
+                {/* Baris 2: Dropdown Filter Mapel & Tanggal */}
+                <View style={styles.dropdownFiltersRow}>
+                  {/* Dropdown Filter Mapel */}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowSubjectFilterModal(true)}
+                    style={[
+                      styles.filterDropdownBtn,
+                      selectedSubjectFilter !== 'all' && styles.filterDropdownBtnActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="book-open-variant"
+                      size={15}
+                      color={selectedSubjectFilter !== 'all' ? '#047857' : '#065F46'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.filterDropdownBtnText,
+                        selectedSubjectFilter !== 'all' && styles.filterDropdownBtnTextActive,
+                      ]}
+                    >
+                      {selectedSubjectFilter === 'all' ? 'Semua Mapel' : selectedSubjectFilter}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name="chevron-down"
+                      size={16}
+                      color={selectedSubjectFilter !== 'all' ? '#047857' : '#065F46'}
+                      style={{ marginLeft: 4 }}
+                    />
+                  </TouchableOpacity>
+
+                  {/* Dropdown Filter Tanggal */}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowDateFilterModal(true)}
+                    style={[
+                      styles.filterDropdownBtn,
+                      selectedDateFilter !== 'all' && styles.filterDropdownBtnActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="calendar-month-outline"
+                      size={15}
+                      color={selectedDateFilter !== 'all' ? '#047857' : '#065F46'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.filterDropdownBtnText,
+                        selectedDateFilter !== 'all' && styles.filterDropdownBtnTextActive,
+                      ]}
+                    >
+                      {selectedDateFilter === 'all'
+                        ? 'Semua Tanggal'
+                        : selectedDateFilter === 'today'
+                        ? 'Hari Ini'
+                        : selectedDateFilter === '7days'
+                        ? '7 Hari Terakhir'
+                        : selectedDateFilter === '30days'
+                        ? 'Bulan Ini'
+                        : customSelectedDate || 'Pilih Tanggal'}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name="chevron-down"
+                      size={16}
+                      color={selectedDateFilter !== 'all' ? '#047857' : '#065F46'}
+                      style={{ marginLeft: 4 }}
+                    />
+                  </TouchableOpacity>
+
+                  {/* Reset Button jika ada filter aktif */}
+                  {hasActiveFilters && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={handleResetAllFilters}
+                      style={styles.filterResetBtn}
+                    >
+                      <MaterialCommunityIcons name="filter-off-outline" size={16} color="#DC2626" />
+                    </TouchableOpacity>
                   )}
                 </View>
 
-                {children.length === 1 ? (
-                  <View style={styles.singleHeroCardContainer}>
-                    <StudentHeroCard
-                      child={children[0]}
-                      isSelected={true}
-                      showActionButtons={true}
-                      isSingleChild={true}
-                      cardLabel="Kartu Siswa"
-                      calendarLabel="Kisi-kisi"
-                      calendarIcon="file-question"
-                      portalLabel="Menu"
-                      onPressCard={() => openIdCard(children[0])}
-                      onPressQr={() => openQrCard(children[0])}
-                      onPressWeeklyReport={() => setSelectedWeeklyStudent(children[0])}
-                      onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                      onPressCalendar={() => navigation?.navigate('KisiKisi')}
-                      onPressPortal={() => setSelectedMenuStudent(children[0])}
-                    />
-                  </View>
-                ) : (
-                  <>
-                    <ScrollView
-                      ref={studentScrollRef}
-                      horizontal
-                      nestedScrollEnabled={true}
-                      showsHorizontalScrollIndicator={false}
-                      contentOffset={{ x: centerLoopOffset, y: 0 }}
-                      contentContainerStyle={[styles.studentCardsTrack, { paddingHorizontal: studentTrackPad }]}
-                      decelerationRate="fast"
-                      snapToInterval={studentSnapInterval}
-                      snapToAlignment="start"
-                      disableIntervalMomentum
-                      onMomentumScrollEnd={(e) => {
-                        if (studentLoopCount === 0) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) {
-                          setActiveChildIndex(realIdx);
-                          syncLoopChildId(realIdx);
-                          requestAnimationFrame(() => { recenterLoop(); });
-                        } else { recenterLoop(); }
-                      }}
-                      onScrollEndDrag={(e) => {
-                        if (studentLoopCount === 0) return;
-                        const offsetX = e.nativeEvent.contentOffset.x;
-                        const slot = Math.round(offsetX / studentSnapInterval);
-                        const n = studentLoopCount;
-                        const cur = ((activeChildIndex % n) + n) % n;
-                        let realIdx = cur;
-                        if (slot === 2) realIdx = (cur + 1) % n;
-                        else if (slot === 0) realIdx = (cur - 1 + n) % n;
-                        if (realIdx !== cur) { setActiveChildIndex(realIdx); syncLoopChildId(realIdx); }
-                      }}
-                      scrollEventThrottle={16}
-                      style={styles.heroCardScrollContainer}
-                    >
-                      {loopWindow.list.map((child: any, sIdx: number) => {
-                        const realIdx = loopWindow.realIdx[sIdx] ?? 0;
-                        const isCardActive = realIdx === safeCenter;
-                        return (
-                          <StudentHeroCard
-                            key={`win-${sIdx}-${String(child?.id ?? realIdx)}`}
-                            child={child}
-                            isSelected={isCardActive}
-                            onSelect={isCardActive ? undefined : () => goToLoopChild(realIdx)}
-                            showActionButtons={true}
-                            cardWidth={studentCardWidth}
-                            cardLabel="Kartu Siswa"
-                            calendarLabel="Kisi-kisi"
-                            calendarIcon="file-question"
-                            portalLabel="Menu"
-                            onPressCard={() => openIdCard(child)}
-                            onPressQr={() => openQrCard(child)}
-                            onPressWeeklyReport={() => setSelectedWeeklyStudent(child)}
-                            onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                            onPressCalendar={() => navigation?.navigate('KisiKisi')}
-                            onPressPortal={() => setSelectedMenuStudent(child)}
-                            isSingleChild={false}
-                          />
-                        );
-                      })}
-                    </ScrollView>
-
-                    <View style={styles.paginationDotsRow}>
-                      {children.map((_, dotIdx) => (
+                {/* Baris 3: Active Filter Tags */}
+                {hasActiveFilters && (
+                  <View style={styles.activeFilterPillRow}>
+                    <Text style={styles.activeFilterLabelText}>Filter:</Text>
+                    {selectedStatusFilter !== 'all' && (
+                      <View style={styles.activeFilterTag}>
+                        <Text style={styles.activeFilterTagText}>
+                          Status: {selectedStatusFilter === 'uncompleted' ? 'Belum Dikerjakan' : 'Selesai'}
+                        </Text>
+                        <TouchableOpacity onPress={() => setSelectedStatusFilter('all')}>
+                          <MaterialCommunityIcons name="close" size={12} color="#047857" style={{ marginLeft: 4 }} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {selectedSubjectFilter !== 'all' && (
+                      <View style={styles.activeFilterTag}>
+                        <Text style={styles.activeFilterTagText}>Mapel: {selectedSubjectFilter}</Text>
+                        <TouchableOpacity onPress={() => setSelectedSubjectFilter('all')}>
+                          <MaterialCommunityIcons name="close" size={12} color="#047857" style={{ marginLeft: 4 }} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {selectedDateFilter !== 'all' && (
+                      <View style={styles.activeFilterTag}>
+                        <Text style={styles.activeFilterTagText}>
+                          Tanggal:{' '}
+                          {selectedDateFilter === 'today'
+                            ? 'Hari Ini'
+                            : selectedDateFilter === '7days'
+                            ? '7 Hari'
+                            : selectedDateFilter === '30days'
+                            ? 'Bulan Ini'
+                            : customSelectedDate}
+                        </Text>
                         <TouchableOpacity
-                          key={dotIdx}
-                          activeOpacity={0.7}
-                          onPress={() => goToLoopChild(dotIdx)}
-                          style={[styles.paginationDot, dotIdx === safeCenter && styles.paginationDotActive]}
-                        />
-                      ))}
-                    </View>
-                  </>
-                )}
-              </Animated.View>
-            ) : activeStudent ? (
-              <Animated.View
-                style={[
-                  styles.containerBlock,
-                  styles.studentContainerBlock,
-                  { opacity: bodyCardOpacity, transform: [{ translateY: bodyCardTranslateY }] },
-                ]}
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderTitleWrap}>
-                    <MaterialCommunityIcons name="account-school" size={18} color="#059669" />
-                    <Text style={styles.sectionTitle}>Data Siswa</Text>
+                          onPress={() => {
+                            setSelectedDateFilter('all');
+                            setCustomSelectedDate(null);
+                          }}
+                        >
+                          <MaterialCommunityIcons name="close" size={12} color="#047857" style={{ marginLeft: 4 }} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
-                </View>
-                <View style={styles.singleHeroCardContainer}>
-                  <StudentHeroCard
-                    child={activeStudent}
-                    isSelected={true}
-                    showActionButtons={true}
-                    isSingleChild={true}
-                    cardLabel="Kartu Siswa"
-                    calendarLabel="Kisi-kisi"
-                    calendarIcon="file-question"
-                    portalLabel="Menu"
-                    onPressCard={() => openIdCard(activeStudent)}
-                    onPressQr={() => openQrCard(activeStudent)}
-                    onPressWeeklyReport={() => setSelectedWeeklyStudent(activeStudent)}
-                    onPressNotifications={() => navigation?.navigate('Notifikasi')}
-                    onPressCalendar={() => navigation?.navigate('KisiKisi')}
-                    onPressPortal={() => setSelectedMenuStudent(activeStudent)}
-                  />
-                </View>
-              </Animated.View>
-            ) : null}
-
-            {/* Quick KPI Stats */}
-            <View style={styles.kpiRow}>
-              <View style={[styles.kpiCard, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}>
-                <Text style={styles.kpiLabel}>Mata Pelajaran</Text>
-                <Text style={[styles.kpiValue, { color: '#047857' }]}>{stats.totalSubjects}</Text>
-                <Text style={styles.kpiSub}>Tersedia</Text>
+                )}
               </View>
-              <View style={[styles.kpiCard, { borderColor: '#BAE6FD', backgroundColor: '#F0F9FF' }]}>
-                <Text style={styles.kpiLabel}>Total Soal</Text>
-                <Text style={[styles.kpiValue, { color: '#0284C7' }]}>{stats.totalQuestions}</Text>
-                <Text style={styles.kpiSub}>Latihan Mandiri</Text>
-              </View>
-            </View>
-
-            {/* Search Bar */}
-            <View style={styles.searchContainer}>
-              <MaterialCommunityIcons name="magnify" size={20} color="#059669" style={styles.searchIcon} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Cari mata pelajaran..."
-                placeholderTextColor="#94A3B8"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                returnKeyType="search"
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                </TouchableOpacity>
-              )}
-            </View>
 
             {/* Section Header */}
             <View style={styles.listHeaderRow}>
               <View style={styles.listTitleCol}>
                 <Text style={styles.listTitle}>Daftar Mata Pelajaran</Text>
-                <Text style={styles.listSubtitle}>Pilih mata pelajaran untuk mulai latihan</Text>
+                <Text style={styles.listSubtitle}>
+                  {hasActiveFilters
+                    ? `Menampilkan ${filteredSubjectGroups.length} mapel tersaring`
+                    : 'Pilih mata pelajaran untuk mulai latihan'}
+                </Text>
               </View>
               <View style={styles.countBadge}>
                 <Text style={styles.countBadgeText}>{filteredSubjectGroups.length} Mapel</Text>
@@ -793,21 +1236,30 @@ export default function BankSoalScreen({ route }: any) {
                 <View style={styles.emptyIconCircle}>
                   <MaterialCommunityIcons name="book-open-page-variant-outline" size={44} color="#0D6B42" />
                 </View>
-                <Text style={styles.emptyTitle}>Belum Ada Soal Latihan</Text>
+                <Text style={styles.emptyTitle}>
+                  {selectedStatusFilter === 'uncompleted'
+                    ? 'Semua Soal Sudah Selesai!'
+                    : 'Belum Ada Soal Latihan'}
+                </Text>
                 <Text style={styles.emptyDesc}>
-                  {searchQuery
-                    ? `Tidak ditemukan mata pelajaran dengan kata kunci "${searchQuery}".`
+                  {selectedStatusFilter === 'uncompleted'
+                    ? 'Alhamdulillah! Seluruh butir soal latihan sudah selesai kamu kerjakan pada kriteria filter ini.'
+                    : hasActiveFilters
+                    ? 'Tidak ditemukan butir soal yang sesuai dengan kombinasi filter yang dipilih.'
                     : `Guru belum mengunggah butir soal latihan untuk kelas ini (${resolvedClass || 'Semua Kelas'}).`}
                 </Text>
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.resetFilterBtn}>
-                    <Text style={styles.resetFilterBtnText}>Reset Pencarian</Text>
+                {hasActiveFilters && (
+                  <TouchableOpacity onPress={handleResetAllFilters} style={styles.resetFilterBtn}>
+                    <Text style={styles.resetFilterBtnText}>Reset Seluruh Filter</Text>
                   </TouchableOpacity>
                 )}
               </View>
             ) : (
               filteredSubjectGroups.map((group) => {
                 const theme = getSubjectTheme(group.name);
+                const uncompletedInGroup = group.questions.filter((q) => !isQuestionCompleted(q)).length;
+                const isGroupAllDone = uncompletedInGroup === 0 && group.questionsCount > 0;
+
                 return (
                   <TouchableOpacity
                     key={group.id}
@@ -836,9 +1288,22 @@ export default function BankSoalScreen({ route }: any) {
                         <View style={[styles.subjectCountBadge, { backgroundColor: theme.bg }]}>
                           <MaterialCommunityIcons name="file-document-edit-outline" size={12} color={theme.color} style={{ marginRight: 3 }} />
                           <Text style={[styles.subjectCountBadgeText, { color: theme.color }]}>
-                            {group.questionsCount} Butir Soal
+                            {group.questionsCount} Soal
                           </Text>
                         </View>
+
+                        {isGroupAllDone ? (
+                          <View style={styles.subjectDoneBadge}>
+                            <MaterialCommunityIcons name="check-circle" size={11} color="#059669" style={{ marginRight: 3 }} />
+                            <Text style={styles.subjectDoneBadgeText}>Selesai</Text>
+                          </View>
+                        ) : uncompletedInGroup > 0 ? (
+                          <View style={styles.subjectPendingBadge}>
+                            <MaterialCommunityIcons name="clock-alert-outline" size={11} color="#D97706" style={{ marginRight: 3 }} />
+                            <Text style={styles.subjectPendingBadgeText}>{uncompletedInGroup} Belum</Text>
+                          </View>
+                        ) : null}
+
                         {Boolean(group.code) && (
                           <View style={styles.subjectCodeBadge}>
                             <Text style={styles.subjectCodeBadgeText}>{group.code}</Text>
@@ -856,11 +1321,12 @@ export default function BankSoalScreen({ route }: any) {
                 );
               })
             )}
-        </View>
-      </Animated.ScrollView>
-    </View>
+            </View>
+          </View>
+        </Animated.ScrollView>
+      </View>
 
-      {/* ── Modal Latihan Soal Interaktif (Opsi A: List Vertikal) ── */}
+      {/* ── Modal Latihan Soal Interaktif (TailGrids Modern Style) ── */}
       <Modal
         visible={Boolean(selectedSubjectModal)}
         animationType="slide"
@@ -868,14 +1334,8 @@ export default function BankSoalScreen({ route }: any) {
         onRequestClose={() => setSelectedSubjectModal(null)}
       >
         <View style={styles.modalRootContainer}>
-          {/* Modal Top Bar */}
+          {/* Modal Top Bar (TailGrids Modern Style) */}
           <View style={[styles.modalTopBar, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 20 : 14) }]}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
             <View style={styles.modalTopBarRow}>
               <TouchableOpacity
                 activeOpacity={0.8}
@@ -884,16 +1344,18 @@ export default function BankSoalScreen({ route }: any) {
                 accessibilityRole="button"
                 accessibilityLabel="Tutup Latihan"
               >
-                <MaterialCommunityIcons name="close" size={20} color="#059669" />
+                <MaterialCommunityIcons name="close" size={20} color="#004D32" />
               </TouchableOpacity>
 
               <View style={styles.modalTopBarCenterCol}>
                 <Text numberOfLines={1} style={styles.modalTopBarTitle}>
                   {selectedSubjectModal?.name}
                 </Text>
-                <Text numberOfLines={1} style={styles.modalTopBarSubtitle}>
-                  {resolvedName} • {selectedSubjectModal?.questionsCount} Soal Latihan
-                </Text>
+                <View style={styles.modalTopBarPill}>
+                  <Text numberOfLines={1} style={styles.modalTopBarSubtitle}>
+                    {studentFullName} • {selectedSubjectModal?.questionsCount} Soal Latihan
+                  </Text>
+                </View>
               </View>
 
               <View style={{ width: 38 }} />
@@ -914,164 +1376,284 @@ export default function BankSoalScreen({ route }: any) {
               </Text>
             </View>
 
-            {/* List Butir Soal Vertikal */}
-            {selectedSubjectModal?.questions.map((item, idx) => {
-              const isSolutionOpen = Boolean(revealedSolutions[item.id]);
-              const userSelectedOption = selectedAnswers[item.id];
-
-              const options = [
-                { key: 'A', text: item.opsi_a },
-                { key: 'B', text: item.opsi_b },
-                { key: 'C', text: item.opsi_c },
-                { key: 'D', text: item.opsi_d },
-                { key: 'E', text: item.opsi_e },
-              ].filter((o) => Boolean(o.text && o.text.trim()));
+            {/* Modal Questions Calculations & Filter */}
+            {(() => {
+              const modalQuestions = selectedSubjectModal ? selectedSubjectModal.questions : [];
+              const modalCompletedCount = modalQuestions.filter(isQuestionCompleted).length;
+              const modalUncompletedCount = modalQuestions.length - modalCompletedCount;
+              const displayedModalQuestions =
+                modalFilterStatus === 'uncompleted'
+                  ? modalQuestions.filter((q) => !isQuestionCompleted(q))
+                  : modalQuestions;
 
               return (
-                <View key={item.id} style={styles.questionCard}>
-                  {/* Card Header (Nomor Soal & Poin) - Label kesulitan & tipe soal dihapus */}
-                  <View style={styles.cardHeader}>
-                    <View style={styles.numberPill}>
-                      <Text style={styles.numberPillText}>Soal No. {idx + 1}</Text>
+                <>
+                  {/* Segmented Filter di dalam Modal: Semua Soal vs Belum Dikerjakan */}
+                  <View style={styles.modalFilterSegmentRow}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setModalFilterStatus('all')}
+                      style={[
+                        styles.modalFilterTab,
+                        modalFilterStatus === 'all' && styles.modalFilterTabActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.modalFilterTabText,
+                          modalFilterStatus === 'all' && styles.modalFilterTabTextActive,
+                        ]}
+                      >
+                        Semua Soal ({modalQuestions.length})
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setModalFilterStatus('uncompleted')}
+                      style={[
+                        styles.modalFilterTab,
+                        modalFilterStatus === 'uncompleted' && styles.modalFilterTabActiveAmber,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name="clock-alert-outline"
+                        size={14}
+                        color={modalFilterStatus === 'uncompleted' ? '#B45309' : '#D97706'}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.modalFilterTabText,
+                          modalFilterStatus === 'uncompleted' && styles.modalFilterTabTextActiveAmber,
+                        ]}
+                      >
+                        Belum Dikerjakan ({modalUncompletedCount})
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Progress Bar Pengerjaan Soal */}
+                  <View style={styles.modalProgressCard}>
+                    <View style={styles.modalProgressHeader}>
+                      <Text style={styles.modalProgressLabel}>Progres Latihan Mandiri</Text>
+                      <Text style={styles.modalProgressValue}>
+                        {modalCompletedCount} dari {modalQuestions.length} Selesai
+                      </Text>
                     </View>
-                    <View style={styles.pointsBadge}>
-                      <Text style={styles.pointsBadgeText}>{item.poin ?? 10} Poin</Text>
+                    <View style={styles.modalProgressBarBg}>
+                      <View
+                        style={[
+                          styles.modalProgressBarFill,
+                          {
+                            width: `${
+                              modalQuestions.length > 0
+                                ? Math.round((modalCompletedCount / modalQuestions.length) * 100)
+                                : 0
+                            }%`,
+                          },
+                        ]}
+                      />
                     </View>
                   </View>
 
-                  {/* Kode Soal jika ada */}
-                  {Boolean(item.kode_soal) && (
-                    <View style={styles.metaRow}>
-                      <Text style={styles.metaCode}>Kode: {item.kode_soal}</Text>
+                  {/* State jika seluruh soal telah dikerjakan saat filter uncompleted */}
+                  {displayedModalQuestions.length === 0 ? (
+                    <View style={styles.modalAllCompletedCard}>
+                      <View style={styles.modalAllCompletedIconCircle}>
+                        <MaterialCommunityIcons name="trophy-award" size={38} color="#047857" />
+                      </View>
+                      <Text style={styles.modalAllCompletedTitle}>Alhamdulillah, Hebat!</Text>
+                      <Text style={styles.modalAllCompletedDesc}>
+                        Seluruh {modalQuestions.length} butir soal latihan pada mata pelajaran ini sudah berhasil kamu selesaikan.
+                      </Text>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => setModalFilterStatus('all')}
+                        style={styles.modalViewAllBtn}
+                      >
+                        <MaterialCommunityIcons name="eye-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.modalViewAllBtnText}>Tampilkan Semua Soal & Pembahasan</Text>
+                      </TouchableOpacity>
                     </View>
-                  )}
+                  ) : (
+                    displayedModalQuestions.map((item, idx) => {
+                      const isSolutionOpen = Boolean(revealedSolutions[item.id]);
+                      const userSelectedOption = selectedAnswers[item.id];
+                      const isItemAnswered = Boolean(userSelectedOption || item.user_answer || item.is_completed);
 
-                  {/* Teks Pertanyaan */}
-                  <Text style={styles.questionText}>{item.pertanyaan}</Text>
+                      const options = [
+                        { key: 'A', text: item.opsi_a },
+                        { key: 'B', text: item.opsi_b },
+                        { key: 'C', text: item.opsi_c },
+                        { key: 'D', text: item.opsi_d },
+                        { key: 'E', text: item.opsi_e },
+                      ].filter((o) => Boolean(o.text && o.text.trim()));
 
-                  {/* Opsi Jawaban (A, B, C, D, E) */}
-                  {options.length > 0 && (
-                    <View style={styles.optionsList}>
-                      {options.map((opt) => {
-                        const isChosen = userSelectedOption === opt.key;
-                        const isCorrectKey = (item.kunci_jawaban || '').toUpperCase() === opt.key;
-                        const showCorrectHighlight = isSolutionOpen && isCorrectKey;
-                        const showWrongHighlight = isSolutionOpen && isChosen && !isCorrectKey;
-
-                        let optBorder = '#E2E8F0';
-                        let optBg = '#FFFFFF';
-                        let badgeBg = '#E2E8F0';
-                        let badgeText = '#475569';
-
-                        if (isChosen) {
-                          optBorder = '#10B981';
-                          optBg = '#ECFDF5';
-                          badgeBg = '#10B981';
-                          badgeText = '#FFFFFF';
-                        }
-
-                        if (showCorrectHighlight) {
-                          optBorder = '#059669';
-                          optBg = '#D1FAE5';
-                          badgeBg = '#059669';
-                          badgeText = '#FFFFFF';
-                        } else if (showWrongHighlight) {
-                          optBorder = '#EF4444';
-                          optBg = '#FEE2E2';
-                          badgeBg = '#EF4444';
-                          badgeText = '#FFFFFF';
-                        }
-
-                        return (
-                          <TouchableOpacity
-                            key={opt.key}
-                            onPress={() => handleSelectOption(item.id, opt.key)}
-                            style={[styles.optionItem, { borderColor: optBorder, backgroundColor: optBg }]}
-                            activeOpacity={0.75}
-                          >
-                            <View style={[styles.optionKeyCircle, { backgroundColor: badgeBg }]}>
-                              <Text style={[styles.optionKeyText, { color: badgeText }]}>{opt.key}</Text>
+                      return (
+                        <View key={item.id} style={styles.questionCard}>
+                          {/* Card Header (Nomor Soal, Status Pengerjaan, & Poin) */}
+                          <View style={styles.cardHeader}>
+                            <View style={styles.numberPill}>
+                              <Text style={styles.numberPillText}>Soal No. {idx + 1}</Text>
                             </View>
-                            <Text style={styles.optionContentText}>{opt.text}</Text>
-                            {showCorrectHighlight && (
-                              <MaterialCommunityIcons name="check-circle" size={18} color="#059669" style={{ marginLeft: 6 }} />
-                            )}
-                            {showWrongHighlight && (
-                              <MaterialCommunityIcons name="close-circle" size={18} color="#EF4444" style={{ marginLeft: 6 }} />
-                            )}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              {isItemAnswered ? (
+                                <View style={styles.questionAnsweredBadge}>
+                                  <MaterialCommunityIcons name="check-circle" size={12} color="#047857" style={{ marginRight: 3 }} />
+                                  <Text style={styles.questionAnsweredBadgeText}>
+                                    Selesai {userSelectedOption ? `(${userSelectedOption})` : ''}
+                                  </Text>
+                                </View>
+                              ) : (
+                                <View style={styles.questionUnansweredBadge}>
+                                  <MaterialCommunityIcons name="clock-alert-outline" size={12} color="#D97706" style={{ marginRight: 3 }} />
+                                  <Text style={styles.questionUnansweredBadgeText}>Belum Dikerjakan</Text>
+                                </View>
+                              )}
+                              <View style={styles.pointsBadge}>
+                                <Text style={styles.pointsBadgeText}>{item.poin ?? 10} Poin</Text>
+                              </View>
+                            </View>
+                          </View>
+
+                          {/* Kode Soal jika ada */}
+                          {Boolean(item.kode_soal) && (
+                            <View style={styles.metaRow}>
+                              <Text style={styles.metaCode}>Kode: {item.kode_soal}</Text>
+                            </View>
+                          )}
+
+                          {/* Teks Pertanyaan */}
+                          <Text style={styles.questionText}>{item.pertanyaan}</Text>
+
+                          {/* Opsi Jawaban (A, B, C, D, E) */}
+                          {options.length > 0 && (
+                            <View style={styles.optionsList}>
+                              {options.map((opt) => {
+                                const isChosen = userSelectedOption === opt.key;
+                                const isCorrectKey = (item.kunci_jawaban || '').toUpperCase() === opt.key;
+                                const showCorrectHighlight = isSolutionOpen && isCorrectKey;
+                                const showWrongHighlight = isSolutionOpen && isChosen && !isCorrectKey;
+
+                                let optBorder = '#E2E8F0';
+                                let optBg = '#FFFFFF';
+                                let badgeBg = '#E2E8F0';
+                                let badgeText = '#475569';
+
+                                if (isChosen) {
+                                  optBorder = '#10B981';
+                                  optBg = '#ECFDF5';
+                                  badgeBg = '#10B981';
+                                  badgeText = '#FFFFFF';
+                                }
+
+                                if (showCorrectHighlight) {
+                                  optBorder = '#059669';
+                                  optBg = '#D1FAE5';
+                                  badgeBg = '#059669';
+                                  badgeText = '#FFFFFF';
+                                } else if (showWrongHighlight) {
+                                  optBorder = '#EF4444';
+                                  optBg = '#FEE2E2';
+                                  badgeBg = '#EF4444';
+                                  badgeText = '#FFFFFF';
+                                }
+
+                                return (
+                                  <TouchableOpacity
+                                    key={opt.key}
+                                    onPress={() => handleSelectOption(item.id, opt.key)}
+                                    style={[styles.optionItem, { borderColor: optBorder, backgroundColor: optBg }]}
+                                    activeOpacity={0.75}
+                                  >
+                                    <View style={[styles.optionKeyCircle, { backgroundColor: badgeBg }]}>
+                                      <Text style={[styles.optionKeyText, { color: badgeText }]}>{opt.key}</Text>
+                                    </View>
+                                    <Text style={styles.optionContentText}>{opt.text}</Text>
+                                    {showCorrectHighlight && (
+                                      <MaterialCommunityIcons name="check-circle" size={18} color="#059669" style={{ marginLeft: 6 }} />
+                                    )}
+                                    {showWrongHighlight && (
+                                      <MaterialCommunityIcons name="close-circle" size={18} color="#EF4444" style={{ marginLeft: 6 }} />
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          )}
+
+                          {/* Tombol Buka Kunci Jawaban & Pembahasan */}
+                          <TouchableOpacity
+                            onPress={() => toggleSolution(item.id)}
+                            style={[styles.solutionToggleBtn, isSolutionOpen && styles.solutionToggleBtnActive]}
+                            activeOpacity={0.8}
+                          >
+                            <MaterialCommunityIcons
+                              name={isSolutionOpen ? 'eye-off-outline' : 'lightbulb-on-outline'}
+                              size={16}
+                              color={isSolutionOpen ? '#475569' : '#0D6B42'}
+                              style={{ marginRight: 6 }}
+                            />
+                            <Text style={[styles.solutionToggleBtnText, isSolutionOpen && { color: '#475569' }]}>
+                              {isSolutionOpen ? 'Sembunyikan Kunci & Pembahasan' : 'Lihat Kunci & Pembahasan Soal'}
+                            </Text>
+                            <MaterialCommunityIcons
+                              name={isSolutionOpen ? 'chevron-up' : 'chevron-down'}
+                              size={18}
+                              color={isSolutionOpen ? '#475569' : '#0D6B42'}
+                            />
                           </TouchableOpacity>
-                        );
-                      })}
-                    </View>
+
+                          {/* Konten Kunci Jawaban & Pembahasan */}
+                          {isSolutionOpen && (
+                            <View style={styles.solutionBox}>
+                              <View style={styles.solutionHeaderRow}>
+                                <MaterialCommunityIcons name="check-decagram" size={18} color="#059669" />
+                                <Text style={styles.solutionTitle}>Kunci Jawaban Resmi:</Text>
+                                <View style={styles.answerKeyPill}>
+                                  <Text style={styles.answerKeyPillText}>
+                                    {item.kunci_jawaban || 'Tersedia pada evaluasi guru'}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* Pembahasan */}
+                              <View style={styles.explanationSection}>
+                                <Text style={styles.explanationLabel}>Pembahasan & Analisis:</Text>
+                                <Text style={styles.explanationContent}>
+                                  {item.pembahasan && item.pembahasan.trim()
+                                    ? item.pembahasan
+                                    : 'Pelajari kembali materi pelajaran terkait untuk memahami konsep kunci butir soal ini dengan tuntas.'}
+                                </Text>
+                              </View>
+
+                              {/* Indikator */}
+                              {Boolean(item.indikator) && (
+                                <View style={styles.indicatorRow}>
+                                  <MaterialCommunityIcons name="target" size={13} color="#0D9488" style={{ marginRight: 4, marginTop: 1 }} />
+                                  <Text style={styles.indicatorText}>Indikator: {item.indikator}</Text>
+                                </View>
+                              )}
+
+                              {/* Penyusun */}
+                              {Boolean(item.kisi_kisi?.guru?.nama_lengkap || item.kisi_kisi?.guru?.name) && (
+                                <View style={styles.teacherAuthorRow}>
+                                  <MaterialCommunityIcons name="account-tie-outline" size={13} color="#64748B" style={{ marginRight: 4 }} />
+                                  <Text style={styles.teacherAuthorText}>
+                                    Penyusun: {item.kisi_kisi?.guru?.nama_lengkap || item.kisi_kisi?.guru?.name}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })
                   )}
-
-                  {/* Tombol Buka Kunci Jawaban & Pembahasan */}
-                  <TouchableOpacity
-                    onPress={() => toggleSolution(item.id)}
-                    style={[styles.solutionToggleBtn, isSolutionOpen && styles.solutionToggleBtnActive]}
-                    activeOpacity={0.8}
-                  >
-                    <MaterialCommunityIcons
-                      name={isSolutionOpen ? 'eye-off-outline' : 'lightbulb-on-outline'}
-                      size={16}
-                      color={isSolutionOpen ? '#475569' : '#0D6B42'}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={[styles.solutionToggleBtnText, isSolutionOpen && { color: '#475569' }]}>
-                      {isSolutionOpen ? 'Sembunyikan Kunci & Pembahasan' : 'Lihat Kunci & Pembahasan Soal'}
-                    </Text>
-                    <MaterialCommunityIcons
-                      name={isSolutionOpen ? 'chevron-up' : 'chevron-down'}
-                      size={18}
-                      color={isSolutionOpen ? '#475569' : '#0D6B42'}
-                    />
-                  </TouchableOpacity>
-
-                  {/* Konten Kunci Jawaban & Pembahasan */}
-                  {isSolutionOpen && (
-                    <View style={styles.solutionBox}>
-                      <View style={styles.solutionHeaderRow}>
-                        <MaterialCommunityIcons name="check-decagram" size={18} color="#059669" />
-                        <Text style={styles.solutionTitle}>Kunci Jawaban Resmi:</Text>
-                        <View style={styles.answerKeyPill}>
-                          <Text style={styles.answerKeyPillText}>
-                            {item.kunci_jawaban || 'Tersedia pada evaluasi guru'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* Pembahasan */}
-                      <View style={styles.explanationSection}>
-                        <Text style={styles.explanationLabel}>Pembahasan & Analisis:</Text>
-                        <Text style={styles.explanationContent}>
-                          {item.pembahasan && item.pembahasan.trim()
-                            ? item.pembahasan
-                            : 'Pelajari kembali materi pelajaran terkait untuk memahami konsep kunci butir soal ini dengan tuntas.'}
-                        </Text>
-                      </View>
-
-                      {/* Indikator */}
-                      {Boolean(item.indikator) && (
-                        <View style={styles.indicatorRow}>
-                          <MaterialCommunityIcons name="target" size={13} color="#0D9488" style={{ marginRight: 4, marginTop: 1 }} />
-                          <Text style={styles.indicatorText}>Indikator: {item.indikator}</Text>
-                        </View>
-                      )}
-
-                      {/* Penyusun */}
-                      {Boolean(item.kisi_kisi?.guru?.nama_lengkap || item.kisi_kisi?.guru?.name) && (
-                        <View style={styles.teacherAuthorRow}>
-                          <MaterialCommunityIcons name="account-tie-outline" size={13} color="#64748B" style={{ marginRight: 4 }} />
-                          <Text style={styles.teacherAuthorText}>
-                            Penyusun: {item.kisi_kisi?.guru?.nama_lengkap || item.kisi_kisi?.guru?.name}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
-                </View>
+                </>
               );
-            })}
+            })()}
 
             {/* Tombol Selesai Latihan */}
             <TouchableOpacity
@@ -1115,6 +1697,369 @@ export default function BankSoalScreen({ route }: any) {
         student={selectedWeeklyStudent}
         onClose={() => setSelectedWeeklyStudent(null)}
       />
+
+      {/* MODAL PEMILIH ANANDA (JIKA ORANG TUA MEMILIKI >1 ANAK) */}
+      <Modal
+        visible={showChildSelectorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowChildSelectorModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowChildSelectorModal(false)}
+          />
+          <View style={styles.childModalSheet}>
+            <View style={styles.childModalHeader}>
+              <Text style={styles.childModalTitle}>Pilih Ananda</Text>
+              <TouchableOpacity onPress={() => setShowChildSelectorModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {children.map((c: any, idx: number) => {
+                const cId = String(c.id || c.student_id);
+                const isSelected = cId === String(selectedChildId);
+                const cName = (typeof c.name === 'string' && c.name) || (typeof c.nama_lengkap === 'string' && c.nama_lengkap) || (typeof c.full_name === 'string' && c.full_name) || 'Ananda';
+                const cUnit =
+                  (typeof c.unit?.name === 'string' && c.unit.name) ||
+                  (typeof c.unit_name === 'string' && c.unit_name) ||
+                  (typeof c.education_unit?.name === 'string' && c.education_unit.name) ||
+                  (typeof c.education_unit_name === 'string' && c.education_unit_name) ||
+                  (typeof c.unit === 'string' && c.unit) ||
+                  '';
+                const cClass =
+                  (typeof c.kelas?.nama_kelas === 'string' && c.kelas.nama_kelas) ||
+                  (typeof c.kelas?.name === 'string' && c.kelas.name) ||
+                  (typeof c.class?.name === 'string' && c.class.name) ||
+                  (typeof c.class_name === 'string' && c.class_name) ||
+                  (typeof c.kelas === 'string' && c.kelas) ||
+                  '';
+                const cAvatar = c.photo_url || c.avatar_url;
+
+                return (
+                  <TouchableOpacity
+                    key={cId || idx}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowChildSelectorModal(false);
+                      setSelectedChildId(cId);
+                      useActiveChildStore.getState().setActiveChildId(cId);
+                      setSelectedSubjectModal(null);
+                      goToLoopChild(idx);
+                    }}
+                    style={[
+                      styles.childModalItem,
+                      isSelected && styles.childModalItemActive,
+                    ]}
+                  >
+                    <Image
+                      source={getStudentAvatarSource(c)}
+                      style={styles.childModalAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text
+                        style={[
+                          styles.childModalItemName,
+                          isSelected && { color: '#0D6B42', fontWeight: '800' },
+                        ]}
+                      >
+                        {cName}
+                      </Text>
+                      {cUnit || cClass ? (
+                        <Text style={styles.childModalItemSub}>
+                          {[cUnit, cClass].filter(Boolean).join(' · ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#0D6B42" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL FILTER MATA PELAJARAN (TAILGRIDS BOTTOM SHEET) ── */}
+      <Modal
+        visible={showSubjectFilterModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSubjectFilterModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowSubjectFilterModal(false)}
+          />
+          <View style={styles.filterModalSheet}>
+            <View style={styles.filterModalHeader}>
+              <View style={styles.filterModalHeaderLeft}>
+                <View style={styles.filterModalIconSquircle}>
+                  <MaterialCommunityIcons name="book-open-page-variant" size={20} color="#047857" />
+                </View>
+                <View>
+                  <Text style={styles.filterModalTitle}>Pilih Mata Pelajaran</Text>
+                  <Text style={styles.filterModalSubtitle}>Filter materi soal berdasarkan bidang studi</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowSubjectFilterModal(false)}
+                style={styles.filterModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={true}>
+              {/* Opsi Semua Mata Pelajaran */}
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setSelectedSubjectFilter('all');
+                  setShowSubjectFilterModal(false);
+                }}
+                style={[
+                  styles.filterModalItem,
+                  selectedSubjectFilter === 'all' && styles.filterModalItemActive,
+                ]}
+              >
+                <View style={[styles.filterModalItemIcon, { backgroundColor: '#ECFDF5' }]}>
+                  <MaterialCommunityIcons name="view-grid-outline" size={18} color="#047857" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text
+                    style={[
+                      styles.filterModalItemTitle,
+                      selectedSubjectFilter === 'all' && styles.filterModalItemTitleActive,
+                    ]}
+                  >
+                    Semua Mata Pelajaran
+                  </Text>
+                  <Text style={styles.filterModalItemSub}>
+                    Menampilkan seluruh butir soal ({stats.totalQuestions} butir)
+                  </Text>
+                </View>
+                {selectedSubjectFilter === 'all' && (
+                  <MaterialCommunityIcons name="check-circle" size={20} color="#047857" />
+                )}
+              </TouchableOpacity>
+
+              {/* List Mata Pelajaran */}
+              {allSubjectsList.map((subj) => {
+                const isSelected = selectedSubjectFilter === subj.name;
+                const theme = getSubjectTheme(subj.name);
+                return (
+                  <TouchableOpacity
+                    key={subj.name}
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      setSelectedSubjectFilter(subj.name);
+                      setShowSubjectFilterModal(false);
+                    }}
+                    style={[
+                      styles.filterModalItem,
+                      isSelected && styles.filterModalItemActive,
+                    ]}
+                  >
+                    <View style={[styles.filterModalItemIcon, { backgroundColor: theme.bg }]}>
+                      <MaterialCommunityIcons name={theme.icon as any} size={18} color={theme.color} />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text
+                        style={[
+                          styles.filterModalItemTitle,
+                          isSelected && styles.filterModalItemTitleActive,
+                        ]}
+                      >
+                        {subj.name}
+                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        <Text style={styles.filterModalItemSub}>
+                          {subj.count} Butir Soal
+                        </Text>
+                        {subj.uncompletedCount > 0 ? (
+                          <View style={styles.uncompletedMiniPill}>
+                            <Text style={styles.uncompletedMiniPillText}>
+                              {subj.uncompletedCount} Belum
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.completedMiniPill}>
+                            <Text style={styles.completedMiniPillText}>Selesai</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                    {isSelected && (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#047857" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL FILTER TANGGAL (TAILGRIDS BOTTOM SHEET) ── */}
+      <Modal
+        visible={showDateFilterModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDateFilterModal(false)}
+      >
+        <View style={styles.childModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowDateFilterModal(false)}
+          />
+          <View style={styles.filterModalSheet}>
+            <View style={styles.filterModalHeader}>
+              <View style={styles.filterModalHeaderLeft}>
+                <View style={styles.filterModalIconSquircle}>
+                  <MaterialCommunityIcons name="calendar-clock" size={20} color="#047857" />
+                </View>
+                <View>
+                  <Text style={styles.filterModalTitle}>Filter Tanggal Bank Soal</Text>
+                  <Text style={styles.filterModalSubtitle}>Pilih rentang waktu publikasi butir soal</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowDateFilterModal(false)}
+                style={styles.filterModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={true}>
+              {/* Presets Rentang Tanggal */}
+              <View style={styles.datePresetsGrid}>
+                {[
+                  { key: 'all', label: 'Semua Tanggal', desc: 'Tampilkan seluruh soal latihan' },
+                  { key: 'today', label: 'Hari Ini', desc: 'Soal dirilis / dibuat hari ini' },
+                  { key: '7days', label: '7 Hari Terakhir', desc: 'Satu pekan terakhir' },
+                  { key: '30days', label: 'Bulan Ini', desc: '30 hari terakhir' },
+                ].map((preset) => {
+                  const isSel = selectedDateFilter === preset.key;
+                  return (
+                    <TouchableOpacity
+                      key={preset.key}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setSelectedDateFilter(preset.key as any);
+                        setCustomSelectedDate(null);
+                        setShowDateFilterModal(false);
+                      }}
+                      style={[
+                        styles.datePresetCard,
+                        isSel && styles.datePresetCardActive,
+                      ]}
+                    >
+                      <View style={styles.datePresetCardRow}>
+                        <Text style={[styles.datePresetLabel, isSel && styles.datePresetLabelActive]}>
+                          {preset.label}
+                        </Text>
+                        {isSel && (
+                          <MaterialCommunityIcons name="check-circle" size={16} color="#047857" />
+                        )}
+                      </View>
+                      <Text style={styles.datePresetDesc}>{preset.desc}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Custom Calendar Picker */}
+              <View style={styles.customCalendarWrapper}>
+                <View style={styles.calendarHeaderRow}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const prev = new Date(calendarViewDate);
+                      prev.setMonth(prev.getMonth() - 1);
+                      setCalendarViewDate(prev);
+                    }}
+                    style={styles.calNavBtn}
+                  >
+                    <MaterialCommunityIcons name="chevron-left" size={20} color="#047857" />
+                  </TouchableOpacity>
+
+                  <Text style={styles.calMonthTitle}>
+                    {calendarViewDate.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}
+                  </Text>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      const next = new Date(calendarViewDate);
+                      next.setMonth(next.getMonth() + 1);
+                      setCalendarViewDate(next);
+                    }}
+                    style={styles.calNavBtn}
+                  >
+                    <MaterialCommunityIcons name="chevron-right" size={20} color="#047857" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Day of Week */}
+                <View style={styles.calDaysOfWeekRow}>
+                  {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map((d) => (
+                    <Text key={d} style={styles.calDayColHeader}>
+                      {d}
+                    </Text>
+                  ))}
+                </View>
+
+                {/* Calendar Days Matrix */}
+                <View style={styles.calDaysGrid}>
+                  {(() => {
+                    const year = calendarViewDate.getFullYear();
+                    const month = calendarViewDate.getMonth();
+                    const firstDay = new Date(year, month, 1).getDay();
+                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    const days = [];
+                    for (let i = 0; i < firstDay; i++) {
+                      days.push(<View key={`empty-${i}`} style={styles.calDayCell} />);
+                    }
+                    for (let d = 1; d <= daysInMonth; d++) {
+                      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                      const isSel = selectedDateFilter === 'custom' && customSelectedDate === dateStr;
+                      days.push(
+                        <TouchableOpacity
+                          key={`day-${d}`}
+                          activeOpacity={0.75}
+                          onPress={() => {
+                            setCustomSelectedDate(dateStr);
+                            setSelectedDateFilter('custom');
+                            setShowDateFilterModal(false);
+                          }}
+                          style={[
+                            styles.calDayCell,
+                            isSel && styles.calDayCellActive,
+                          ]}
+                        >
+                          <Text style={[styles.calDayNum, isSel && styles.calDayNumActive]}>
+                            {d}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    }
+                    return days;
+                  })()}
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1122,7 +2067,429 @@ export default function BankSoalScreen({ route }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#ECFDF5',
+  },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 1,
+  },
+  cleanTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+  },
+  cleanHeaderIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cleanHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+  },
+  cleanMainScrollContent: {
+    paddingTop: 4,
+  },
+  cleanScrollInner: {
+    flex: 1,
+  },
+  studentProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 0,
+    paddingTop: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+  },
+  studentAvatarRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  studentAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  studentProfileInfoCol: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+  },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  studentProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#004D32',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+    flexShrink: 1,
+  },
+  studentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  studentProfileUnitText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+    flexShrink: 1,
+  },
+  studentProfileClassText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+    flexShrink: 1,
+  },
+  studentActionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  parentGantiAnakBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 4,
+    shadowColor: '#004D32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  parentGantiAnakBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  attendanceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1.2,
+  },
+  attendanceStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  bankSoalGroupCard: {
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    overflow: 'hidden',
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+    marginBottom: 14,
+  },
+  bankSoalGroupHeaderGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  bankSoalGroupHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  bankSoalGroupHeaderIconBoxWhite: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  bankSoalGroupTitleWhite: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  bankSoalGroupSubWhite: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#D1FAE5',
+    marginTop: 1,
+  },
+  bankSoalGroupBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 999,
+  },
+  bankSoalGroupBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  kpiRowModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 10,
+  },
+  kpiCardModern: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.2,
+  },
+  kpiIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kpiLabelModern: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  kpiValueModern: {
+    fontSize: 19,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+    marginTop: 1,
+  },
+  kpiSubModern: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  kpiProgressBannerWrapper: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+  },
+  kpiProgressBanner: {
+    borderRadius: 14,
+    borderWidth: 1.2,
+    padding: 12,
+  },
+  kpiProgressBannerAmber: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  kpiProgressBannerAmberActive: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#D97706',
+  },
+  kpiProgressBannerEmerald: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  kpiProgressBannerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  kpiProgressBannerLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  kpiStatusIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kpiProgressBannerTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  kpiProgressBannerSub: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  kpiProgressFilterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 2,
+  },
+  kpiProgressFilterPillActive: {
+    backgroundColor: '#D97706',
+    borderColor: '#B45309',
+  },
+  kpiProgressFilterPillText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  kpiProgressFilterPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  kpiMiniProgressBarBg: {
+    height: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.06)',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  kpiMiniProgressBarFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  searchContainerModern: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  searchInputModern: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '600',
+    marginLeft: 8,
+    padding: 0,
+  },
+  childModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  childModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  childModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  childModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  childModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
     backgroundColor: '#F8FAFC',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  childModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#0D6B42',
+  },
+  childModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#0D6B42',
+  },
+  childModalItemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  childModalItemSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   // ── Standard sheet layout (identik ScheduleScreen) ──
   sheetContainer: {
@@ -1349,26 +2716,26 @@ const styles = StyleSheet.create({
   },
   subjectCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    padding: 14,
-    marginBottom: 12,
+    borderColor: '#A7F3D0',
+    padding: 16,
+    marginBottom: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
   },
   subjectIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 14,
   },
   subjectInfoCol: {
     flex: 1,
@@ -1419,6 +2786,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748B',
     fontFamily: 'Nunito_600SemiBold',
+  },
+  subjectDoneBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  subjectDoneBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#059669',
+    fontFamily: 'Nunito_700Bold',
+  },
+  subjectPendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  subjectPendingBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#B45309',
+    fontFamily: 'Nunito_700Bold',
   },
   subjectArrowWrap: {
     marginLeft: 8,
@@ -1539,15 +2938,15 @@ const styles = StyleSheet.create({
   },
   questionCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     padding: 16,
     marginBottom: 14,
-    shadowColor: '#000000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: '#059669',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
   cardHeader: {
@@ -1765,20 +3164,23 @@ const styles = StyleSheet.create({
   },
   modalRootContainer: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#ECFDF5',
   },
   modalTopBar: {
     width: '100%',
     position: 'relative',
     overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#A7F3D0',
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
     paddingBottom: 14,
     shadowColor: '#047857',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 3,
   },
   modalTopBarRow: {
     flexDirection: 'row',
@@ -1791,12 +3193,17 @@ const styles = StyleSheet.create({
   modalTopBarBackBtn: {
     width: 38,
     height: 38,
-    borderRadius: 12,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: 'rgba(5, 150, 105, 0.32)',
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
   modalTopBarCenterCol: {
     flex: 1,
@@ -1805,19 +3212,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   modalTopBarTitle: {
-    fontSize: 15.5,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
     fontFamily: 'Poppins_700Bold',
-    color: '#FFFFFF',
+    color: '#004D32',
     textAlign: 'center',
+  },
+  modalTopBarPill: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    marginTop: 3,
   },
   modalTopBarSubtitle: {
     fontSize: 11,
     fontWeight: '600',
     fontFamily: 'Nunito_600SemiBold',
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#047857',
     textAlign: 'center',
-    marginTop: 1,
   },
   modalScrollBody: {
     flex: 1,
@@ -1828,12 +3243,17 @@ const styles = StyleSheet.create({
   modalNoticeBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#F0FDFA',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#99F6E4',
-    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 14,
     marginBottom: 16,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
   },
   modalNoticeText: {
     flex: 1,
@@ -1865,5 +3285,534 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontFamily: 'Poppins_700Bold',
     color: '#FFFFFF',
+  },
+
+  // ── FILTER SECTION STYLES ──
+  filterSectionContainer: {
+    marginBottom: 16,
+    gap: 10,
+  },
+  statusFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusFilterScroll: {
+    flexGrow: 0,
+  },
+  statusFilterScrollContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 12,
+  },
+  statusFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 13,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  statusFilterChipActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+  },
+  statusFilterChipAmberActive: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#D97706',
+  },
+  statusFilterChipEmeraldActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#047857',
+  },
+  statusFilterChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    fontFamily: 'Nunito_700Bold',
+  },
+  statusFilterChipTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  statusFilterChipAmberTextActive: {
+    color: '#B45309',
+    fontWeight: '800',
+  },
+  statusFilterChipEmeraldTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  dropdownFiltersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterDropdownBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  filterDropdownBtnActive: {
+    borderColor: '#047857',
+    backgroundColor: '#ECFDF5',
+  },
+  filterDropdownBtnText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+    fontFamily: 'Nunito_700Bold',
+  },
+  filterDropdownBtnTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  filterResetBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1.2,
+    borderColor: '#FECDD3',
+  },
+  activeFilterPillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingTop: 2,
+  },
+  activeFilterLabelText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  activeFilterTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+  },
+  activeFilterTagText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#047857',
+  },
+
+  // ── MODAL INNER FILTER & PROGRESS STYLES ──
+  modalFilterSegmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 3,
+    marginBottom: 12,
+    gap: 4,
+  },
+  modalFilterTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 11,
+  },
+  modalFilterTabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modalFilterTabActiveAmber: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modalFilterTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  modalFilterTabTextActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  modalFilterTabTextActiveAmber: {
+    color: '#B45309',
+    fontWeight: '800',
+  },
+  modalProgressCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 12,
+    marginBottom: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  modalProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  modalProgressLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  modalProgressValue: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  modalProgressBarBg: {
+    height: 8,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  modalProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#059669',
+    borderRadius: 999,
+  },
+  modalAllCompletedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  modalAllCompletedIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  modalAllCompletedTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#004D32',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  modalAllCompletedDesc: {
+    fontSize: 12.5,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  modalViewAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  modalViewAllBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  questionAnsweredBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  questionAnsweredBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  questionUnansweredBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  questionUnansweredBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+
+  // ── FILTER MODALS (SUBJECT & DATE) STYLES ──
+  filterModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  filterModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ECFDF5',
+    marginBottom: 12,
+  },
+  filterModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  filterModalIconSquircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  filterModalTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#004D32',
+    fontFamily: 'Poppins_700Bold',
+  },
+  filterModalSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  filterModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  filterModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    marginBottom: 6,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  filterModalItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  filterModalItemIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterModalItemTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  filterModalItemTitleActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  filterModalItemSub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  uncompletedMiniPill: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  uncompletedMiniPillText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  completedMiniPill: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  completedMiniPillText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#047857',
+  },
+
+  // ── DATE FILTER PRESETS & MINI CALENDAR STYLES ──
+  datePresetsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  datePresetCard: {
+    width: '48%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 10,
+  },
+  datePresetCardActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+  },
+  datePresetCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 3,
+  },
+  datePresetLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  datePresetLabelActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  datePresetDesc: {
+    fontSize: 10,
+    color: '#64748B',
+  },
+  customCalendarWrapper: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    padding: 12,
+    marginTop: 4,
+  },
+  calendarHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  calNavBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calMonthTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  calDaysOfWeekRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  calDayColHeader: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  calDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calDayCell: {
+    width: `${100 / 7}%`,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    marginVertical: 1,
+  },
+  calDayCellActive: {
+    backgroundColor: '#059669',
+  },
+  calDayNum: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  calDayNumActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
 });

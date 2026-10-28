@@ -19,13 +19,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
+import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
-import { getProfileImageUrl, DEFAULT_STUDENT_BOY_AVATAR } from '../utils/profile';
+import {
+  getProfileImageUrl,
+  DEFAULT_STUDENT_BOY_AVATAR,
+  DEFAULT_STUDENT_GIRL_AVATAR,
+  isGirlStudent,
+} from '../utils/profile';
 import { isPrincipalRole, isTuRole } from '../utils/roles';
 
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-type AttendanceStatus = 'present' | 'sick' | 'permit' | 'absent';
+type AttendanceStatus = 'present' | 'sick' | 'permit' | 'absent' | 'unmarked';
 
 export default function SubstituteKbmAttendanceScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
@@ -54,6 +61,8 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
   });
 
   // Students Roster and Attendance States
+  // NOTA: Status awal dikosongkan secara netral (tidak default hadir).
+  // Guru/Inval dapat menandai santri satu per satu atau menggunakan tombol "Checklist Hadir Semua".
   const [students, setStudents] = useState<any[]>([]);
   const [attendanceStatuses, setAttendanceStatuses] = useState<Record<string, AttendanceStatus>>({});
   const [attendanceNotes, setAttendanceNotes] = useState<Record<string, string>>({});
@@ -76,6 +85,19 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
     title: string;
     message?: string;
   } | null>(null);
+
+  // Navigation Back with self-healing fallback
+  const handleBack = () => {
+    const navState = navigation?.getState?.();
+    if (navState && navState.index > 0 && navigation?.canGoBack?.()) {
+      navigation.goBack();
+      return;
+    }
+    const didGoBack = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+    if (!didGoBack) {
+      navigation?.navigate?.('Beranda');
+    }
+  };
 
   // 1. Fetch Classes and Active Schedules
   useEffect(() => {
@@ -109,9 +131,9 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
             const endT = firstSched.time_end?.slice(0, 5) || firstSched.jam_selesai?.slice(0, 5) || '';
             const tRange = startT && endT ? `${startT} - ${endT} WIB` : (startT || endT || '');
             setSubstituteTeacherInfo({
-              originalTeacherName: firstSched.teacher?.name || firstSched.employee?.name || firstSched.nama_guru || '',
+              originalTeacherName: firstSched.teacher?.name || firstSched.employee?.name || firstSched.nama_guru || 'Ustadz Pengampu KBM',
               teacherStatus: 'Tidak Hadir',
-              subjectName: firstSched.subject?.name || firstSched.nama_mapel || '',
+              subjectName: firstSched.subject?.name || firstSched.nama_mapel || 'Mata Pelajaran KBM',
               timeRange: tRange,
             });
           }
@@ -127,6 +149,27 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
       isMounted = false;
     };
   }, []);
+
+  // Update schedule info when selectedClassId changes
+  useEffect(() => {
+    if (selectedClassId && schedules.length > 0) {
+      const matchingSched = schedules.find(
+        (sc) => String(sc.kelas_id || sc.class_id || sc.kelas?.id) === String(selectedClassId)
+      );
+      if (matchingSched) {
+        setSelectedSchedule(matchingSched);
+        const startT = matchingSched.time_start?.slice(0, 5) || matchingSched.jam_mulai?.slice(0, 5) || '';
+        const endT = matchingSched.time_end?.slice(0, 5) || matchingSched.jam_selesai?.slice(0, 5) || '';
+        const tRange = startT && endT ? `${startT} - ${endT} WIB` : (startT || endT || '');
+        setSubstituteTeacherInfo({
+          originalTeacherName: matchingSched.teacher?.name || matchingSched.employee?.name || matchingSched.nama_guru || 'Guru Pengampu KBM',
+          teacherStatus: 'Tidak Hadir',
+          subjectName: matchingSched.subject?.name || matchingSched.nama_mapel || 'Mata Pelajaran KBM',
+          timeRange: tRange,
+        });
+      }
+    }
+  }, [selectedClassId, schedules]);
 
   // 2. Fetch Students for Selected Class
   const fetchClassStudents = useCallback(async (classId: string) => {
@@ -144,12 +187,9 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
       const validList = Array.isArray(list) ? list : [];
       setStudents(validList);
 
-      // Default all present
-      const initialMap: Record<string, AttendanceStatus> = {};
-      validList.forEach((st: any) => {
-        initialMap[String(st.id)] = 'present';
-      });
-      setAttendanceStatuses(initialMap);
+      // Status awal santri dikosongkan secara netral (belum diisi)
+      // Guru / Petugas Inval menandai santri secara manual atau menekan tombol "Checklist Hadir Semua"
+      setAttendanceStatuses({});
     } catch (err) {
       console.warn('[SubstituteKbm] Students fetch error:', err);
       setStudents([]);
@@ -174,8 +214,9 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
     }
   };
 
-  // Quick Action: Mark all Present
+  // Quick Action: Tandai Semua Hadir (Checklist Hadir Semua)
   const markAllPresent = () => {
+    if (students.length === 0) return;
     const updated: Record<string, AttendanceStatus> = {};
     students.forEach((st: any) => {
       updated[String(st.id)] = 'present';
@@ -183,15 +224,28 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
     setAttendanceStatuses(updated);
   };
 
-  // Toggle Single Student Status
-  const setStudentStatus = (studentId: string, status: AttendanceStatus) => {
-    setAttendanceStatuses((prev) => ({
-      ...prev,
-      [studentId]: status,
-    }));
+  // Quick Action: Reset / Kosongkan semua status kembali ke netral
+  const resetAllAttendance = () => {
+    setAttendanceStatuses({});
   };
 
-  // Filtered Students
+  // Toggle Single Student Status
+  const setStudentStatus = (studentId: string, status: AttendanceStatus) => {
+    setAttendanceStatuses((prev) => {
+      // Jika status yang sama ditekan ulang, kembalikan ke unmarked
+      if (prev[studentId] === status) {
+        const next = { ...prev };
+        delete next[studentId];
+        return next;
+      }
+      return {
+        ...prev,
+        [studentId]: status,
+      };
+    });
+  };
+
+  // Filtered Students berdasarkan pencarian nama atau NIS
   const filteredStudents = useMemo(() => {
     if (!searchStudentQuery) return students;
     const q = searchStudentQuery.toLowerCase();
@@ -202,20 +256,25 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
     );
   }, [students, searchStudentQuery]);
 
-  // Attendance Counts
+  // Attendance Counts Terpadu
   const counts = useMemo(() => {
     let present = 0;
     let sick = 0;
     let permit = 0;
     let absent = 0;
-    Object.values(attendanceStatuses).forEach((st) => {
-      if (st === 'present') present++;
-      else if (st === 'sick') sick++;
-      else if (st === 'permit') permit++;
-      else if (st === 'absent') absent++;
+    let unmarked = 0;
+
+    students.forEach((st) => {
+      const status = attendanceStatuses[String(st.id)];
+      if (status === 'present') present++;
+      else if (status === 'sick') sick++;
+      else if (status === 'permit') permit++;
+      else if (status === 'absent') absent++;
+      else unmarked++;
     });
-    return { present, sick, permit, absent, total: students.length };
-  }, [attendanceStatuses, students.length]);
+
+    return { present, sick, permit, absent, unmarked, total: students.length };
+  }, [attendanceStatuses, students]);
 
   const selectedClassObj = useMemo(() => {
     return classes.find((c: any) => String(c.id) === String(selectedClassId));
@@ -251,6 +310,17 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
         type: 'warning',
         title: 'Data Siswa Kosong',
         message: 'Tidak ada data siswa ditemukan pada kelas ini untuk diabsen.',
+      });
+      return;
+    }
+
+    // Peringatan jika masih ada santri yang belum ditandai
+    if (counts.unmarked > 0) {
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: `${counts.unmarked} Santri Belum Ditandai`,
+        message: `Terdapat ${counts.unmarked} santri yang belum diisi status kehadirannya. Silakan tandai santri yang belum diisi atau tekan tombol "Checklist Hadir Semua".`,
       });
       return;
     }
@@ -306,28 +376,43 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
 
   return (
     <View style={s.container}>
-      {/* ── HEADER HALAMAN PRESENSI KBM (GAYA DATA MASTER TERPADU) ── */}
-      <LinearGradient
-        colors={['#065F46', '#059669', '#10B981']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[s.headerContainer, { paddingTop: topInset + 6 }]}
-      >
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK BUKU PENGHUBUNG & BUKU NILAI) ── */}
+      <View style={[s.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={s.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG & DATA SISWA ── */}
+      <View style={[s.headerContainer, { paddingTop: topInset + 4 }]}>
         <View style={s.headerTopRow}>
           <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => navigation?.goBack?.() || navigation?.navigate('Beranda')}
+            activeOpacity={0.75}
+            onPress={handleBack}
             style={s.backButton}
+            accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
 
           <View style={s.headerTitleWrap}>
             <View style={s.headerBadge}>
-              <MaterialCommunityIcons name="school-outline" size={12} color="#D1FAE5" />
-              <Text style={s.headerBadgeText}>
+              <View style={s.pulseDot} />
+              <Text style={s.headerBadgeText} numberOfLines={1}>
                 {isPrincipal
-                  ? 'OTORITAS KEPALA SEKOLAH • INVAL / PIKET KBM'
+                  ? 'OTORITAS KEPALA SEKOLAH • INVAL KBM'
                   : isTu
                   ? 'ROLE TATA USAHA • GURU INVAL'
                   : 'GURU PENGGANTI • KBM INVAL'}
@@ -336,34 +421,27 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
             <Text style={s.headerMainTitle} numberOfLines={1}>
               Presensi KBM Siswa & Inval
             </Text>
+            <Text style={s.headerSubtitle} numberOfLines={1}>
+              Pencatatan presensi kehadiran santri & jurnal KBM
+            </Text>
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={markAllPresent}
-              style={s.markAllPresentBtn}
-            >
-              <MaterialCommunityIcons name="check-all" size={16} color="#FFFFFF" />
-              <Text style={s.markAllPresentText}>Semua Hadir</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={onRefresh}
-              style={s.refreshButton}
-            >
-              <MaterialCommunityIcons name="refresh" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={onRefresh}
+            style={s.refreshButton}
+            accessibilityLabel="Muat Ulang"
+          >
+            <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+          </TouchableOpacity>
         </View>
 
-        {/* Search Bar langsung di Header Gradient (Gaya Data Master) */}
+        {/* Search Bar langsung di Header identik Buku Penghubung */}
         <View style={s.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#64748B" />
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
           <TextInput
             style={s.searchInput}
-            placeholder="Cari santri dalam kelas ini..."
+            placeholder="Cari santri berdasarkan nama atau NIS..."
             placeholderTextColor="#94A3B8"
             value={searchStudentQuery}
             onChangeText={setSearchStudentQuery}
@@ -376,14 +454,14 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
           )}
         </View>
 
-        {/* 3 KPI Cards Row (Harmonisasi Data Master & TAILGRIDS_ALUMNI_MUTASI_CARDS) */}
+        {/* 3 KPI Cards Row Terpadu (Harmonisasi Data Master) */}
         <View style={s.kpiCardsRow}>
-          {/* Card 1: Total Santri & Tingkat Kehadiran */}
-          <View style={[s.kpiBox, { borderColor: 'rgba(5, 150, 105, 0.22)' }]}>
+          {/* Card 1: Tingkat Hadir */}
+          <View style={[s.kpiBox, { borderColor: '#A7F3D0' }]}>
             <LinearGradient colors={['#FFFFFF', '#ECFDF5']} style={s.kpiBoxGradient}>
               <View style={s.kpiHeaderRow}>
                 <View style={[s.kpiIconSquare, { backgroundColor: '#059669' }]}>
-                  <MaterialCommunityIcons name="account-check" size={14} color="#FFFFFF" />
+                  <MaterialCommunityIcons name="account-check" size={13} color="#FFFFFF" />
                 </View>
                 <Text style={[s.kpiVal, { color: '#059669' }]}>
                   {counts.present}/{counts.total}
@@ -397,11 +475,11 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
           </View>
 
           {/* Card 2: Izin & Sakit */}
-          <View style={[s.kpiBox, { borderColor: 'rgba(37, 99, 235, 0.18)' }]}>
+          <View style={[s.kpiBox, { borderColor: '#BFDBFE' }]}>
             <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={s.kpiBoxGradient}>
               <View style={s.kpiHeaderRow}>
                 <View style={[s.kpiIconSquare, { backgroundColor: '#2563EB' }]}>
-                  <MaterialCommunityIcons name="file-document-edit-outline" size={14} color="#FFFFFF" />
+                  <MaterialCommunityIcons name="file-document-edit-outline" size={13} color="#FFFFFF" />
                 </View>
                 <Text style={[s.kpiVal, { color: '#2563EB' }]}>
                   {counts.sick + counts.permit}
@@ -409,32 +487,57 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
               </View>
               <Text style={[s.kpiLbl, { color: '#2563EB' }]} numberOfLines={1}>Izin & Sakit</Text>
               <Text style={s.kpiSub} numberOfLines={1}>
-                {counts.sick} Sakit · {counts.permit} Izin
+                {counts.sick} S · {counts.permit} I
               </Text>
             </LinearGradient>
           </View>
 
-          {/* Card 3: Alpa */}
-          <View style={[s.kpiBox, { borderColor: 'rgba(225, 29, 72, 0.18)' }]}>
-            <LinearGradient colors={['#FFFFFF', '#FFF1F2']} style={s.kpiBoxGradient}>
+          {/* Card 3: Alpa & Belum Diisi */}
+          <View style={[s.kpiBox, { borderColor: counts.unmarked > 0 ? '#FED7AA' : '#FECDD3' }]}>
+            <LinearGradient
+              colors={counts.unmarked > 0 ? ['#FFFFFF', '#FFFBEB'] : ['#FFFFFF', '#FFF1F2']}
+              style={s.kpiBoxGradient}
+            >
               <View style={s.kpiHeaderRow}>
-                <View style={[s.kpiIconSquare, { backgroundColor: '#E11D48' }]}>
-                  <MaterialCommunityIcons name="clock-alert-outline" size={14} color="#FFFFFF" />
+                <View
+                  style={[
+                    s.kpiIconSquare,
+                    { backgroundColor: counts.unmarked > 0 ? '#D97706' : '#E11D48' },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={counts.unmarked > 0 ? 'help-circle-outline' : 'clock-alert-outline'}
+                    size={13}
+                    color="#FFFFFF"
+                  />
                 </View>
-                <Text style={[s.kpiVal, { color: '#E11D48' }]}>
-                  {counts.absent}
+                <Text
+                  style={[
+                    s.kpiVal,
+                    { color: counts.unmarked > 0 ? '#D97706' : '#E11D48' },
+                  ]}
+                >
+                  {counts.absent + counts.unmarked}
                 </Text>
               </View>
-              <Text style={[s.kpiLbl, { color: '#E11D48' }]} numberOfLines={1}>Alpa</Text>
+              <Text
+                style={[
+                  s.kpiLbl,
+                  { color: counts.unmarked > 0 ? '#D97706' : '#E11D48' },
+                ]}
+                numberOfLines={1}
+              >
+                {counts.unmarked > 0 ? 'Belum Diisi' : 'Alpa'}
+              </Text>
               <Text style={s.kpiSub} numberOfLines={1}>
-                Tanpa Keterangan
+                {counts.unmarked > 0 ? `${counts.unmarked} Belum · ${counts.absent} Alpa` : `${counts.absent} Santri Alpa`}
               </Text>
             </LinearGradient>
           </View>
         </View>
-      </LinearGradient>
+      </View>
 
-      {/* ── SELECTOR ROMBEL / KELAS SUB-TABS (Gaya Data Master) ── */}
+      {/* ── SELECTOR ROMBEL / KELAS SUB-TABS (Pill Modern) ── */}
       <View style={s.segmentContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.segmentScroll}>
           {classes.map((cls: any) => {
@@ -449,7 +552,7 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
                 <MaterialCommunityIcons
                   name="google-classroom"
                   size={15}
-                  color={isSelected ? '#FFFFFF' : '#64748B'}
+                  color={isSelected ? '#FFFFFF' : '#059669'}
                 />
                 <Text style={[s.segmentBtnText, isSelected && s.segmentBtnTextActive]}>
                   {cls.name || cls.nama_kelas}
@@ -460,169 +563,246 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
         </ScrollView>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[s.scrollContent, { paddingBottom: bottomInset + 30 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />}
-      >
-        {/* ── CALLOUT BANNER: PERAN RESMI GURU INVAL ── */}
-        <View style={s.invalCalloutCard}>
-          <View style={s.invalIconWrap}>
-            <MaterialCommunityIcons name="account-switch-outline" size={22} color="#059669" />
-          </View>
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={s.invalCalloutTitle}>Penugasan Guru Inval / Piket KBM</Text>
-            <Text style={s.invalCalloutSub}>
-              {isPrincipal
-                ? 'Kepala Sekolah memantau dan mengisikan absensi rombel KBM santri secara darurat menggantikan guru pengampu yang berhalangan.'
-                : 'Petugas piket / inval bertindak menggantikan guru mapel yang tidak hadir atau terlambat agar jam belajar santri tetap berjalan & absensi kelas terdokumentasi.'}
-            </Text>
-          </View>
-        </View>
-
-        {/* ── CARD INFORMASI GURU ASLI YANG DIGANTIKAN ── */}
-        <View style={s.substitutedTeacherCard}>
-          <View style={s.substitutedTopRow}>
-            <View style={s.teacherAvatarBox}>
-              <MaterialCommunityIcons name="account-tie" size={24} color="#FFFFFF" />
+      {/* ── SHEET CONTAINER KONTEN (Gaya Modern Buku Nilai & Buku Penghubung) ── */}
+      <View style={s.sheetContainer}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[s.scrollContent, { paddingBottom: bottomInset + 30 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />}
+        >
+          {/* Callout Banner: Peran Resmi Guru Inval */}
+          <View style={s.invalCalloutCard}>
+            <View style={s.invalIconWrap}>
+              <MaterialCommunityIcons name="account-switch-outline" size={22} color="#059669" />
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={s.subLabel}>Guru Mata Pelajaran Utama:</Text>
-              <Text style={s.teacherNameText}>{substituteTeacherInfo.originalTeacherName || 'Belum Memilih Jadwal'}</Text>
-              <Text style={s.subjectTimeText}>
-                {substituteTeacherInfo.subjectName
-                  ? `${substituteTeacherInfo.subjectName}${substituteTeacherInfo.timeRange ? ` • ${substituteTeacherInfo.timeRange}` : ''}`
-                  : 'Pilih jadwal kelas di atas'}
+              <Text style={s.invalCalloutTitle}>Penugasan Guru Inval / Piket KBM</Text>
+              <Text style={s.invalCalloutSub}>
+                {isPrincipal
+                  ? 'Kepala Sekolah memantau dan mengisikan presensi rombel KBM santri secara darurat menggantikan guru pengampu yang berhalangan.'
+                  : 'Petugas piket / inval bertindak menggantikan guru mapel yang tidak hadir atau berhalangan agar proses KBM santri terdokumentasi akurat.'}
               </Text>
             </View>
-            <View style={s.teacherStatusPill}>
-              <Text style={s.teacherStatusPillText}>{substituteTeacherInfo.teacherStatus}</Text>
+          </View>
+
+          {/* Card Informasi Guru Asli yang Digantikan */}
+          <View style={s.substitutedTeacherCard}>
+            <View style={s.substitutedTopRow}>
+              <View style={s.teacherAvatarBox}>
+                <MaterialCommunityIcons name="account-tie" size={24} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={s.subLabel}>Guru Mata Pelajaran Utama:</Text>
+                <Text style={s.teacherNameText}>{substituteTeacherInfo.originalTeacherName || 'Belum Memilih Jadwal'}</Text>
+                <Text style={s.subjectTimeText}>
+                  {substituteTeacherInfo.subjectName
+                    ? `${substituteTeacherInfo.subjectName}${substituteTeacherInfo.timeRange ? ` • ${substituteTeacherInfo.timeRange}` : ''}`
+                    : 'Pilih jadwal kelas di atas'}
+                </Text>
+              </View>
+              <View style={s.teacherStatusPill}>
+                <Text style={s.teacherStatusPillText}>{substituteTeacherInfo.teacherStatus}</Text>
+              </View>
+            </View>
+
+            <View style={s.substituteBadgeRow}>
+              <MaterialCommunityIcons name="badge-account-horizontal" size={15} color="#059669" />
+              <Text style={s.substituteBadgeText}>
+                Petugas Inval: <Text style={{ fontWeight: '800' }}>{user?.name || 'Staf Tata Usaha'}</Text>
+              </Text>
             </View>
           </View>
 
-          {/* Substitute Badge */}
-          <View style={s.substituteBadgeRow}>
-            <MaterialCommunityIcons name="badge-account-horizontal" size={15} color="#059669" />
-            <Text style={s.substituteBadgeText}>
-              Petugas Inval: <Text style={{ fontWeight: '800' }}>{user?.name || 'Staf Tata Usaha'}</Text>
-            </Text>
+          {/* ── QUICK ACTION BAR: CHECKLIST SEMUA HADIR & RESET ── */}
+          <View style={s.quickActionsRow}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={markAllPresent}
+              disabled={students.length === 0}
+              style={s.markAllPresentButton}
+            >
+              <LinearGradient
+                colors={['#059669', '#047857']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={s.markAllPresentGradient}
+              >
+                <MaterialCommunityIcons name="check-all" size={17} color="#FFFFFF" />
+                <Text style={s.markAllPresentButtonText}>Checklist Hadir Semua</Text>
+                <View style={s.markAllPresentCountBadge}>
+                  <Text style={s.markAllPresentCountText}>{counts.total}</Text>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={resetAllAttendance}
+              disabled={students.length === 0}
+              style={s.resetAttendanceButton}
+            >
+              <MaterialCommunityIcons name="backup-restore" size={16} color="#64748B" />
+              <Text style={s.resetAttendanceButtonText}>Kosongkan</Text>
+            </TouchableOpacity>
           </View>
-        </View>
 
-        {/* ── ROSTER DAFTAR SISWA ── */}
-        <View style={s.rosterCard}>
-          <View style={s.rosterHeaderRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <MaterialCommunityIcons name="format-list-checks" size={18} color="#059669" />
-              <Text style={s.rosterHeaderTitle}>Roster Kehadiran Siswa</Text>
+          {/* ── ROSTER DAFTAR SISWA ── */}
+          <View style={s.rosterCard}>
+            <View style={s.rosterHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MaterialCommunityIcons name="format-list-checks" size={18} color="#059669" />
+                <Text style={s.rosterHeaderTitle}>Roster Kehadiran Santri</Text>
+              </View>
+              <View style={s.rosterCountPill}>
+                <Text style={s.rosterCountPillText}>
+                  {counts.present + counts.sick + counts.permit + counts.absent}/{counts.total} Terisi
+                </Text>
+              </View>
             </View>
-            <View style={s.rosterCountPill}>
-              <Text style={s.rosterCountPillText}>{filteredStudents.length} Santri</Text>
-            </View>
-          </View>
 
-          {loading ? (
-            <View style={s.loadingBox}>
-              <ActivityIndicator size="small" color="#059669" />
-              <Text style={s.loadingText}>Memuat data siswa kelas...</Text>
-            </View>
-          ) : filteredStudents.length === 0 ? (
-            <View style={s.loadingBox}>
-              <MaterialCommunityIcons name="account-question-outline" size={36} color="#CBD5E1" />
-              <Text style={s.loadingText}>Tidak ada data siswa ditemukan.</Text>
-            </View>
-          ) : (
-            filteredStudents.map((st: any, idx: number) => {
-              const currentStatus = attendanceStatuses[String(st.id)] || 'present';
-              const studentName = st.nama_lengkap || st.name;
-              return (
-                <View key={st.id || idx} style={s.studentRow}>
-                  <View style={s.studentAvatarWrap}>
-                    <Image
-                      source={st.avatar ? { uri: getProfileImageUrl(st) } : DEFAULT_STUDENT_BOY_AVATAR}
-                      style={s.studentAvatar}
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={s.studentNameText} numberOfLines={1}>{studentName}</Text>
-                    <Text style={s.studentNisText}>NIS: {st.nis || '-'}</Text>
-                  </View>
+            {loading ? (
+              <View style={s.loadingBox}>
+                <ActivityIndicator size="small" color="#059669" />
+                <Text style={s.loadingText}>Memuat data siswa kelas...</Text>
+              </View>
+            ) : filteredStudents.length === 0 ? (
+              <View style={s.loadingBox}>
+                <MaterialCommunityIcons name="account-question-outline" size={36} color="#CBD5E1" />
+                <Text style={s.loadingText}>Tidak ada data siswa ditemukan.</Text>
+              </View>
+            ) : (
+              filteredStudents.map((st: any, idx: number) => {
+                const sId = String(st.id);
+                const currentStatus = attendanceStatuses[sId]; // undefined jika belum diisi
+                const studentName = st.nama_lengkap || st.name;
+                const isGirl = isGirlStudent(st);
+                const defaultAvatar = isGirl ? DEFAULT_STUDENT_GIRL_AVATAR : DEFAULT_STUDENT_BOY_AVATAR;
 
-                  {/* 4 Status Buttons: H, S, I, A */}
-                  <View style={s.statusButtonsGroup}>
-                    {(
-                      [
-                        ['present', 'H', '#059669', '#ECFDF5'],
-                        ['sick', 'S', '#7C3AED', '#FAF5FF'],
-                        ['permit', 'I', '#2563EB', '#EFF6FF'],
-                        ['absent', 'A', '#E11D48', '#FFF1F2'],
-                      ] as const
-                    ).map(([statusKey, label, color, bg]) => {
-                      const isChosen = currentStatus === statusKey;
-                      return (
-                        <TouchableOpacity
-                          key={statusKey}
-                          activeOpacity={0.8}
-                          onPress={() => setStudentStatus(String(st.id), statusKey)}
+                return (
+                  <View key={st.id || idx} style={s.studentRow}>
+                    <View style={s.studentAvatarWrap}>
+                      <Image
+                        source={st.avatar ? { uri: getProfileImageUrl(st) } : defaultAvatar}
+                        style={s.studentAvatar}
+                      />
+                    </View>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={s.studentNameText} numberOfLines={1}>{studentName}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        <Text style={s.studentNisText}>NIS: {st.nis || '-'}</Text>
+                        {/* Status Label Pill */}
+                        <View
                           style={[
-                            s.statusBtn,
-                            isChosen && { backgroundColor: color, borderColor: color },
-                            !isChosen && { backgroundColor: bg, borderColor: color + '55' },
+                            s.studentStatusBadge,
+                            currentStatus === 'present' && { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+                            currentStatus === 'sick' && { backgroundColor: '#FAF5FF', borderColor: '#DDD6FE' },
+                            currentStatus === 'permit' && { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
+                            currentStatus === 'absent' && { backgroundColor: '#FFF1F2', borderColor: '#FECDD3' },
+                            !currentStatus && { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
                           ]}
                         >
-                          <Text style={[s.statusBtnText, isChosen ? { color: '#FFFFFF' } : { color }]}>
-                            {label}
+                          <Text
+                            style={[
+                              s.studentStatusBadgeText,
+                              currentStatus === 'present' && { color: '#059669' },
+                              currentStatus === 'sick' && { color: '#7C3AED' },
+                              currentStatus === 'permit' && { color: '#2563EB' },
+                              currentStatus === 'absent' && { color: '#E11D48' },
+                              !currentStatus && { color: '#64748B' },
+                            ]}
+                          >
+                            {currentStatus === 'present'
+                              ? 'Hadir'
+                              : currentStatus === 'sick'
+                              ? 'Sakit'
+                              : currentStatus === 'permit'
+                              ? 'Izin'
+                              : currentStatus === 'absent'
+                              ? 'Alpa'
+                              : 'Belum Diisi'}
                           </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* 4 Status Buttons: H, S, I, A */}
+                    <View style={s.statusButtonsGroup}>
+                      {(
+                        [
+                          ['present', 'H', '#059669', '#ECFDF5'],
+                          ['sick', 'S', '#7C3AED', '#FAF5FF'],
+                          ['permit', 'I', '#2563EB', '#EFF6FF'],
+                          ['absent', 'A', '#E11D48', '#FFF1F2'],
+                        ] as const
+                      ).map(([statusKey, label, color, bg]) => {
+                        const isChosen = currentStatus === statusKey;
+                        return (
+                          <TouchableOpacity
+                            key={statusKey}
+                            activeOpacity={0.8}
+                            onPress={() => setStudentStatus(sId, statusKey)}
+                            style={[
+                              s.statusBtn,
+                              isChosen && { backgroundColor: color, borderColor: color },
+                              !isChosen && { backgroundColor: bg, borderColor: color + '40' },
+                            ]}
+                          >
+                            <Text style={[s.statusBtnText, isChosen ? { color: '#FFFFFF' } : { color }]}>
+                              {label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
-                </View>
-              );
-            })
-          )}
-        </View>
-
-        {/* ── JURNAL KBM PENGGANTI ── */}
-        <View style={s.journalCard}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-            <MaterialCommunityIcons name="book-edit-outline" size={17} color="#059669" style={{ marginRight: 6 }} />
-            <Text style={s.journalTitle}>Catatan Jurnal KBM Pengganti</Text>
-          </View>
-          <TextInput
-            placeholder="Tuliskan materi yang diajarkan / tugas yang diberikan selama mengisi kelas..."
-            placeholderTextColor="#94A3B8"
-            value={kbmJournalNotes}
-            onChangeText={setKbmJournalNotes}
-            style={s.journalInput}
-            multiline
-          />
-        </View>
-
-        {/* ── SUBMIT BUTTON ── */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={handleValidateAndPromptConfirm}
-          disabled={submitting}
-          style={s.submitBtn}
-        >
-          <LinearGradient
-            colors={['#059669', '#047857']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={s.submitBtnGradient}
-          >
-            {submitting ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="content-save-check" size={18} color="#FFFFFF" />
-                <Text style={s.submitBtnText}>Simpan Presensi KBM Pengganti</Text>
-              </>
+                );
+              })
             )}
-          </LinearGradient>
-        </TouchableOpacity>
-      </ScrollView>
+          </View>
+
+          {/* ── JURNAL KBM PENGGANTI ── */}
+          <View style={s.journalCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <MaterialCommunityIcons name="book-edit-outline" size={17} color="#059669" style={{ marginRight: 6 }} />
+              <Text style={s.journalTitle}>Catatan Jurnal KBM Pengganti</Text>
+            </View>
+            <TextInput
+              placeholder="Tuliskan materi yang diajarkan / tugas yang diberikan selama mengisi kelas..."
+              placeholderTextColor="#94A3B8"
+              value={kbmJournalNotes}
+              onChangeText={setKbmJournalNotes}
+              style={s.journalInput}
+              multiline
+            />
+          </View>
+
+          {/* ── SUBMIT BUTTON ── */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleValidateAndPromptConfirm}
+            disabled={submitting}
+            style={s.submitBtn}
+          >
+            <LinearGradient
+              colors={['#059669', '#047857']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={s.submitBtnGradient}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="content-save-check" size={18} color="#FFFFFF" />
+                  <Text style={s.submitBtnText}>
+                    Simpan Presensi KBM ({counts.present + counts.sick + counts.permit + counts.absent}/{counts.total} Terdata)
+                  </Text>
+                </>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
 
       {/* ── MODAL KONFIRMASI SIMPAN PRESENSI (TAILGRIDS HARMONIZED) ── */}
       <Modal
@@ -742,27 +922,45 @@ export default function SubstituteKbmAttendanceScreen({ navigation, route }: any
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F0FDF4' },
 
-  /* ── Master Gradient Header ── */
+  /* ── Background Foliage ── */
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+  },
+
+  /* ── Header Container ── */
   headerContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
+    paddingBottom: 14,
   },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   backButton: {
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   headerTitleWrap: {
     flex: 1,
@@ -770,53 +968,66 @@ const s = StyleSheet.create({
   headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
+  },
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
   },
   headerBadgeText: {
     fontSize: 10,
     fontWeight: '800',
-    color: 'rgba(255, 255, 255, 0.85)',
-    letterSpacing: 0.6,
+    color: '#065F46',
+    letterSpacing: 0.5,
   },
   headerMainTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
     letterSpacing: 0.2,
+    marginTop: 1,
   },
-  markAllPresentBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    gap: 4,
-  },
-  markAllPresentText: {
+  headerSubtitle: {
     fontSize: 11,
-    fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#047857',
+    fontWeight: '600',
+    marginTop: 1,
   },
   refreshButton: {
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
 
-  /* ── Header Integrated Search Bar ── */
+  /* ── Search Bar ── */
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
     height: 42,
     marginTop: 12,
     gap: 8,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -835,8 +1046,14 @@ const s = StyleSheet.create({
   kpiBox: {
     flex: 1,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: 1.5,
     overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   kpiBoxGradient: {
     padding: 9,
@@ -854,11 +1071,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   kpiVal: {
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '900',
   },
   kpiLbl: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '800',
     marginTop: 4,
   },
@@ -871,38 +1088,57 @@ const s = StyleSheet.create({
 
   /* ── Segmented Sub-Tabs Bar (Rombel / Kelas) ── */
   segmentContainer: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingVertical: 8,
+    paddingVertical: 6,
+    backgroundColor: 'transparent',
   },
   segmentScroll: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     gap: 8,
   },
   segmentBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 14,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     gap: 6,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   segmentBtnActive: {
     backgroundColor: '#059669',
+    borderColor: '#047857',
   },
   segmentBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#065F46',
   },
   segmentBtnTextActive: {
     color: '#FFFFFF',
     fontWeight: '800',
   },
 
+  /* ── Sheet Container ── */
+  sheetContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 4,
+    marginTop: 4,
+  },
   scrollContent: { padding: 14 },
 
   /* ── Callout Card ── */
@@ -914,16 +1150,11 @@ const s = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
     padding: 14,
-    marginBottom: 14,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    marginBottom: 12,
   },
   invalIconWrap: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     borderRadius: 12,
     backgroundColor: '#D1FAE5',
     alignItems: 'center',
@@ -935,58 +1166,118 @@ const s = StyleSheet.create({
   /* ── Guru Asli Card ── */
   substitutedTeacherCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
-    marginBottom: 14,
+    marginBottom: 12,
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowRadius: 5,
     elevation: 2,
   },
   substitutedTopRow: { flexDirection: 'row', alignItems: 'center' },
   teacherAvatarBox: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     borderRadius: 14,
     backgroundColor: '#059669',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  subLabel: { fontSize: 10.5, color: '#64748B', fontWeight: '700' },
-  teacherNameText: { fontSize: 13.5, fontWeight: '800', color: '#0F172A' },
-  subjectTimeText: { fontSize: 11.5, color: '#059669', fontWeight: '700', marginTop: 1 },
+  subLabel: { fontSize: 10, color: '#64748B', fontWeight: '700' },
+  teacherNameText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
+  subjectTimeText: { fontSize: 11, color: '#059669', fontWeight: '700', marginTop: 1 },
   teacherStatusPill: {
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
-    paddingHorizontal: 9,
-    paddingVertical: 4.5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 8,
   },
-  teacherStatusPillText: { fontSize: 10.5, fontWeight: '800', color: '#E11D48' },
+  teacherStatusPillText: { fontSize: 10, fontWeight: '800', color: '#E11D48' },
 
   substituteBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
     borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 10,
     gap: 6,
     borderWidth: 1,
     borderColor: '#A7F3D0',
   },
-  substituteBadgeText: { fontSize: 11.5, color: '#065F46' },
+  substituteBadgeText: { fontSize: 11, color: '#065F46' },
+
+  /* ── Quick Action Bar ── */
+  quickActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  markAllPresentButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 14,
+    overflow: 'hidden',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  markAllPresentGradient: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  markAllPresentButtonText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  markAllPresentCountBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  markAllPresentCountText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  resetAttendanceButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 42,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    gap: 5,
+  },
+  resetAttendanceButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
 
   /* ── Roster Card ── */
   rosterCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    padding: 16,
+    padding: 14,
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
     marginBottom: 14,
@@ -1006,7 +1297,7 @@ const s = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#A7F3D0',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   rosterHeaderTitle: {
     fontSize: 13,
@@ -1048,7 +1339,17 @@ const s = StyleSheet.create({
   },
   studentAvatar: { width: '100%', height: '100%' },
   studentNameText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
-  studentNisText: { fontSize: 11, color: '#64748B', marginTop: 1 },
+  studentNisText: { fontSize: 10.5, color: '#64748B' },
+  studentStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  studentStatusBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
 
   statusButtonsGroup: { flexDirection: 'row', gap: 5 },
   statusBtn: {
@@ -1056,7 +1357,6 @@ const s = StyleSheet.create({
     height: 32,
     borderRadius: 9,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1066,10 +1366,10 @@ const s = StyleSheet.create({
   journalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    padding: 16,
+    padding: 14,
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
-    marginBottom: 16,
+    marginBottom: 14,
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -1110,13 +1410,13 @@ const s = StyleSheet.create({
     gap: 8,
   },
   submitBtnText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: 0.2,
   },
 
-  /* ── Confirmation Modal (TailGrids Modern Harmonized) ── */
+  /* ── Confirmation Modal ── */
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.70)',

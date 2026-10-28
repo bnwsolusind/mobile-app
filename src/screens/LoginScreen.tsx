@@ -26,7 +26,6 @@ import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { biometricService, BiometricSessionData } from '../services/biometricService';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
 import ServerSwitchModal from '../components/ServerSwitchModal';
-import { useServerConfigStore, SERVER_PRESETS } from '../stores/serverConfigStore';
 
 let CameraViewComponent: any = null;
 let useCameraPermissionsHook: any = null;
@@ -41,6 +40,8 @@ try {
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 const roleNames = (value: unknown): string[] => (
   Array.isArray(value)
@@ -61,8 +62,6 @@ export default function LoginScreen() {
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const currentEnv = useServerConfigStore((state) => state.currentEnv);
-  const activeUrl = useServerConfigStore((state) => state.activeUrl);
   const [serverModalVisible, setServerModalVisible] = useState(false);
   const [logoTapCount, setLogoTapCount] = useState(0);
   const lastLogoTapRef = React.useRef(0);
@@ -81,9 +80,6 @@ export default function LoginScreen() {
     }
     lastLogoTapRef.current = now;
   };
-
-  const currentPreset = SERVER_PRESETS.find((p) => p.id === currentEnv);
-  const currentEnvLabel = currentPreset ? currentPreset.badge : 'LOCAL';
 
   const [storedBiometric, setStoredBiometric] = useState<BiometricSessionData | null>(null);
   const [qrModalVisible, setQrModalVisible] = useState(false);
@@ -306,63 +302,71 @@ export default function LoginScreen() {
       style={styles.screen}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Background Image Ilustrasi Gedung Sekolah & Masjid (Identik dengan Splash Screen) */}
+      <Image
+        source={PARENT_HOME_BG}
+        style={[StyleSheet.absoluteFill, styles.bgImage]}
+        resizeMode="cover"
+      />
+      {/* Overlay gradien halus berbasis warna #18A165 identik dengan splash screen */}
+      <LinearGradient
+        colors={['rgba(24, 161, 101, 0.35)', 'rgba(24, 161, 101, 0.72)', 'rgba(18, 128, 80, 0.94)']}
+        locations={[0, 0.45, 1]}
+        style={StyleSheet.absoluteFill}
+      />
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Top Islamic Wave Art Banner with Golden Curve */}
-        <View style={styles.topWaveContainer}>
-          <LinearGradient
-            colors={['#08382A', '#0B4D3A', '#062B20']}
-            style={styles.topWaveGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          />
-          {/* Golden accent wave ribbon */}
-          <View style={styles.goldRibbon} />
-          <View style={styles.curveOverlay} />
-        </View>
-
         {/* Header Branding Container */}
         <View style={styles.brandingSection}>
-          {/* Circular Badge with current logo */}
+          {/* Circular/Squircle Card with logo (Matching Splash Screen 1) */}
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleLogoTap}
-            style={styles.logoHalo}
+            style={styles.logoCardOuter}
           >
-            <View style={styles.logoGoldRing}>
-              <View style={styles.logoInnerCircle}>
-                {loginLogoUrl ? (
-                  <SafeRemoteImage
-                    url={loginLogoUrl}
-                    style={styles.logoImage}
-                    resizeMode="contain"
-                    alt={appName}
-                  />
-                ) : (
-                  <Image
-                    source={require('../../assets/logo.png')}
-                    style={styles.logoImage}
-                    resizeMode="contain"
-                  />
-                )}
-              </View>
-            </View>
+            {loginLogoUrl ? (
+              <SafeRemoteImage
+                url={loginLogoUrl}
+                style={styles.logoImage}
+                resizeMode="contain"
+                alt={appName}
+              />
+            ) : (
+              <Image
+                source={require('../../assets/launcher_source.png')}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
+            )}
           </TouchableOpacity>
 
-          {/* School Name Typography */}
+          {/* School Name Typography (White high-contrast on emerald background) */}
           <Text style={styles.brandTitle}>{appName}</Text>
           <Text style={styles.brandSubtitle}>{schoolName}</Text>
 
-          {/* Greetings */}
-          <Text style={styles.welcomeGreeting}>Selamat Datang 👋</Text>
-          <Text style={styles.welcomeSubtitle}>Silahkan login untuk melanjutkan</Text>
+          {/* Value Tagline Pill Badge (Identik dengan Splash Screen) */}
+          <View style={styles.taglineBadge}>
+            <MaterialCommunityIcons
+              name="creation"
+              size={14}
+              color="#FFFFFF"
+              style={styles.taglineBadgeIcon}
+            />
+            <Text style={styles.taglineBadgeText}>
+              Islami · Pendidikan · Berkarakter
+            </Text>
+          </View>
         </View>
 
         {/* Login Form Card */}
         <View style={styles.formContainer}>
+          {/* Greetings inside crisp elevated white card */}
+          <Text style={styles.welcomeGreeting}>Selamat Datang 👋</Text>
+          <Text style={styles.welcomeSubtitle}>Silahkan login untuk melanjutkan</Text>
           {error ? (
             <View style={styles.errorAlert}>
               <MaterialCommunityIcons name="alert-circle" size={18} color="#DC2626" />
@@ -461,20 +465,27 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
+          {/* OR DIVIDER */}
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>atau login cepat dengan</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
           {/* 2-COLUMN ACTION ROW: BIOMETRIC & QR CODE */}
           <View style={styles.twoColumnRow}>
             {/* Column 1: Biometric Login */}
             <TouchableOpacity
-              activeOpacity={0.82}
+              activeOpacity={0.8}
               onPress={handleBiometricLogin}
               disabled={loading || biometricLoading}
               style={styles.twoColumnCard}
             >
               <View style={styles.columnIconBadge}>
                 {biometricLoading ? (
-                  <ActivityIndicator color="#084835" size="small" />
+                  <ActivityIndicator color="#18A165" size="small" />
                 ) : (
-                  <MaterialCommunityIcons name="fingerprint" size={26} color="#084835" />
+                  <MaterialCommunityIcons name="fingerprint" size={26} color="#18A165" />
                 )}
               </View>
               <Text style={styles.columnCardTitle}>Biometrik</Text>
@@ -485,13 +496,13 @@ export default function LoginScreen() {
 
             {/* Column 2: Scan QR Code */}
             <TouchableOpacity
-              activeOpacity={0.82}
+              activeOpacity={0.8}
               onPress={() => setQrModalVisible(true)}
               disabled={loading || biometricLoading}
               style={styles.twoColumnCard}
             >
               <View style={styles.columnIconBadge}>
-                <MaterialCommunityIcons name="qrcode-scan" size={24} color="#084835" />
+                <MaterialCommunityIcons name="qrcode-scan" size={24} color="#18A165" />
               </View>
               <Text style={styles.columnCardTitle}>Scan QR Code</Text>
               <Text numberOfLines={1} style={styles.columnCardSub}>
@@ -507,31 +518,8 @@ export default function LoginScreen() {
               <Text style={styles.footerLink}>Hubungi Admin</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Server Config Switcher Trigger */}
-          <TouchableOpacity
-            style={styles.serverStatusButton}
-            onPress={() => setServerModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.serverStatusDot} />
-            <MaterialCommunityIcons name="server-network" size={13} color="#059669" />
-            <Text numberOfLines={1} style={styles.serverStatusText}>
-              Server: {currentEnvLabel} ({activeUrl.replace(/^https?:\/\//, '').replace(/\/api$/, '')})
-            </Text>
-            <MaterialCommunityIcons name="cog-outline" size={13} color="#64748B" />
-          </TouchableOpacity>
         </View>
 
-        {/* Bottom Curved Wave Accent */}
-        <View style={styles.bottomWaveContainer}>
-          <LinearGradient
-            colors={['#0B4D3A', '#073325']}
-            style={styles.bottomWaveGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          />
-        </View>
       </ScrollView>
 
       {/* QR SCANNER MODAL */}
@@ -669,106 +657,113 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#18A165',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.88,
   },
   scrollContent: {
     flexGrow: 1,
-    backgroundColor: '#FFFFFF',
-    paddingBottom: 40,
-  },
-  topWaveContainer: {
-    position: 'absolute',
-    top: -120,
-    right: -80,
-    width: SCREEN_WIDTH * 1.3,
-    height: 280,
-    overflow: 'hidden',
-  },
-  topWaveGradient: {
-    width: '100%',
-    height: '100%',
-    borderBottomLeftRadius: 240,
-    borderBottomRightRadius: 80,
-  },
-  goldRibbon: {
-    position: 'absolute',
-    bottom: -1,
-    left: 40,
-    right: 0,
-    height: 4,
-    backgroundColor: '#E5C07B',
-    borderBottomLeftRadius: 240,
-  },
-  curveOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    paddingBottom: 36,
   },
   brandingSection: {
     alignItems: 'center',
-    paddingTop: 65,
+    paddingTop: Platform.OS === 'ios' ? 56 : 42,
     paddingHorizontal: 24,
   },
-  logoHalo: {
+  logoCardOuter: {
     width: 104,
     height: 104,
     borderRadius: 52,
-    backgroundColor: 'rgba(8, 56, 42, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  logoGoldRing: {
-    width: 94,
-    height: 94,
-    borderRadius: 47,
-    borderWidth: 2,
-    borderColor: '#D4AF37',
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    shadowColor: '#073325',
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
-  logoInnerCircle: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 6,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
     overflow: 'hidden',
   },
   logoImage: {
-    width: 72,
-    height: 72,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
   },
   brandTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '900',
-    color: '#084835',
-    letterSpacing: 1.2,
+    color: '#FFFFFF',
+    letterSpacing: 1.5,
     textAlign: 'center',
     textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.45)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
   },
   brandSubtitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#084835',
-    letterSpacing: 2,
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.95)',
+    letterSpacing: 1,
     textAlign: 'center',
     marginTop: 2,
     textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  taglineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#18A165',
+    borderRadius: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    marginTop: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.65)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.20,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  taglineBadgeIcon: {
+    marginRight: 6,
+  },
+  taglineBadgeText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  formContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    marginHorizontal: 20,
+    marginTop: 22,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 22,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    elevation: 8,
+    zIndex: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.95)',
   },
   welcomeGreeting: {
     fontSize: 18,
     fontWeight: '800',
     color: '#1E293B',
-    marginTop: 18,
     textAlign: 'center',
   },
   welcomeSubtitle: {
@@ -776,12 +771,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#64748B',
     marginTop: 4,
+    marginBottom: 20,
     textAlign: 'center',
-  },
-  formContainer: {
-    paddingHorizontal: 28,
-    marginTop: 26,
-    zIndex: 10,
   },
   errorAlert: {
     flexDirection: 'row',
@@ -848,8 +839,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkboxBoxActive: {
-    backgroundColor: '#084835',
-    borderColor: '#084835',
+    backgroundColor: '#18A165',
+    borderColor: '#18A165',
   },
   rememberText: {
     fontSize: 13,
@@ -858,17 +849,17 @@ const styles = StyleSheet.create({
   },
   forgotText: {
     fontSize: 13,
-    color: '#084835',
+    color: '#18A165',
     fontWeight: '700',
   },
   loginButton: {
     height: 50,
     borderRadius: 14,
-    backgroundColor: '#084835',
+    backgroundColor: '#18A165',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#084835',
-    shadowOpacity: 0.28,
+    shadowColor: '#18A165',
+    shadowOpacity: 0.35,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
@@ -882,48 +873,70 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
   },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 18,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  dividerText: {
+    paddingHorizontal: 12,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   twoColumnRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
+    justifyContent: 'space-between',
+    alignItems: 'stretch',
+    width: '100%',
   },
   twoColumnCard: {
-    flex: 1,
+    width: '48.2%',
+    minHeight: 124,
     paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: 14,
-    borderWidth: 1.2,
-    borderColor: '#D1EAE2',
-    backgroundColor: '#F2FBF7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#084835',
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-  columnIconBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  columnIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EBF8F2',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#C3E5D9',
+    borderColor: 'rgba(24, 161, 101, 0.22)',
     marginBottom: 8,
   },
   columnCardTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#084835',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
     textAlign: 'center',
   },
   columnCardSub: {
-    fontSize: 10,
-    color: '#4B6B5D',
+    fontSize: 10.5,
+    color: '#64748B',
     marginTop: 2,
     textAlign: 'center',
+    fontWeight: '500',
   },
   footerRow: {
     flexDirection: 'row',
@@ -938,20 +951,7 @@ const styles = StyleSheet.create({
   footerLink: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#084835',
-  },
-  bottomWaveContainer: {
-    position: 'absolute',
-    bottom: -130,
-    left: -60,
-    width: SCREEN_WIDTH * 1.3,
-    height: 180,
-    zIndex: 1,
-  },
-  bottomWaveGradient: {
-    width: '100%',
-    height: '100%',
-    borderTopRightRadius: 260,
+    color: '#18A165',
   },
   qrModalContainer: {
     flex: 1,
@@ -1080,7 +1080,7 @@ const styles = StyleSheet.create({
     height: 48,
     paddingHorizontal: 18,
     borderRadius: 12,
-    backgroundColor: '#084835',
+    backgroundColor: '#18A165',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1088,31 +1088,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
-  },
-  serverStatusButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    marginTop: 14,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignSelf: 'center',
-  },
-  serverStatusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-  },
-  serverStatusText: {
-    fontSize: 11,
-    color: '#475569',
-    fontWeight: '600',
-    maxWidth: SCREEN_WIDTH * 0.65,
   },
 });

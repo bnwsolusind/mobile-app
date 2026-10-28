@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import {
   Alert,
+  Linking,
   Modal,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -11,6 +13,9 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
+import { useAuthStore } from '../stores/authStore';
+import { useMobileConfigStore } from '../stores/mobileConfigStore';
+import { getActiveBaseUrl } from '../services/api';
 import { AppFeedbackModal, FeedbackType } from './AppFeedbackModal';
 
 interface WeeklyEvaluationReportPaperModalProps {
@@ -118,43 +123,114 @@ export const WeeklyEvaluationReportPaperModal: React.FC<WeeklyEvaluationReportPa
     (tahfizhData?.lastSurah && tahfizhData.lastSurah !== '-' ? 1 : 0) +
     (academicAttendance.length || 0);
 
-  const handlePrint = () => {
-    const titleStr = reportTitle || 'Laporan Perkembangan Pekanan';
-    const printNotice = `${titleStr} ananda ${studentName} siap dicetak. Perintah cetak telah dikirim ke printer.`;
-    setDownloadSuccessNotice(printNotice);
-    setFeedbackModal({
-      visible: true,
-      type: 'info',
-      title: 'Cetak Laporan',
-      message: `Dokumen Resmi ${titleStr} untuk ananda ${studentName} siap dikirim ke antrean cetak printer.`,
-    });
-    setTimeout(() => {
-      setDownloadSuccessNotice(null);
-    }, 5000);
+  const { config } = useMobileConfigStore();
+  const unitMeta = student?.education_unit?.metadata || student?.educationUnit?.metadata || {};
+  const foundationName = (config?.branding as any)?.organization_name || (config?.branding as any)?.yayasan_name || 'YAYASAN DAREL IMAN PADANG';
+  const unitName =
+    student?.education_unit?.name ||
+    student?.educationUnit?.name ||
+    config?.branding?.school_name ||
+    'SEKOLAH ISLAM TERPADU DAREL IMAN';
+  const unitAddress =
+    unitMeta?.address ||
+    (config?.branding?.contact as any)?.address ||
+    (config?.branding as any)?.address ||
+    'Jl. Gunung Juaro, Surau Gadang, Kec. Nanggalo, Kota Padang';
+  const unitContact =
+    unitMeta?.phone ||
+    config?.branding?.contact?.phone ||
+    (config?.branding as any)?.phone ||
+    '-';
+  const unitNpsn = unitMeta?.npsn ? `NPSN: ${unitMeta.npsn}` : '';
+  const programName =
+    unitMeta?.program ||
+    student?.education_unit?.name ||
+    student?.educationUnit?.name ||
+    'Program Sekolah Terpadu';
+
+  const handlePrint = async () => {
+    const sId = student?.id || student?.student_id;
+    const token = useAuthStore.getState().token;
+    const baseUrl = getActiveBaseUrl().replace(/\/api\/?$/, '');
+    const downloadUrl = sId
+      ? `${baseUrl}/api/portal/mutabaah/weekly-pdf?child_id=${sId}&token=${encodeURIComponent(token || '')}`
+      : null;
+
+    if (downloadUrl) {
+      try {
+        await Linking.openURL(downloadUrl);
+        return;
+      } catch {
+        // Fallback ke share jika tidak dapat membuka browser/downloader secara langsung
+      }
+    }
+
+    const shareContent = [
+      `*DOKUMEN RESMI: ${reportTitle || 'Laporan Perkembangan Pekanan'}*`,
+      `Santri: ${studentName} (${studentNis})`,
+      `Kelas: ${className}`,
+      `Sekolah: ${unitName}`,
+      `Periode: ${safePeriod}`,
+      `Waktu Cetak: ${formattedPrintTime}`,
+      `----------------------------------------`,
+      `Laporan resmi ketercapaian ibadah dan mutabaah yaumiyyah sekolah terpadu.`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        title: reportTitle || 'Laporan Perkembangan Pekanan',
+        message: shareContent,
+        url: downloadUrl || undefined,
+      });
+    } catch {
+      setFeedbackModal({
+        visible: true,
+        type: 'info',
+        title: 'Cetak Dokumen',
+        message: `Dokumen ${reportTitle || 'Laporan Pekanan'} untuk ananda ${studentName} siap dicetak.`,
+      });
+    }
   };
 
-  const handleDownloadPdf = () => {
-    const successMsg = `Laporan Perkembangan Pekanan ananda ${studentName} berhasil diunduh ke folder Dokumen perangkat Anda.`;
+  const handleDownloadPdf = async () => {
+    const sId = student?.id || student?.student_id;
+    const token = useAuthStore.getState().token;
+    const baseUrl = getActiveBaseUrl().replace(/\/api\/?$/, '');
+    const downloadUrl = sId
+      ? `${baseUrl}/api/portal/mutabaah/weekly-pdf?child_id=${sId}&token=${encodeURIComponent(token || '')}`
+      : null;
 
-    // 1. Tampilkan banner notifikasi di dalam modal
-    setDownloadSuccessNotice(successMsg);
+    if (downloadUrl) {
+      try {
+        await Linking.openURL(downloadUrl);
+        return;
+      } catch {
+        // Lanjutkan ke Share jika Linking terkendala
+      }
+    }
 
-    // 2. Tambahkan counter badge notifikasi sistem
-    const currentUnread = useNotificationBadgeStore.getState().unreadNotificationCount;
-    useNotificationBadgeStore.getState().setUnreadNotificationCount(currentUnread + 1);
+    const shareContent = [
+      `*${reportTitle || 'Laporan Perkembangan Pekanan'}*`,
+      `Nama: ${studentName}`,
+      `NIS: ${studentNis}`,
+      `Kelas: ${className}`,
+      `Periode: ${safePeriod}`,
+      `Waktu Cetak: ${formattedPrintTime}`,
+      `----------------------------------------`,
+      `Dokumen resmi rekapitulasi mutaba'ah pekanan santri/siswa.`,
+    ].join('\n');
 
-    // 3. Tampilkan dialog feedback modal
-    setFeedbackModal({
-      visible: true,
-      type: 'success',
-      title: 'Unduh Berhasil',
-      message: successMsg,
-    });
-
-    // Hilangkan toast setelah 5 detik
-    setTimeout(() => {
-      setDownloadSuccessNotice(null);
-    }, 5000);
+    try {
+      await Share.share({
+        title: reportTitle || 'Laporan Perkembangan Pekanan',
+        message: shareContent,
+        url: downloadUrl || undefined,
+      });
+    } catch {
+      const successMsg = `Laporan Perkembangan Pekanan ananda ${studentName} berhasil diproses.`;
+      setDownloadSuccessNotice(successMsg);
+      setTimeout(() => setDownloadSuccessNotice(null), 5000);
+    }
   };
 
   return (
@@ -172,8 +248,8 @@ export const WeeklyEvaluationReportPaperModal: React.FC<WeeklyEvaluationReportPa
                 {activeReportType === 'tahfizh'
                   ? 'Cetak Laporan Pekanan Tahfizh'
                   : activeReportType === 'mutabaah'
-                  ? 'Cetak Laporan Pekanan Mutabaah'
-                  : 'Cetak Laporan Perkembangan Pekanan'}
+                    ? 'Cetak Laporan Pekanan Mutabaah'
+                    : 'Cetak Laporan Perkembangan Pekanan'}
               </Text>
               <Text style={styles.topBarSub} numberOfLines={1}>
                 Pratinjau Resmi (A4) · {studentName}
@@ -219,6 +295,19 @@ export const WeeklyEvaluationReportPaperModal: React.FC<WeeklyEvaluationReportPa
             contentContainerStyle={styles.scrollContent}
           >
             <View style={styles.paper}>
+              {/* Kop Surat Resmi Lembaga / Sekolah */}
+              <View style={styles.institutionKop}>
+                <Text style={styles.kopFoundation}>{foundationName.toUpperCase()}</Text>
+                <Text style={styles.kopUnit}>{unitName.toUpperCase()}</Text>
+                <Text style={styles.kopAddress}>
+                  {unitAddress}
+                  {unitContact && unitContact !== '-' ? `  •  Telp/WA: ${unitContact}` : ''}
+                  {unitNpsn ? `  •  ${unitNpsn}` : ''}
+                </Text>
+                <View style={styles.kopDividerThick} />
+                <View style={styles.kopDividerThin} />
+              </View>
+
               {/* Document Header */}
               <View style={styles.docHeader}>
                 <Text style={styles.docMainTitle}>{reportTitle || 'LAPORAN PERKEMBANGAN PEKANAN SISWA'}</Text>
@@ -263,7 +352,7 @@ export const WeeklyEvaluationReportPaperModal: React.FC<WeeklyEvaluationReportPa
                   <View style={styles.metaCol}>
                     <Text style={styles.metaLabel}>Program</Text>
                     <Text style={styles.metaColon}>:</Text>
-                    <Text style={styles.metaVal} numberOfLines={1}>Terpadu</Text>
+                    <Text style={styles.metaVal} numberOfLines={1}>{programName}</Text>
                   </View>
                 </View>
               </View>
@@ -614,6 +703,48 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 3,
+  },
+  institutionKop: {
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 4,
+  },
+  kopFoundation: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+    letterSpacing: 1.2,
+    textAlign: 'center',
+  },
+  kopUnit: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  kopAddress: {
+    fontSize: 9.5,
+    fontWeight: '500',
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 3,
+    lineHeight: 14,
+    paddingHorizontal: 8,
+  },
+  kopDividerThick: {
+    width: '100%',
+    height: 2,
+    backgroundColor: '#0F172A',
+    marginTop: 10,
+  },
+  kopDividerThin: {
+    width: '100%',
+    height: 0.75,
+    backgroundColor: '#0F172A',
+    marginTop: 2,
+    marginBottom: 4,
   },
   docHeader: {
     alignItems: 'center',
