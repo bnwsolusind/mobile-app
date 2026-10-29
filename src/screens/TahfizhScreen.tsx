@@ -26,6 +26,7 @@ import {
   isTeacherRole,
   isTuRole,
   isPrincipalRole,
+  isDivisiRole,
   isSuperAdminRole,
   isTahfizhTeacherRole,
   isMusyrifRole,
@@ -2134,7 +2135,8 @@ export default function TahfizhScreen({ route, navigation }: any) {
     userPermissions.includes('tahfizh.view') ||
     userPermissions.includes('tahfizh.monitoring_target');
 
-  const isManagement = isTuRole(userRoles) || isPrincipalRole(userRoles) || isSuperAdminRole(userRoles);
+  const isTu = isTuRole(userRoles);
+  const isManagement = isPrincipalRole(userRoles) || isSuperAdminRole(userRoles) || isDivisiRole(userRoles);
   const canAccessTahfizhWorkspace = hasTahfizhAuth || isManagement;
 
   const isParentContext = Boolean(
@@ -2143,6 +2145,30 @@ export default function TahfizhScreen({ route, navigation }: any) {
     route?.params?.student_id ||
     route?.params?.from_child_portal
   );
+
+  // Proteksi akses untuk akun Tata Usaha jika tidak memiliki tugas halaqah maupun konteks wali santri
+  if (isTu && !isParentContext && !hasTahfizhAuth) {
+    return (
+      <View style={[styles.rootContainer, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+        <MaterialCommunityIcons name="shield-lock-outline" size={56} color="#64748B" />
+        <Text style={{ fontSize: 18, fontWeight: '800', color: '#1E293B', marginTop: 16, textAlign: 'center' }}>
+          Akses Terbatas
+        </Text>
+        <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 8, lineHeight: 20 }}>
+          Fitur Setoran & Jurnal Tahfizh dikhususkan untuk Guru Pengampu Tahfizh, Musyrif Halaqah, Kepala Sekolah, dan Wali Santri.
+        </Text>
+        <TouchableOpacity
+          style={{ marginTop: 24, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#059669', borderRadius: 12 }}
+          onPress={() => {
+            if (navigation?.canGoBack?.()) navigation.goBack();
+            else navigation?.navigate('Beranda');
+          }}
+        >
+          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>Kembali ke Beranda</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (canAccessTahfizhWorkspace && !isParentContext) {
     return (
@@ -2158,16 +2184,22 @@ export default function TahfizhScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN JADWAL & UTAMA, JERNIH & CRISP) ── */}
-      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+      {/* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
         <Image
           source={PARENT_HOME_BG}
-          style={styles.topFoliageBgImage}
+          style={styles.bgImage}
           resizeMode="cover"
         />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Jadwal Pelajaran & Halaman Utama */}
         <LinearGradient
-          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
-          locations={[0, 0.45, 1]}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
       </View>
@@ -5149,19 +5181,21 @@ export default function TahfizhScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F0FDF4',
   },
-  topFoliageWrapper: {
+  /* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */
+  bgBackdrop: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 0,
-    overflow: 'hidden',
+    height: 480,
+    width: '100%',
   },
-  topFoliageBgImage: {
-    ...(StyleSheet.absoluteFill as any),
-    opacity: 1,
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
   },
   cleanTopHeader: {
     flexDirection: 'row',

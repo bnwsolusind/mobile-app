@@ -177,7 +177,7 @@ export default function TuDashboardView({ dashboard, navigation }: TuDashboardVi
               <View style={styles.kelolaKpiYearRow}>
                 <MaterialCommunityIcons name="calendar-clock-outline" size={12} color="#0D9488" />
                 <Text style={styles.kelolaKpiYearText}>
-                  {tahunAjaran ? `TA ${tahunAjaran}` : 'TA 2026/2027'}
+                  {tahunAjaran ? `TA ${tahunAjaran}` : 'TA Aktif'}
                 </Text>
                 {unitName ? (
                   <>
@@ -397,11 +397,11 @@ export default function TuDashboardView({ dashboard, navigation }: TuDashboardVi
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.sectionTitle}>Keagamaan & Komunikasi</Text>
-            <Text style={styles.sectionSubtitle}>Tahfizh Al-Qur'an, komunikasi & koordinasi</Text>
+            <Text style={styles.sectionSubtitle}>Al-Qur'an, komunikasi & koordinasi pegawai</Text>
           </View>
         </View>
         <View style={styles.qBtnGrid}>
-          <QBtn icon="book-marker"            iconBg="#2563EB" label="Setoran Tahfizh"  onPress={() => navigation?.navigate('Tahfizh')} />
+          <QBtn icon="book-open-variant"      iconBg="#2563EB" label="Al-Qur'an Digital" onPress={() => navigation?.navigate('Quran')} />
           <QBtn icon="message-text-outline"   iconBg="#059669" label="Chat Pegawai"     onPress={() => navigation?.navigate('Chat Guru')} />
           <QBtn icon="bullhorn"               iconBg="#E11D48" label="Informasi"        onPress={() => navigation?.navigate('Informasi')} />
         </View>

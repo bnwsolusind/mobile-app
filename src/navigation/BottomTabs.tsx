@@ -66,6 +66,7 @@ import PrincipalDashboardScreen from '../screens/PrincipalDashboardScreen';
 import MasterSiswaScreen from '../screens/MasterSiswaScreen';
 import MutasiSiswaScreen from '../screens/MutasiSiswaScreen';
 import PantauKelasScreen from '../screens/PantauKelasScreen';
+import SupervisiKbmScreen from '../screens/SupervisiKbmScreen';
 import BantuanScreen from '../screens/BantuanScreen';
 import AccessDeniedScreen from '../components/AccessDeniedScreen';
 import { useAuthStore } from '../stores/authStore';
@@ -830,15 +831,6 @@ export default function BottomTabs() {
             }}
           />
         )}
-        <Tab.Screen
-          name="DataManagement"
-          component={GuardedDataScreen}
-          options={{
-            headerShown: false,
-            tabBarButton: () => null,
-            tabBarItemStyle: { display: 'none' as const },
-          }}
-        />
         {access.teacher && (
           <Tab.Screen
             name="Guru"
@@ -1045,15 +1037,6 @@ export default function BottomTabs() {
           options={moduleOptions('Notifikasi & Pengumuman', theme)}
         />
         <Tab.Screen
-          name="Notifications"
-          component={GuardedNotificationsScreen}
-          options={{
-            headerShown: false,
-            tabBarButton: () => null,
-            tabBarItemStyle: { display: 'none' as const },
-          }}
-        />
-        <Tab.Screen
           name="Chat"
           component={GuardedChatScreen}
           options={{
@@ -1092,15 +1075,6 @@ export default function BottomTabs() {
           }}
         />
         <Tab.Screen
-          name="RekapPresensiGerbang"
-          component={GateAttendanceTerminalScreen}
-          options={{
-            headerShown: false,
-            tabBarButton: () => null,
-            tabBarItemStyle: { display: 'none' as const },
-          }}
-        />
-        <Tab.Screen
           name="PresensiKbmPengganti"
           component={SubstituteKbmAttendanceScreen}
           options={{
@@ -1128,15 +1102,6 @@ export default function BottomTabs() {
           }}
         />
         <Tab.Screen
-          name="DashboardKepalaSekolah"
-          component={PrincipalDashboardScreen}
-          options={{
-            headerShown: false,
-            tabBarButton: () => null,
-            tabBarItemStyle: { display: 'none' as const },
-          }}
-        />
-        <Tab.Screen
           name="MasterSiswa"
           component={MasterSiswaScreen}
           options={{
@@ -1155,8 +1120,8 @@ export default function BottomTabs() {
           }}
         />
         <Tab.Screen
-          name="KelolaAlumni"
-          component={MutasiSiswaScreen}
+          name="PantauKelas"
+          component={PantauKelasScreen}
           options={{
             headerShown: false,
             tabBarButton: () => null,
@@ -1164,8 +1129,8 @@ export default function BottomTabs() {
           }}
         />
         <Tab.Screen
-          name="PantauKelas"
-          component={PantauKelasScreen}
+          name="SupervisiKbm"
+          component={SupervisiKbmScreen}
           options={{
             headerShown: false,
             tabBarButton: () => null,

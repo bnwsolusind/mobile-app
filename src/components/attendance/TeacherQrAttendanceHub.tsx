@@ -30,6 +30,7 @@ import { AttendanceRejectedModal, AttendanceRejectionDetails } from './Attendanc
 import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
 import { useMobileConfigStore } from '../../stores/mobileConfigStore';
 import { resolveUnitName } from '../../utils/employeeUtils';
+import { isTeacherRole, isTuRole } from '../../utils/roles';
 
 // Safe dynamic loader for expo-location to prevent crashing if native module ExpoLocation is unlinked
 const getLocationModule = (): any => {
@@ -89,6 +90,12 @@ export default function TeacherQrAttendanceHub({
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 14);
   const bottomTabBarHeight = 58 + Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 8);
 
+  // Role detection: guru vs tu/staff
+  const roles = user?.roles || [];
+  const isTeacher = isTeacherRole(roles);
+  const isTu = isTuRole(roles);
+  const canAccessGate = !isTeacher || isTu;
+
   // Mode: mandiri (presensi mandiri pegawai), manual (presensi checklist), scan (kamera KBM/gerbang), qr (ID guru)
   const incomingMode = route?.params?.mode || route?.params?.tab;
   const incomingSchedId = route?.params?.schedule_id ? String(route.params.schedule_id) : undefined;
@@ -100,17 +107,22 @@ export default function TeacherQrAttendanceHub({
     if (incomingMode === 'mandiri' || incomingMode === 'attendance' || incomingMode === 'self') return 'mandiri';
     if (incomingMode === 'manual') return 'manual';
     if (incomingMode === 'qr') return 'qr';
-    if (incomingMode === 'scan' || incomingMode === 'gate') return 'scan';
+    if (incomingMode === 'scan' || incomingMode === 'gate') {
+      return canAccessGate ? 'scan' : 'mandiri';
+    }
     return 'mandiri';
   });
 
   useEffect(() => {
     const rawMode = incomingMode || route?.params?.mode || route?.params?.tab;
-    const targetMode = (rawMode === 'attendance' || rawMode === 'self') ? 'mandiri' : rawMode;
+    let targetMode = (rawMode === 'attendance' || rawMode === 'self') ? 'mandiri' : rawMode;
+    if (targetMode === 'scan' && !canAccessGate) {
+      targetMode = 'mandiri';
+    }
     if (targetMode && ['mandiri', 'scan', 'manual', 'qr'].includes(targetMode)) {
       setActiveMode(targetMode as TeacherMode);
     }
-  }, [incomingMode, route?.params?.mode, route?.params?.tab]);
+  }, [incomingMode, route?.params?.mode, route?.params?.tab, canAccessGate]);
 
   // Schedules state
   const [activeSchedules, setActiveSchedules] = useState<any[]>([]);
@@ -885,8 +897,9 @@ export default function TeacherQrAttendanceHub({
         await mobileApiService.saveTeacherAttendance?.({
           class_schedule_id: effectiveScheduleId,
           date: new Date().toISOString().slice(0, 10),
-          meeting_number: 1,
-          topic: selectedSchedule?.subject?.name || 'Presensi KBM Terpadu',
+          meeting_number: Number(kbmMeetingNumber) || 1,
+          topic: kbmTopic.trim() || selectedSchedule?.subject?.name || 'Presensi KBM Terpadu',
+          meeting_notes: kbmJournalNotes.trim() || undefined,
           students: studentPayload,
         }).catch(() => null);
       }
@@ -993,6 +1006,15 @@ export default function TeacherQrAttendanceHub({
   const [showFilterSheet, setShowFilterSheet] = useState<boolean>(false);
   const [showUbahStatusSheet, setShowUbahStatusSheet] = useState<any>(null); // student obj or null
   const [showKonfirmasiModal, setShowKonfirmasiModal] = useState<boolean>(false);
+  const [kbmMeetingNumber, setKbmMeetingNumber] = useState<string>('1');
+  const [kbmTopic, setKbmTopic] = useState<string>('');
+  const [kbmJournalNotes, setKbmJournalNotes] = useState<string>('');
+
+  useEffect(() => {
+    if (selectedSchedule?.subject?.name && !kbmTopic) {
+      setKbmTopic(selectedSchedule.subject.name);
+    }
+  }, [selectedSchedule, kbmTopic]);
   const [statusFilterChip, setStatusFilterChip] = useState<string>('semua');
   const [showStatusDropdown, setShowStatusDropdown] = useState<boolean>(false);
   const [showRekapDropdown, setShowRekapDropdown] = useState<boolean>(false);
@@ -1221,33 +1243,18 @@ export default function TeacherQrAttendanceHub({
     const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 58), 420);
     const mapHeight = 165;
 
-    if (token) {
-      if (userLocation && userLocation.latitude && userLocation.longitude) {
-        const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
-        const pUser = `pin-s-circle+2563eb(${userLocation.longitude.toFixed(6)},${userLocation.latitude.toFixed(6)})`;
-        const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${token}`;
-        return { url, isMapbox: true };
-      } else {
-        const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
-        const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit}/${uLng.toFixed(6)},${uLat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${token}`;
-        return { url, isMapbox: true };
-      }
-    }
+    const activeToken = token || 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A';
 
-    const centerLat = userLocation ? (userLocation.latitude + uLat) / 2 : uLat;
-    const centerLng = userLocation ? (userLocation.longitude + uLng) / 2 : uLng;
-    const zoom = 16;
-    const lon2tile = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-    const lat2tile = (lat: number, z: number) => {
-      const rad = (lat * Math.PI) / 180;
-      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, z));
-    };
-    const tileX = lon2tile(centerLng, zoom);
-    const tileY = lat2tile(centerLat, zoom);
-    return {
-      url: `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`,
-      isMapbox: false,
-    };
+    if (userLocation && userLocation.latitude && userLocation.longitude) {
+      const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
+      const pUser = `pin-s-circle+2563eb(${userLocation.longitude.toFixed(6)},${userLocation.latitude.toFixed(6)})`;
+      const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${activeToken}`;
+      return { url, isMapbox: true };
+    } else {
+      const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
+      const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit}/${uLng.toFixed(6)},${uLat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${activeToken}`;
+      return { url, isMapbox: true };
+    }
   }, [mapboxToken, unitLocation, userLocation]);
 
   // Request & Update User GPS Location
@@ -1788,11 +1795,11 @@ export default function TeacherQrAttendanceHub({
         {!scanDetailStudent && !showRekapView && (
           <View style={s.switcherWrap}>
             {([
-              { key: 'mandiri', label: 'Mandiri', icon: 'account-check-outline' },
-              { key: 'manual', label: 'KBM', icon: 'format-list-checks' },
-              { key: 'scan', label: 'Gerbang', icon: 'camera-outline' },
-              { key: 'qr', label: 'Kartu QR', icon: 'qrcode' },
-            ] as const).map((tab) => {
+              { key: 'mandiri' as const, label: 'Mandiri', icon: 'account-check-outline' },
+              { key: 'manual' as const, label: 'KBM', icon: 'format-list-checks' },
+              ...(canAccessGate ? [{ key: 'scan' as const, label: 'Gerbang', icon: 'camera-outline' }] : []),
+              { key: 'qr' as const, label: 'Kartu QR', icon: 'qrcode' },
+            ]).map((tab) => {
               const isActive = activeMode === tab.key;
               return (
                 <TouchableOpacity
@@ -3631,6 +3638,52 @@ export default function TeacherQrAttendanceHub({
               <View style={s.konfirmasiStatRow}>
                 <MaterialCommunityIcons name="close-circle-outline" size={14} color="#DC2626" />
                 <Text style={s.konfirmasiStatText}>{statusCounts.a} Alpha ({students.length > 0 ? Math.round((statusCounts.a / students.length) * 100) : 0}%)</Text>
+              </View>
+            </View>
+
+            {/* Jurnal & Capaian Pembelajaran */}
+            <View style={s.konfirmasiJurnalBox}>
+              <View style={s.konfirmasiJurnalHeader}>
+                <MaterialCommunityIcons name="notebook-outline" size={15} color="#059669" />
+                <Text style={s.konfirmasiJurnalTitle}>Jurnal Pembelajaran & Capaian KBM</Text>
+              </View>
+
+              <View style={s.konfirmasiJurnalRow}>
+                <View style={s.konfirmasiMeetingCol}>
+                  <Text style={s.konfirmasiInputLabel}>Pertemuan</Text>
+                  <TextInput
+                    style={s.konfirmasiInputSmall}
+                    value={kbmMeetingNumber}
+                    onChangeText={setKbmMeetingNumber}
+                    keyboardType="numeric"
+                    placeholder="1"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+                <View style={s.konfirmasiTopicCol}>
+                  <Text style={s.konfirmasiInputLabel}>Materi / Pokok Bahasan</Text>
+                  <TextInput
+                    style={s.konfirmasiInputText}
+                    value={kbmTopic}
+                    onChangeText={setKbmTopic}
+                    placeholder="Materi yang diajarkan..."
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+              </View>
+
+              <View style={{ marginTop: 8 }}>
+                <Text style={s.konfirmasiInputLabel}>Catatan Jurnal KBM / Capaian Siswa (Opsional)</Text>
+                <TextInput
+                  style={s.konfirmasiTextarea}
+                  value={kbmJournalNotes}
+                  onChangeText={setKbmJournalNotes}
+                  placeholder="Ringkasan KBM, tugas kelas, atau catatan khusus murid..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  numberOfLines={2}
+                  textAlignVertical="top"
+                />
               </View>
             </View>
 
@@ -5610,6 +5663,75 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#0F172A',
+  },
+  konfirmasiJurnalBox: {
+    alignSelf: 'stretch',
+    backgroundColor: '#F0FDF4',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: '#BBF7D0',
+  },
+  konfirmasiJurnalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  konfirmasiJurnalTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  konfirmasiJurnalRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  konfirmasiMeetingCol: {
+    width: 78,
+  },
+  konfirmasiTopicCol: {
+    flex: 1,
+  },
+  konfirmasiInputLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 4,
+  },
+  konfirmasiInputSmall: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  konfirmasiInputText: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  konfirmasiTextarea: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#0F172A',
+    minHeight: 48,
   },
   konfirmasi_btnRow: {
     flexDirection: 'row',

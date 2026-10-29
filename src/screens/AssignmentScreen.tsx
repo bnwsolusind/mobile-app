@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole, isDivisiRole } from '../utils/roles';
 import TeacherAssignmentWorkspace from '../components/teacher/TeacherAssignmentWorkspace';
 import {
   getProfileImageUrl,
@@ -284,7 +284,8 @@ export default function AssignmentScreen({ route, navigation }: any) {
   const user = useAuthStore((state) => state.user);
   const isParent = isParentRole(user?.roles || []);
   const isTeacher = isTeacherRole(user?.roles || []);
-  const isStaff = isTuRole(user?.roles || []) || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
+  const isDivisi = isDivisiRole(user?.roles || []);
+  const isStaff = isTuRole(user?.roles || []) || isPrincipalRole(user?.roles || []) || isDivisi || isSuperAdminRole(user?.roles || []);
   const activeChildId = useActiveChildStore((state) => state.activeChildId);
   const isParentWithChild = isParent && Boolean(activeChildId);
 
@@ -1449,8 +1450,12 @@ export default function AssignmentScreen({ route, navigation }: any) {
           resizeMode="cover"
         />
         <LinearGradient
-          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
-          locations={[0.5, 0.82, 1]}
+          colors={[
+            'rgba(240, 253, 244, 0)',
+            'rgba(240, 253, 244, 0.50)',
+            '#F0FDF4',
+          ]}
+          locations={[0.45, 0.78, 1]}
           style={StyleSheet.absoluteFill}
         />
       </View>
@@ -1484,7 +1489,7 @@ export default function AssignmentScreen({ route, navigation }: any) {
 
       <ScrollView
         style={styles.screen}
-        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: bottomInset + 30 }]}
+        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: bottomInset + 130 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#0D6B42']} />
@@ -3758,7 +3763,7 @@ export default function AssignmentScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F0FDF4',
   },
   // CLEAN SCREEN STYLES (EXACT 1:1 MATCH WITH SCHEDULE SCREEN)
   topFoliageWrapper: {

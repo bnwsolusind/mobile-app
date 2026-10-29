@@ -32,6 +32,7 @@ import {
   isTeacherRole,
   isTuRole,
   isPrincipalRole,
+  isDivisiRole,
   isSuperAdminRole,
   isMutabaahSupervisorRole,
   isMusyrifRole,
@@ -278,11 +279,15 @@ export default function MutabaahScreen({ route, navigation }: any) {
       navigation?.navigate('Beranda');
       return;
     }
-    if (navigation?.canGoBack?.()) {
-      navigation.goBack();
-    } else {
-      navigation?.navigate('Beranda');
+    const navState = navigation?.getState?.();
+    const canPop = navState && typeof navState.index === 'number' && navState.index > 0;
+    if (canPop && navigation?.canGoBack?.()) {
+      try {
+        navigation.goBack();
+        return;
+      } catch {}
     }
+    navigation?.navigate('Beranda' as any);
   };
 
   const [mainTab, setMainTab] = useState<'today' | 'history'>('today');
@@ -1445,7 +1450,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
     userPermissions.includes('mutabaah.daily.input') ||
     userPermissions.includes('teacher.mutabaah.view');
 
-  const isStaffLeadership = isPrincipalRole(userRoles) || isSuperAdminRole(userRoles);
+  const isStaffLeadership = isPrincipalRole(userRoles) || isSuperAdminRole(userRoles) || isDivisiRole(userRoles);
   const canAccessMutabaahWorkspace = hasMutabaahAuthority || isStaffLeadership;
 
   const isParentContext = Boolean(
@@ -1483,10 +1488,8 @@ export default function MutabaahScreen({ route, navigation }: any) {
   if (canAccessMutabaahWorkspace && !isParentContext) {
     return (
       <TeacherMutabaahWorkspace
-        onBack={() => {
-          if (navigation?.canGoBack?.()) navigation.goBack();
-          else navigation?.navigate('Beranda');
-        }}
+        navigation={navigation}
+        onBack={handleBack}
       />
     );
   }
@@ -2051,7 +2054,7 @@ export default function MutabaahScreen({ route, navigation }: any) {
       <ScrollView
         ref={mainScrollRef}
         style={styles.screen}
-        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: Math.max(bottomInset + 72, 94) }]}
+        contentContainerStyle={[styles.cleanMainScrollContent, { paddingBottom: Math.max(bottomInset + 140, 160) }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl

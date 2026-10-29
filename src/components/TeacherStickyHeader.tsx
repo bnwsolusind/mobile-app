@@ -31,6 +31,15 @@ export interface TeacherQuickChip {
   onPress?: () => void;
 }
 
+export interface TeacherStickyTab {
+  id: string;
+  label: string;
+  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  count?: number | string;
+  active?: boolean;
+  onPress: () => void;
+}
+
 export interface TeacherStickyHeaderProps {
   scrollY: Animated.Value;
   topInset: number;
@@ -39,6 +48,8 @@ export interface TeacherStickyHeaderProps {
   navigation: any;
   route?: any;
   quickChips?: TeacherQuickChip[];
+  tabs?: TeacherStickyTab[];
+  customTabBar?: React.ReactNode;
   equalColumns?: boolean;
   onBack?: () => void;
   // Extended props for dynamic role and attendance status
@@ -61,6 +72,8 @@ export function TeacherStickyHeader({
   navigation,
   route,
   quickChips,
+  tabs,
+  customTabBar,
   equalColumns,
   onBack,
   attendanceStatusText,
@@ -96,14 +109,17 @@ export function TeacherStickyHeader({
     (user as any)?.nuptk ||
     (user as any)?.employee_number ||
     (user?.metadata as any)?.employee_id ||
-    'NIP. 19880512 201503 1 002';
+    '';
 
   const teacherUnit =
     subtitle ||
+    (user as any)?.education_unit?.name ||
+    (user as any)?.education_unit?.nama_unit ||
     (user as any)?.unit_name ||
+    (user as any)?.unit?.name ||
     (user?.metadata as any)?.unit ||
     (user?.metadata as any)?.unit_name ||
-    'Pondok Pesantren';
+    'Unit Pendidikan';
 
   const handleBackPress = () => {
     if (onBack) {
@@ -164,12 +180,11 @@ export function TeacherStickyHeader({
       <View
         style={[
           StyleSheet.absoluteFill,
-          { bottom: 36, overflow: 'hidden', pointerEvents: 'none' },
+          { overflow: 'hidden', pointerEvents: 'none' },
         ]}
       >
         <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
-          locations={[0, 0.55, 1]}
+          colors={['rgba(240, 253, 244, 0.98)', 'rgba(236, 253, 245, 0.96)', 'rgba(240, 253, 244, 0.98)']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={StyleSheet.absoluteFill}
@@ -207,7 +222,7 @@ export function TeacherStickyHeader({
             style={styles.teacherStickySquircleActionBtn}
             accessibilityLabel="Notifikasi"
           >
-            <MaterialCommunityIcons name="bell-outline" size={18} color="#FFFFFF" />
+            <MaterialCommunityIcons name="bell-outline" size={18} color="#059669" />
             {unreadNotificationCount > 0 && (
               <View style={styles.teacherStickyBellBadgeDot} />
             )}
@@ -236,118 +251,177 @@ export function TeacherStickyHeader({
         </View>
       </View>
 
-      {/* Rich Teacher Identity Card Inside Sticky Header */}
-      <View style={{ marginHorizontal: 12, marginBottom: 0 }}>
-        <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
-          locations={[0, 0.55, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.teacherStickyRichCard, { padding: 12, borderRadius: 18 }]}
-        >
-          <View style={styles.cardDecorCircle} />
-
-          <View style={styles.teacherStickyRichCardTopRow}>
-            <TouchableOpacity
-              activeOpacity={0.82}
-              onPress={() => navigation?.navigate('Profil')}
-              style={styles.teacherStickyRichAvatarWrap}
-            >
-              {teacherPhoto ? (
-                <Image
-                  source={{ uri: teacherPhoto }}
-                  style={styles.teacherStickyRichAvatarImg}
-                  resizeMode="cover"
-                />
-              ) : (
-                <Image
-                  source={DEFAULT_PARENT_AVATAR}
-                  style={styles.teacherStickyRichAvatarImg}
-                  resizeMode="cover"
-                />
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.teacherStickyRichInfoCol}>
-              <Text numberOfLines={1} style={styles.teacherStickyRichTeacherName}>
-                {teacherName}
-              </Text>
-              <Text numberOfLines={1} style={styles.teacherStickyRichNisText}>
-                ID/NIP: {teacherNip}
-              </Text>
-              <View style={styles.teacherStickyRichUnitBadge}>
-                <MaterialCommunityIcons
-                  name="school"
-                  size={10}
-                  color="#FFFFFF"
-                  style={{ marginRight: 3 }}
-                />
-                <Text numberOfLines={1} style={styles.teacherStickyRichUnitText}>
-                  {teacherUnit}
-                </Text>
-              </View>
-              <View style={styles.teacherStickyRichMetaRow}>
-                <Text numberOfLines={1} style={styles.teacherStickyRichMetaText}>
-                  {roleBadgeText || (isTuRole(user?.roles || []) ? 'Tata Usaha & Administrasi' : 'Guru / Pengajar')}
-                </Text>
-                <Text style={styles.teacherStickyRichMetaSep}> • </Text>
-                <View
-                  style={[
-                    styles.teacherStickyRichPresensiDot,
-                    { backgroundColor: attendanceStatusColor || '#10B981', marginRight: 3 },
-                  ]}
-                />
+      {/* Tab Switcher Sticky: Bahan Ajar & Modul Ajar di sticky header */}
+      {tabs && tabs.length > 0 && (
+        <View style={styles.teacherStickyTabBarContainer}>
+          {tabs.map((tab) => {
+            const isActive = Boolean(tab.active);
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                activeOpacity={0.85}
+                onPress={tab.onPress}
+                style={[
+                  styles.teacherStickyTabBtn,
+                  isActive && styles.teacherStickyTabBtnActive,
+                ]}
+              >
+                {tab.icon && (
+                  <MaterialCommunityIcons
+                    name={tab.icon}
+                    size={14}
+                    color={isActive ? '#FFFFFF' : '#065F46'}
+                    style={{ marginRight: 5 }}
+                  />
+                )}
                 <Text
                   numberOfLines={1}
                   style={[
-                    styles.teacherStickyRichMetaText,
-                    { color: attendanceStatusColor ? '#FFFFFF' : '#A7F3D0', fontSize: 9 },
+                    styles.teacherStickyTabBtnText,
+                    isActive && styles.teacherStickyTabBtnTextActive,
                   ]}
                 >
-                  {attendanceStatusText || 'Aktif'}
+                  {tab.label}
                 </Text>
+                {tab.count !== undefined && tab.count !== null && (
+                  <View
+                    style={[
+                      styles.teacherStickyTabBadge,
+                      isActive && styles.teacherStickyTabBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.teacherStickyTabBadgeText,
+                        isActive && styles.teacherStickyTabBadgeTextActive,
+                      ]}
+                    >
+                      {tab.count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
+      {customTabBar}
+
+      {/* Rich Teacher Identity Card Inside Sticky Header — Hanya saat ada stats atau chips */}
+      {Boolean((stats && stats.length > 0) || (chips && chips.length > 0) || (quickChips && quickChips.length > 0)) && (
+        <View style={{ marginHorizontal: 12, marginBottom: 0 }}>
+          <LinearGradient
+            colors={['rgba(255, 255, 255, 0.95)', 'rgba(236, 253, 245, 0.90)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.teacherStickyRichCard, { padding: 12, borderRadius: 18 }]}
+          >
+            <View style={styles.cardDecorCircle} />
+
+            <View style={styles.teacherStickyRichCardTopRow}>
+              <TouchableOpacity
+                activeOpacity={0.82}
+                onPress={() => navigation?.navigate('Profil')}
+                style={styles.teacherStickyRichAvatarWrap}
+              >
+                {teacherPhoto ? (
+                  <Image
+                    source={{ uri: teacherPhoto }}
+                    style={styles.teacherStickyRichAvatarImg}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Image
+                    source={DEFAULT_PARENT_AVATAR}
+                    style={styles.teacherStickyRichAvatarImg}
+                    resizeMode="cover"
+                  />
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.teacherStickyRichInfoCol}>
+                <Text numberOfLines={1} style={styles.teacherStickyRichTeacherName}>
+                  {teacherName}
+                </Text>
+                {Boolean(teacherNip && !teacherNip.toLowerCase().includes('tes') && !teacherNip.toLowerCase().includes('test') && teacherNip !== '—') && (
+                  <Text numberOfLines={1} style={styles.teacherStickyRichNisText}>
+                    ID/NIP: {teacherNip}
+                  </Text>
+                )}
+                <View style={styles.teacherStickyRichUnitBadge}>
+                  <MaterialCommunityIcons
+                    name="school"
+                    size={10}
+                    color="#059669"
+                    style={{ marginRight: 3 }}
+                  />
+                  <Text numberOfLines={1} style={styles.teacherStickyRichUnitText}>
+                    {teacherUnit}
+                  </Text>
+                </View>
+                <View style={styles.teacherStickyRichMetaRow}>
+                  <Text numberOfLines={1} style={styles.teacherStickyRichMetaText}>
+                    {roleBadgeText || (isTuRole(user?.roles || []) ? 'Tata Usaha & Administrasi' : 'Guru / Pengajar')}
+                  </Text>
+                  <Text style={styles.teacherStickyRichMetaSep}> • </Text>
+                  <View
+                    style={[
+                      styles.teacherStickyRichPresensiDot,
+                      { backgroundColor: attendanceStatusColor || '#10B981', marginRight: 3 },
+                    ]}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.teacherStickyRichMetaText,
+                      { color: attendanceStatusColor ? '#059669' : '#059669', fontSize: 9 },
+                    ]}
+                  >
+                    {attendanceStatusText || 'Aktif'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.teacherStickyRichMiniActions}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => navigation?.navigate('Notifikasi')}
+                  style={styles.teacherStickyMiniBtn}
+                  accessibilityLabel="Notifikasi"
+                >
+                  <MaterialCommunityIcons
+                    name="bell-ring-outline"
+                    size={16}
+                    color="#059669"
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => navigation?.navigate(actionRoute || (isTuRole(user?.roles || []) ? 'Data' : 'Jadwal'))}
+                  style={styles.teacherStickyMiniBtn}
+                  accessibilityLabel={actionLabel || (isTuRole(user?.roles || []) ? 'Kelola Data' : 'Jadwal')}
+                >
+                  <MaterialCommunityIcons
+                    name={actionIcon || (isTuRole(user?.roles || []) ? 'folder-outline' : 'calendar-clock')}
+                    size={16}
+                    color="#059669"
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => navigation?.navigate('Profil')}
+                  style={styles.teacherStickyMiniBtn}
+                  accessibilityLabel="Profil"
+                >
+                  <MaterialCommunityIcons
+                    name="account-circle-outline"
+                    size={16}
+                    color="#059669"
+                  />
+                </TouchableOpacity>
               </View>
             </View>
-
-            <View style={styles.teacherStickyRichMiniActions}>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={() => navigation?.navigate('Notifikasi')}
-                style={styles.teacherStickyMiniBtn}
-                accessibilityLabel="Notifikasi"
-              >
-                <MaterialCommunityIcons
-                  name="bell-ring-outline"
-                  size={16}
-                  color="#059669"
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={() => navigation?.navigate(actionRoute || (isTuRole(user?.roles || []) ? 'Data' : 'Jadwal'))}
-                style={styles.teacherStickyMiniBtn}
-                accessibilityLabel={actionLabel || (isTuRole(user?.roles || []) ? 'Kelola Data' : 'Jadwal')}
-              >
-                <MaterialCommunityIcons
-                  name={actionIcon || (isTuRole(user?.roles || []) ? 'folder-outline' : 'calendar-clock')}
-                  size={16}
-                  color="#059669"
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={() => navigation?.navigate('Profil')}
-                style={styles.teacherStickyMiniBtn}
-                accessibilityLabel="Profil"
-              >
-                <MaterialCommunityIcons
-                  name="account-circle-outline"
-                  size={16}
-                  color="#059669"
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
 
           {/* KPI Metrik Stats Row di dalam Sticky Header (Hadir, Dinas Luar, Terlambat, Izin/Sakit) */}
           {stats && stats.length > 0 && (
@@ -508,6 +582,7 @@ export function TeacherStickyHeader({
           )}
         </LinearGradient>
       </View>
+      )}
     </Animated.View>
   );
 }
@@ -520,13 +595,15 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 100,
     paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#A7F3D0',
   },
   teacherStickyDecorCircle1: {
     position: 'absolute',
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
     top: -80,
     right: -50,
   },
@@ -535,7 +612,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(16, 185, 129, 0.04)',
     bottom: -30,
     left: 20,
   },
@@ -558,16 +635,18 @@ const styles = StyleSheet.create({
     height: 38,
     borderRadius: 13,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
     ...Platform.select({
       ios: {
-        shadowColor: '#000000',
+        shadowColor: '#059669',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
-        shadowRadius: 4,
+        shadowRadius: 3,
       },
-      android: { elevation: 3 },
+      android: { elevation: 2 },
     }),
   },
   teacherStickyBrandTextCol: {
@@ -576,12 +655,12 @@ const styles = StyleSheet.create({
   teacherStickyBrandLabel: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#064E3B',
     letterSpacing: -0.2,
   },
   teacherStickyBrandSub: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.85)',
+    color: '#059669',
     fontWeight: '600',
     marginTop: 1,
   },
@@ -594,11 +673,20 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#059669',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+      },
+      android: { elevation: 2 },
+    }),
   },
   teacherStickyBellBadgeDot: {
     position: 'absolute',
@@ -617,8 +705,8 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     overflow: 'hidden',
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.4)',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderColor: '#A7F3D0',
+    backgroundColor: '#DEF7EC',
   },
   teacherStickyTopAvatarImg: {
     width: '100%',
@@ -626,16 +714,16 @@ const styles = StyleSheet.create({
   },
   teacherStickyRichCard: {
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     ...Platform.select({
       ios: {
         shadowColor: '#064E3B',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
-        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 6,
       },
-      android: { elevation: 5 },
+      android: { elevation: 3 },
     }),
   },
   cardDecorCircle: {
@@ -643,7 +731,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(16, 185, 129, 0.04)',
     top: -40,
     right: -20,
   },
@@ -657,9 +745,9 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 12,
     borderWidth: 1.8,
-    borderColor: '#FFFFFF',
+    borderColor: '#A7F3D0',
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: '#DEF7EC',
   },
   teacherStickyRichAvatarImg: {
     width: '100%',
@@ -672,12 +760,12 @@ const styles = StyleSheet.create({
   teacherStickyRichTeacherName: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#064E3B',
     letterSpacing: -0.2,
   },
   teacherStickyRichNisText: {
     fontSize: 9.5,
-    color: 'rgba(255,255,255,0.85)',
+    color: '#059669',
     fontWeight: '600',
     marginTop: 1,
   },
@@ -685,7 +773,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     borderRadius: 6,
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -695,7 +785,7 @@ const styles = StyleSheet.create({
   teacherStickyRichUnitText: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#059669',
   },
   teacherStickyRichMetaRow: {
     flexDirection: 'row',
@@ -705,11 +795,11 @@ const styles = StyleSheet.create({
   teacherStickyRichMetaText: {
     fontSize: 9,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.8)',
+    color: '#64748B',
   },
   teacherStickyRichMetaSep: {
     fontSize: 8,
-    color: 'rgba(255,255,255,0.5)',
+    color: '#94A3B8',
   },
   teacherStickyRichPresensiDot: {
     width: 5,
@@ -725,12 +815,14 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 9,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
     ...Platform.select({
       ios: {
-        shadowColor: '#000000',
+        shadowColor: '#059669',
         shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.08,
         shadowRadius: 2,
@@ -875,5 +967,70 @@ const styles = StyleSheet.create({
   },
   teacherStickyFilterChipTextActive: {
     color: '#059669',
+  },
+  teacherStickyTabBarContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 3.5,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    marginTop: 4,
+    gap: 4,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  teacherStickyTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+  },
+  teacherStickyTabBtnActive: {
+    backgroundColor: '#059669',
+    elevation: 2,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
+  teacherStickyTabBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  teacherStickyTabBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  teacherStickyTabBadge: {
+    marginLeft: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 99,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  teacherStickyTabBadgeActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  teacherStickyTabBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  teacherStickyTabBadgeTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
 });

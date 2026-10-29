@@ -23,6 +23,7 @@ import {
   isStudentRole,
   isTuRole,
   isOperatorRole,
+  isMusyrifRole,
 } from './roles';
 
 export type ScreenKey =
@@ -104,6 +105,7 @@ export const canAccessScreen = (
       const hasDataRole =
         isFoundationRole(roles) ||
         isPrincipalRole(roles) ||
+        isDivisiRole(roles) ||
         isTuRole(roles) ||
         isOperatorRole(roles) ||
         hasAnyRole(roles, ROLES.ADMIN);
@@ -185,9 +187,11 @@ export const canAccessScreen = (
 
       const hasAttendanceRole =
         isTeacherRole(roles) ||
+        isMusyrifRole(roles) ||
         isTuRole(roles) ||
         isOperatorRole(roles) ||
         isPrincipalRole(roles) ||
+        isDivisiRole(roles) ||
         isParentRole(roles) ||
         isStudentRole(roles);
 
@@ -236,35 +240,35 @@ export const canAccessScreen = (
     }
 
     case 'laporanBulanan': {
-      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || can(user, 'divisi.laporan_bulanan', 'dashboard.kepala-sekolah.view')) {
+      if (isSuperAdmin || isPrincipalRole(roles) || isDivisiRole(roles) || isFoundationRole(roles) || can(user, 'divisi.laporan_bulanan', 'dashboard.kepala-sekolah.view')) {
         return { allowed: true };
       }
-      return { allowed: false, reason: 'Laporan bulanan hanya dapat diakses oleh Kepala Sekolah dan Pimpinan Yayasan.' };
+      return { allowed: false, reason: 'Laporan bulanan hanya dapat diakses oleh Kepala Sekolah, Divisi Pendidikan, dan Pimpinan Yayasan.' };
     }
 
     case 'prestasiSiswa': {
-      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTeacherRole(roles) || can(user, 'dashboard.pemantauan.lihat', 'kesiswaan.prestasi_rekapitulasi', 'report.prestasi.view')) {
+      if (isSuperAdmin || isPrincipalRole(roles) || isDivisiRole(roles) || isFoundationRole(roles) || isTeacherRole(roles) || can(user, 'dashboard.pemantauan.lihat', 'kesiswaan.prestasi_rekapitulasi', 'report.prestasi.view')) {
         return { allowed: true };
       }
       return { allowed: false, reason: 'Rekapitulasi prestasi siswa hanya dapat diakses oleh pengawas, pimpinan, dan guru.' };
     }
 
     case 'monitoringSiswa': {
-      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'divisi.monitoring', 'kehadiran.siswa.monitoring')) {
+      if (isSuperAdmin || isPrincipalRole(roles) || isDivisiRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'divisi.monitoring', 'kehadiran.siswa.monitoring')) {
         return { allowed: true };
       }
-      return { allowed: false, reason: 'Monitoring siswa hanya dapat diakses oleh Kepala Sekolah dan Staf Berwenang.' };
+      return { allowed: false, reason: 'Monitoring siswa hanya dapat diakses oleh Kepala Sekolah, Divisi Pendidikan, dan Staf Berwenang.' };
     }
 
     case 'alumniTracer': {
-      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'alumni.view', 'kesiswaan.alumni_tujuan_lanjut', 'kesiswaan.kelulusan_per_tahun')) {
+      if (isSuperAdmin || isPrincipalRole(roles) || isDivisiRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'alumni.view', 'kesiswaan.alumni_tujuan_lanjut', 'kesiswaan.kelulusan_per_tahun')) {
         return { allowed: true };
       }
       return { allowed: false, reason: 'Data kelulusan dan tracer study alumni hanya dapat diakses oleh pimpinan dan TU.' };
     }
 
     case 'mutasiSiswa': {
-      if (isSuperAdmin || isPrincipalRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'kesiswaan.laporan_mutasi', 'student.mutation.view')) {
+      if (isSuperAdmin || isPrincipalRole(roles) || isDivisiRole(roles) || isFoundationRole(roles) || isTuRole(roles) || can(user, 'kesiswaan.laporan_mutasi', 'student.mutation.view')) {
         return { allowed: true };
       }
       return { allowed: false, reason: 'Data mutasi siswa masuk dan keluar hanya dapat diakses oleh pimpinan dan staf terkait.' };
@@ -286,7 +290,7 @@ export const canPerformAction = (
   if (!user) return false;
   const roles = user.roles || [];
   if (isSuperAdminRole(roles)) return true;
-  const isPrincipal = isPrincipalRole(roles);
+  const isPrincipal = isPrincipalRole(roles) || isDivisiRole(roles);
 
   switch (resource) {
     case 'employees':

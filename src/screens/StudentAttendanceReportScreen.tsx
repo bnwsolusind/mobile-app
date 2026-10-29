@@ -24,8 +24,13 @@ import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
-import { getProfileImageUrl, resolveMediaUrl, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_PARENT_AVATAR } from '../utils/profile';
-import { isPrincipalRole } from '../utils/roles';
+import { isPrincipalRole, isTeacherRole, isTuRole } from '../utils/roles';
+import {
+  resolveMediaUrl,
+  getProfileImageUrl,
+  DEFAULT_PARENT_AVATAR,
+  DEFAULT_STUDENT_BOY_AVATAR,
+} from '../utils/profile';
 
 const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -74,6 +79,9 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
 
   const user = useAuthStore((state) => state.user);
   const isPrincipal = isPrincipalRole(user?.roles || []);
+  const isTeacher = isTeacherRole(user?.roles || []);
+  const isTu = isTuRole(user?.roles || []);
+  const canAccessGateTerminal = !isTeacher || isTu;
 
   // Safe back navigation helper with dynamic history fallback
   const handleBack = () => {
@@ -1406,16 +1414,18 @@ export default function StudentAttendanceReportScreen({ navigation, route }: any
                 </Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => navigation?.navigate?.('AbsensiGerbangTerminal')}
-                style={[s.segmentBtn, { backgroundColor: '#F0F9FF', borderColor: '#38BDF8', borderWidth: 1 }]}
-              >
-                <MaterialCommunityIcons name="boom-gate-outline" size={16} color="#0284C7" />
-                <Text style={[s.segmentBtnText, { color: '#0284C7', fontWeight: '800' }]}>
-                  Presensi Gerbang Scanner ➜
-                </Text>
-              </TouchableOpacity>
+              {canAccessGateTerminal && (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => navigation?.navigate?.('AbsensiGerbangTerminal')}
+                  style={[s.segmentBtn, { backgroundColor: '#F0F9FF', borderColor: '#38BDF8', borderWidth: 1 }]}
+                >
+                  <MaterialCommunityIcons name="boom-gate-outline" size={16} color="#0284C7" />
+                  <Text style={[s.segmentBtnText, { color: '#0284C7', fontWeight: '800' }]}>
+                    Presensi Gerbang Scanner ➜
+                  </Text>
+                </TouchableOpacity>
+              )}
             </>
           ) : (
             <>

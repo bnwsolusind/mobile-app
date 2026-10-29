@@ -28,9 +28,9 @@ export default function FoundationDashboardView({
       {/* 1. Hub Yayasan */}
       <View style={styles.hubHeaderRow}>
         <View style={styles.hubHeaderLeft}>
-          <View style={[styles.hubPulseBox, { backgroundColor: '#F1F5F9' }]}>
+          <View style={styles.hubPulseBox}>
             <View style={styles.pulseDot} />
-            <MaterialCommunityIcons name="domain" size={17} color="#334155" />
+            <MaterialCommunityIcons name="domain" size={17} color="#059669" />
           </View>
           <View>
             <Text style={styles.hubTitle}>Konsolidasi Yayasan Terpadu</Text>
@@ -46,7 +46,7 @@ export default function FoundationDashboardView({
           style={styles.portalPillBtn}
         >
           <Text style={styles.portalPillText}>Pusat Data</Text>
-          <MaterialCommunityIcons name="chevron-right" size={14} color="#334155" />
+          <MaterialCommunityIcons name="chevron-right" size={14} color="#065F46" />
         </TouchableOpacity>
       </View>
 
@@ -149,7 +149,7 @@ export default function FoundationDashboardView({
       <View style={styles.sectionCard}>
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionTitleWithIcon}>
-            <MaterialCommunityIcons name="chart-box-outline" size={20} color="#334155" style={{ marginRight: 6 }} />
+            <MaterialCommunityIcons name="chart-box-outline" size={20} color="#059669" style={{ marginRight: 6 }} />
             <Text style={styles.sectionTitleBold}>Pusat Monitoring & Evaluasi</Text>
           </View>
         </View>
@@ -229,6 +229,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+    backgroundColor: '#DEF7EC',
   },
   pulseDot: {
     position: 'absolute',
@@ -237,34 +238,36 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#059669',
+    backgroundColor: '#10B981',
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
   },
   hubTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#064E3B',
     lineHeight: 18,
   },
   hubSubtitle: {
     fontSize: 11,
-    color: '#64748B',
+    color: '#059669',
     fontWeight: '600',
   },
   portalPillBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 9,
-    paddingVertical: 4.5,
+    gap: 3,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   portalPillText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#334155',
+    fontWeight: '800',
+    color: '#065F46',
   },
   kpiGrid: {
     flexDirection: 'row',
@@ -274,17 +277,17 @@ const styles = StyleSheet.create({
   },
   kpiCard: {
     width: '48.5%',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1.5,
     overflow: 'hidden',
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
     elevation: 2,
   },
   kpiGradient: {
-    padding: 12,
+    padding: 13,
   },
   kpiTopRow: {
     flexDirection: 'row',
@@ -293,11 +296,16 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   kpiIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
   },
   kpiCount: {
     fontSize: 22,
@@ -307,7 +315,7 @@ const styles = StyleSheet.create({
   kpiLabel: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#064E3B',
     lineHeight: 16,
   },
   kpiSub: {
@@ -318,16 +326,16 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 14,
+    borderRadius: 22,
+    padding: 15,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -342,7 +350,7 @@ const styles = StyleSheet.create({
   sectionTitleBold: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#064E3B',
   },
   actionGrid: {
     flexDirection: 'row',
@@ -361,11 +369,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
   actionBtnLabel: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#334155',
+    color: '#065F46',
     textAlign: 'center',
     lineHeight: 14,
   },

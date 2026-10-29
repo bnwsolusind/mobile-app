@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   Image,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,6 +18,31 @@ import TuKpiDrilldownModal, { TuKpiType } from './TuKpiDrilldownModal';
 import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../../utils/profile';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const KPI_CARD_WIDTH = Math.min(SCREEN_WIDTH - 44, 340);
+const KPI_CARD_GAP = 12;
+const KPI_SNAP_INTERVAL = KPI_CARD_WIDTH + KPI_CARD_GAP;
+
+interface TuKpiCarouselItem {
+  id: string;
+  category: 'pokok' | 'presensi' | 'layanan' | 'berkas';
+  categoryLabel: string;
+  categoryBadgeBg: string;
+  categoryTextColor: string;
+  title: string;
+  subtitle: string;
+  value: number | string;
+  unit: string;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  iconBg: string;
+  iconColor: string;
+  gradientColors: [string, string];
+  borderColor: string;
+  valueColor: string;
+  subDetail: string;
+  kpiType: TuKpiType;
+  absensiTab?: 'siswa_hadir' | 'siswa_belum_absen' | 'pegawai';
+  actionLabel: string;
+}
 
 // Background Image: Identik dengan Splash Screen 2
 const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
@@ -294,6 +321,9 @@ export default function TuHomeScreenView({
   const [showAllMenusModal, setShowAllMenusModal] = useState(false);
   const [menuSearchQuery, setMenuSearchQuery] = useState('');
   const [avatarError, setAvatarError] = useState(false);
+  const [activeKpiSlide, setActiveKpiSlide] = useState(0);
+  const [activeKpiCategory, setActiveKpiCategory] = useState<string>('semua');
+  const kpiScrollRef = useRef<ScrollView>(null);
 
   // --- Data Dinamis dari Backend / Auth Store ---
   const kpis = dashboard?.kpis || {};
@@ -313,12 +343,12 @@ export default function TuHomeScreenView({
     || user?.education_unit?.name
     || dashboard?.unit?.nama
     || dashboard?.unit?.name
-    || 'Sekolah IT';
+    || 'Unit Madrasah';
 
   const tahunAjaran = ctx?.tahun_ajaran?.nama
     || ctx?.tahun_ajaran?.name
     || dashboard?.academic_year
-    || '2026/2027';
+    || 'Tahun Ajaran Aktif';
 
   // Resolusi Foto Profil Pengguna (Dinamis dari database dengan fallback default)
   const resolvedProfileImg = useMemo(() => {
@@ -346,6 +376,275 @@ export default function TuHomeScreenView({
   const pembayaranHariIni = kpis?.pembayaran_hari_ini?.total ?? 0;
   const tugasMenunggu = kpis?.tugas_menunggu?.total ?? (siswaIncomplete + pegawaiIncomplete);
 
+  // ── Daftar Kartu KPI Carousel Interaktif (100% Dinamis dari Database Backend) ──
+  const kpiCarouselItems = useMemo<TuKpiCarouselItem[]>(() => [
+    {
+      id: 'total_siswa',
+      category: 'pokok',
+      categoryLabel: 'Data Pokok',
+      categoryBadgeBg: '#DBEAFE',
+      categoryTextColor: '#1D4ED8',
+      title: 'Total Siswa Aktif',
+      subtitle: `Santri terdaftar aktif di ${unitName}`,
+      value: totalSiswa,
+      unit: 'Siswa',
+      icon: 'account-school-outline',
+      iconBg: '#2563EB',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#EFF6FF', '#DBEAFE'],
+      borderColor: '#93C5FD',
+      valueColor: '#1D4ED8',
+      subDetail: `L: ${siswaLaki}   •   P: ${siswaPerempuan}`,
+      kpiType: 'total_siswa',
+      actionLabel: 'Lihat Rincian',
+    },
+    {
+      id: 'total_pegawai',
+      category: 'pokok',
+      categoryLabel: 'SDM & Pendidik',
+      categoryBadgeBg: '#CFFAFE',
+      categoryTextColor: '#0E7490',
+      title: 'Total Pegawai & Guru',
+      subtitle: 'Tenaga pendidik & kependidikan aktif',
+      value: totalPegawai,
+      unit: 'Staf',
+      icon: 'badge-account-outline',
+      iconBg: '#0891B2',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#ECFEFF', '#CFFAFE'],
+      borderColor: '#67E8F9',
+      valueColor: '#0E7490',
+      subDetail: `L: ${pegawaiLaki}   •   P: ${pegawaiPerempuan}`,
+      kpiType: 'total_pegawai',
+      actionLabel: 'Lihat Rincian',
+    },
+    {
+      id: 'siswa_hadir',
+      category: 'presensi',
+      categoryLabel: 'Presensi Hari Ini',
+      categoryBadgeBg: '#CCFBF1',
+      categoryTextColor: '#0F766E',
+      title: 'Siswa Hadir Hari Ini',
+      subtitle: 'Tercatat masuk gerbang & kelas',
+      value: siswaHadir,
+      unit: 'Siswa',
+      icon: 'door-open',
+      iconBg: '#0D9488',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#F0FDFA', '#CCFBF1'],
+      borderColor: '#99F6E4',
+      valueColor: '#0F766E',
+      subDetail: 'Tercatat hadir tepat waktu / KBM',
+      kpiType: 'absensi_hari_ini',
+      absensiTab: 'siswa_hadir',
+      actionLabel: 'Log Kehadiran',
+    },
+    {
+      id: 'siswa_belum_absen',
+      category: 'presensi',
+      categoryLabel: 'Presensi Hari Ini',
+      categoryBadgeBg: '#FEF3C7',
+      categoryTextColor: '#B45309',
+      title: 'Siswa Belum Absen',
+      subtitle: 'Belum terdata hadir di gerbang',
+      value: siswaBelumAbsen,
+      unit: 'Siswa',
+      icon: 'account-clock-outline',
+      iconBg: '#D97706',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#FFFBEB', '#FEF3C7'],
+      borderColor: '#FCD34D',
+      valueColor: '#B45309',
+      subDetail: 'Perlu konfirmasi status kehadiran',
+      kpiType: 'absensi_hari_ini',
+      absensiTab: 'siswa_belum_absen',
+      actionLabel: 'Cek Siswa',
+    },
+    {
+      id: 'pegawai_hadir',
+      category: 'presensi',
+      categoryLabel: 'Presensi Hari Ini',
+      categoryBadgeBg: '#E0E7FF',
+      categoryTextColor: '#3730A3',
+      title: 'Guru & Tendik Hadir',
+      subtitle: 'Pendidik & staf di sekolah hari ini',
+      value: pegawaiHadir,
+      unit: 'Staf',
+      icon: 'account-tie-outline',
+      iconBg: '#4F46E5',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#EEF2FF', '#E0E7FF'],
+      borderColor: '#C7D2FE',
+      valueColor: '#3730A3',
+      subDetail: 'Staf pengajar & kependidikan hadir',
+      kpiType: 'absensi_hari_ini',
+      absensiTab: 'pegawai',
+      actionLabel: 'Presensi SDM',
+    },
+    {
+      id: 'pengajuan_surat',
+      category: 'layanan',
+      categoryLabel: 'Layanan Persuratan',
+      categoryBadgeBg: '#FFE4E6',
+      categoryTextColor: '#BE123C',
+      title: 'Pengajuan Surat',
+      subtitle: 'Permohonan surat keterangan & mutasi',
+      value: pengajuanSurat,
+      unit: 'Berkas',
+      icon: 'email-edit-outline',
+      iconBg: '#E11D48',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#FFF1F2', '#FFE4E6'],
+      borderColor: '#FECDD3',
+      valueColor: '#BE123C',
+      subDetail: 'Menunggu proses & cetak TU',
+      kpiType: 'pengajuan_surat',
+      actionLabel: 'Proses Surat',
+    },
+    {
+      id: 'pembayaran_hari_ini',
+      category: 'layanan',
+      categoryLabel: 'Keuangan & Kasir',
+      categoryBadgeBg: '#D1FAE5',
+      categoryTextColor: '#047857',
+      title: 'Pembayaran Hari Ini',
+      subtitle: 'SPP & transaksi terverifikasi',
+      value: pembayaranHariIni,
+      unit: 'Transaksi',
+      icon: 'cash-check',
+      iconBg: '#059669',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#ECFDF5', '#D1FAE5'],
+      borderColor: '#A7F3D0',
+      valueColor: '#047857',
+      subDetail: 'Penerimaan kas & VA harian',
+      kpiType: 'pembayaran_hari_ini',
+      actionLabel: 'Rekap Kasir',
+    },
+    {
+      id: 'tugas_menunggu',
+      category: 'layanan',
+      categoryLabel: 'Antrean Tugas TU',
+      categoryBadgeBg: '#EDE9FE',
+      categoryTextColor: '#5B21B6',
+      title: 'Tugas Menunggu',
+      subtitle: 'Disposisi & tinjauan administrasi',
+      value: tugasMenunggu,
+      unit: 'Antrean',
+      icon: 'clipboard-clock-outline',
+      iconBg: '#7C3AED',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#F5F3FF', '#EDE9FE'],
+      borderColor: '#DDD6FE',
+      valueColor: '#5B21B6',
+      subDetail: 'Perlu validasi staf tata usaha',
+      kpiType: 'tugas_menunggu',
+      actionLabel: 'Buka Tugas',
+    },
+    {
+      id: 'siswa_incomplete',
+      category: 'berkas',
+      categoryLabel: 'Kelengkapan Berkas',
+      categoryBadgeBg: '#FEF3C7',
+      categoryTextColor: '#92400E',
+      title: 'Siswa Belum Lengkap',
+      subtitle: 'NISN, NIK, KK, atau Data Wali kosong',
+      value: siswaIncomplete,
+      unit: 'Santri',
+      icon: 'account-alert-outline',
+      iconBg: '#F59E0B',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#FFFBEB', '#FEF3C7'],
+      borderColor: '#FCD34D',
+      valueColor: '#92400E',
+      subDetail: 'Perlu pembaruan data pokok siswa',
+      kpiType: 'siswa_incomplete',
+      actionLabel: 'Perbaiki Berkas',
+    },
+    {
+      id: 'pegawai_incomplete',
+      category: 'berkas',
+      categoryLabel: 'Kelengkapan Berkas',
+      categoryBadgeBg: '#FEE2E2',
+      categoryTextColor: '#991B1B',
+      title: 'Pegawai Belum Lengkap',
+      subtitle: 'NIY, NIK, atau berkas SDM belum diisi',
+      value: pegawaiIncomplete,
+      unit: 'Staf',
+      icon: 'card-account-details-outline',
+      iconBg: '#EF4444',
+      iconColor: '#FFFFFF',
+      gradientColors: ['#FEF2F2', '#FEE2E2'],
+      borderColor: '#FECACA',
+      valueColor: '#991B1B',
+      subDetail: 'Perlu verifikasi berkas kepegawaian',
+      kpiType: 'pegawai_incomplete',
+      actionLabel: 'Perbaiki Berkas',
+    },
+  ], [
+    unitName,
+    totalSiswa,
+    siswaLaki,
+    siswaPerempuan,
+    totalPegawai,
+    pegawaiLaki,
+    pegawaiPerempuan,
+    siswaHadir,
+    siswaBelumAbsen,
+    pegawaiHadir,
+    pengajuanSurat,
+    pembayaranHariIni,
+    tugasMenunggu,
+    siswaIncomplete,
+    pegawaiIncomplete,
+  ]);
+
+  // Tab Kategori Cepat untuk Navigasi Carousel
+  const KPI_CATEGORIES = useMemo(() => [
+    { id: 'semua', label: 'Semua (10)', index: 0, icon: 'view-grid-outline' as const },
+    { id: 'pokok', label: 'Data Pokok (2)', index: 0, icon: 'account-school-outline' as const },
+    { id: 'presensi', label: 'Presensi (3)', index: 2, icon: 'clock-check-outline' as const },
+    { id: 'layanan', label: 'Layanan & Kas (3)', index: 5, icon: 'cash-multiple' as const },
+    { id: 'berkas', label: 'Berkas (2)', index: 8, icon: 'file-alert-outline' as const },
+  ], []);
+
+  const handleSelectKpiCategory = (cat: typeof KPI_CATEGORIES[0]) => {
+    setActiveKpiCategory(cat.id);
+    setActiveKpiSlide(cat.index);
+    kpiScrollRef.current?.scrollTo({
+      x: cat.index * KPI_SNAP_INTERVAL,
+      animated: true,
+    });
+  };
+
+  const handleScrollToKpiSlide = (idx: number) => {
+    const clamped = Math.max(0, Math.min(kpiCarouselItems.length - 1, idx));
+    setActiveKpiSlide(clamped);
+    kpiScrollRef.current?.scrollTo({
+      x: clamped * KPI_SNAP_INTERVAL,
+      animated: true,
+    });
+  };
+
+  const handleKpiScrollEvent = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const newIdx = Math.max(0, Math.min(kpiCarouselItems.length - 1, Math.round(offsetX / KPI_SNAP_INTERVAL)));
+    if (newIdx !== activeKpiSlide) {
+      setActiveKpiSlide(newIdx);
+      const currentItem = kpiCarouselItems[newIdx];
+      if (currentItem && activeKpiCategory !== 'semua' && activeKpiCategory !== currentItem.category) {
+        setActiveKpiCategory(currentItem.category);
+      }
+    }
+  };
+
+  const handleKpiCardPress = (item: TuKpiCarouselItem) => {
+    if (item.absensiTab) {
+      setActiveAbsensiTab(item.absensiTab);
+    }
+    setActiveKpiType(item.kpiType);
+  };
+
   // 3. Tanggal Hari Ini Dinamis
   const currentDateFormatted = getIndonesianCurrentDate();
 
@@ -357,13 +656,14 @@ export default function TuHomeScreenView({
 
   // 5. Pengumuman Aktif Dinamis
   const latestAnnouncement = announcements && announcements.length > 0 ? announcements[0] : null;
+  const hasAnnouncement = Boolean(latestAnnouncement);
   const announcementTitle = latestAnnouncement?.title
     || latestAnnouncement?.judul
-    || 'Pembagian formulir PPDB 2026/2027 telah dibuka.';
+    || 'Belum ada warta terbaru hari ini.';
   const announcementSubtitle = latestAnnouncement?.content
     || latestAnnouncement?.isi
     || latestAnnouncement?.summary
-    || 'Informasi berkas & pendaftaran terpadu';
+    || 'Ketuk untuk melihat seluruh arsip warta & edaran resmi sekolah.';
 
   // Daftar Semua Menu untuk Modal Katalog Lengkap
   const allMenuGroups = [
@@ -398,8 +698,10 @@ export default function TuHomeScreenView({
       groupIcon: 'folder-account-outline',
       groupColor: '#059669',
       items: [
-        { id: 'data_master', label: 'Data Master Siswa & Guru', icon: 'database-outline', color: '#059669', screen: 'Data' },
-        { id: 'alumni', label: 'Kelola Alumni & Mutasi', icon: 'school', color: '#D97706', screen: 'Data', params: { initialResource: 'students', filterStatus: 'lulus', mode: 'alumni' } },
+        { id: 'buku_induk_siswa', label: 'Buku Induk Santri/Siswa', icon: 'account-school-outline', color: '#0284C7', screen: 'MasterSiswa' },
+        { id: 'data_sdm_guru', label: 'Data SDM Guru & Pegawai', icon: 'account-group-outline', color: '#7C3AED', screen: 'Data', params: { initialResource: 'employees' } },
+        { id: 'pantau_kelas', label: 'Manajemen Rombel & Kenaikan', icon: 'google-classroom', color: '#EA580C', screen: 'PantauKelas' },
+        { id: 'alumni', label: 'Kelola Alumni & Mutasi', icon: 'account-switch-outline', color: '#D97706', screen: 'MutasiSiswa' },
         { id: 'tagihan', label: 'Tagihan & SPP Siswa', icon: 'cash-multiple', color: '#E11D48', screen: 'Tagihan' },
         { id: 'komentar', label: 'Catatan & Surat Siswa', icon: 'book-open-page-variant', color: '#8B5CF6', screen: 'Komentar' },
       ],
@@ -409,7 +711,7 @@ export default function TuHomeScreenView({
       groupIcon: 'book-open-variant',
       groupColor: '#7C3AED',
       items: [
-        { id: 'tahfizh', label: 'Setoran Tahfizh Al-Qur\'an', icon: 'book-marker', color: '#2563EB', screen: 'Tahfizh' },
+        { id: 'al-quran', label: 'Al-Qur’an Al-Karim', icon: 'book-open-variant', color: '#2563EB', screen: 'Quran' },
         { id: 'chat', label: 'Chat & Koordinasi Pegawai', icon: 'message-text-outline', color: '#059669', screen: 'Chat Guru' },
         { id: 'informasi', label: 'Pusat Informasi & Berita', icon: 'bullhorn', color: '#E11D48', screen: 'Informasi' },
       ],
@@ -432,7 +734,7 @@ export default function TuHomeScreenView({
   const handleMenuClick = (menuId: string) => {
     switch (menuId) {
       case 'data_siswa':
-        navigation?.navigate('Data', { initialResource: 'students' });
+        navigation?.navigate('MasterSiswa');
         break;
       case 'data_guru':
         navigation?.navigate('Data', { initialResource: 'employees' });
@@ -614,182 +916,189 @@ export default function TuHomeScreenView({
         </LinearGradient>
       </TouchableOpacity>
 
-      {/* ── Baris 1: Data Pokok Sekolah & SDM (2 Kolom Berdampingan) ── */}
-      <View style={styles.kpiGrid2}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('total_siswa')}
-          style={[styles.kpiCard2, { borderColor: '#93C5FD' }]}
-        >
-          <LinearGradient colors={['#EFF6FF', '#DBEAFE']} style={styles.kpiGradient2}>
-            <View style={styles.kpiTopRow2}>
-              <View style={[styles.kpiIconWrap2, { backgroundColor: '#2563EB' }]}>
-                <MaterialCommunityIcons name="account-school-outline" size={16} color="#FFFFFF" />
+      {/* ── Carousel Indikator Kinerja Utama (KPI) Interaktif ── */}
+      <View style={styles.kpiCarouselSection}>
+        {/* Header Carousel: Judul, Subtitle, Counter Pill & Tombol Navigasi Panah */}
+        <View style={styles.kpiCarouselHeader}>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <View style={styles.kpiCarouselTitleRow}>
+              <MaterialCommunityIcons name="view-carousel-outline" size={18} color="#0D9488" />
+              <Text style={styles.kpiCarouselSectionTitle}>Indikator Kinerja (KPI)</Text>
+              <View style={styles.kpiCounterPill}>
+                <Text style={styles.kpiCounterText}>
+                  {activeKpiSlide + 1} / {kpiCarouselItems.length}
+                </Text>
               </View>
-              <Text style={[styles.kpiCount2, { color: '#2563EB' }]}>{totalSiswa}</Text>
             </View>
-            <Text style={styles.kpiLabel2}>Total Siswa</Text>
-            <Text style={styles.kpiSub2}>Aktif terdaftar</Text>
-            <Text style={styles.kpiSubDetail2}>L: {siswaLaki}   P: {siswaPerempuan}</Text>
-          </LinearGradient>
-        </TouchableOpacity>
+            <Text style={styles.kpiCarouselSectionSub}>
+              Pilih kategori atau ketuk kartu untuk rincian data
+            </Text>
+          </View>
 
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('total_pegawai')}
-          style={[styles.kpiCard2, { borderColor: '#67E8F9' }]}
-        >
-          <LinearGradient colors={['#ECFEFF', '#CFFAFE']} style={styles.kpiGradient2}>
-            <View style={styles.kpiTopRow2}>
-              <View style={[styles.kpiIconWrap2, { backgroundColor: '#0891B2' }]}>
-                <MaterialCommunityIcons name="badge-account-outline" size={16} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.kpiCount2, { color: '#0891B2' }]}>{totalPegawai}</Text>
-            </View>
-            <Text style={styles.kpiLabel2}>Total Pegawai</Text>
-            <Text style={styles.kpiSub2}>Staf aktif</Text>
-            <Text style={styles.kpiSubDetail2}>L: {pegawaiLaki}   P: {pegawaiPerempuan}</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
+          {/* Tombol Panah Kiri & Kanan */}
+          <View style={styles.kpiNavArrowsRow}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              disabled={activeKpiSlide === 0}
+              onPress={() => handleScrollToKpiSlide(activeKpiSlide - 1)}
+              style={[
+                styles.kpiNavArrowBtn,
+                activeKpiSlide === 0 && styles.kpiNavArrowBtnDisabled,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="chevron-left"
+                size={18}
+                color={activeKpiSlide === 0 ? '#94A3B8' : '#0D9488'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              disabled={activeKpiSlide === kpiCarouselItems.length - 1}
+              onPress={() => handleScrollToKpiSlide(activeKpiSlide + 1)}
+              style={[
+                styles.kpiNavArrowBtn,
+                activeKpiSlide === kpiCarouselItems.length - 1 && styles.kpiNavArrowBtnDisabled,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="chevron-right"
+                size={18}
+                color={activeKpiSlide === kpiCarouselItems.length - 1 ? '#94A3B8' : '#0D9488'}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
 
-      {/* ── Baris 2: 3 Metrik Cepat Layanan & Tugas (Sesuai Mockup Gambar, Tanpa Duplikat Total Siswa) ── */}
-      <View style={styles.kpiRow3Quick}>
-        {/* Card 1: Pengajuan Surat */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('pengajuan_surat')}
-          style={styles.kpiCard3Quick}
+        {/* Tab Switcher Kategori KPI (Pill Cepat) */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.kpiCategoryScroll}
         >
-          <Text style={[styles.kpiValue3Quick, { color: '#E11D48' }]} numberOfLines={1}>
-            {pengajuanSurat}
-          </Text>
-          <Text style={styles.kpiLabel3Quick} numberOfLines={2}>
-            Pengajuan Surat
-          </Text>
-        </TouchableOpacity>
+          {KPI_CATEGORIES.map((cat) => {
+            const isActive = activeKpiCategory === cat.id;
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                activeOpacity={0.8}
+                onPress={() => handleSelectKpiCategory(cat)}
+                style={[
+                  styles.kpiCategoryChip,
+                  isActive && styles.kpiCategoryChipActive,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={cat.icon}
+                  size={14}
+                  color={isActive ? '#FFFFFF' : '#0D9488'}
+                />
+                <Text
+                  style={[
+                    styles.kpiCategoryChipText,
+                    isActive && styles.kpiCategoryChipTextActive,
+                  ]}
+                >
+                  {cat.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
-        {/* Card 2: Pembayaran Hari Ini */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('pembayaran_hari_ini')}
-          style={styles.kpiCard3Quick}
+        {/* Track Kartu Carousel Geser / Swipe Horizontal */}
+        <ScrollView
+          ref={kpiScrollRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          snapToInterval={KPI_SNAP_INTERVAL}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          onMomentumScrollEnd={handleKpiScrollEvent}
+          contentContainerStyle={styles.kpiCardsTrack}
         >
-          <Text style={[styles.kpiValue3Quick, { color: '#059669' }]} numberOfLines={1}>
-            {pembayaranHariIni}
-          </Text>
-          <Text style={styles.kpiLabel3Quick} numberOfLines={2}>
-            Pembayaran Hari Ini
-          </Text>
-        </TouchableOpacity>
+          {kpiCarouselItems.map((item, idx) => {
+            const isCardActive = activeKpiSlide === idx;
+            return (
+              <TouchableOpacity
+                key={item.id}
+                activeOpacity={0.88}
+                onPress={() => handleKpiCardPress(item)}
+                style={[
+                  styles.kpiCarouselCard,
+                  { width: KPI_CARD_WIDTH, borderColor: item.borderColor },
+                  isCardActive && styles.kpiCarouselCardActive,
+                ]}
+              >
+                <LinearGradient
+                  colors={item.gradientColors}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.kpiCarouselGradient}
+                >
+                  {/* Baris Atas: Kategori Badge + Ikon Topik */}
+                  <View style={styles.kpiCarouselTopRow}>
+                    <View style={styles.kpiCarouselBadgeGroup}>
+                      <View style={[styles.kpiCarouselCategoryBadge, { backgroundColor: item.categoryBadgeBg }]}>
+                        <Text style={[styles.kpiCarouselCategoryText, { color: item.categoryTextColor }]}>
+                          {item.categoryLabel}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.kpiCarouselIconWrap, { backgroundColor: item.iconBg }]}>
+                      <MaterialCommunityIcons name={item.icon} size={18} color={item.iconColor} />
+                    </View>
+                  </View>
 
-        {/* Card 3: Tugas Menunggu */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('tugas_menunggu')}
-          style={styles.kpiCard3Quick}
-        >
-          <Text style={[styles.kpiValue3Quick, { color: '#6366F1' }]} numberOfLines={1}>
-            {tugasMenunggu}
-          </Text>
-          <Text style={styles.kpiLabel3Quick} numberOfLines={2}>
-            Tugas Menunggu
-          </Text>
-        </TouchableOpacity>
-      </View>
+                  {/* Baris Nilai Besar & Judul Utama */}
+                  <View style={styles.kpiCarouselMainBody}>
+                    <View style={styles.kpiCarouselValueRow}>
+                      <Text style={[styles.kpiCarouselValue, { color: item.valueColor }]}>
+                        {typeof item.value === 'number' ? item.value.toLocaleString('id-ID') : item.value}
+                      </Text>
+                      <Text style={[styles.kpiCarouselUnit, { color: item.valueColor }]}>{item.unit}</Text>
+                    </View>
+                    <Text style={styles.kpiCarouselTitle} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.kpiCarouselSubtitle} numberOfLines={1}>{item.subtitle}</Text>
+                  </View>
 
-      {/* ── Baris 3: Presensi Hari Ini (3 Kolom Sejajar Rapi) ── */}
-      <View style={styles.kpiGrid3}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => {
-            setActiveAbsensiTab('siswa_hadir');
-            setActiveKpiType('absensi_hari_ini');
-          }}
-          style={[styles.kpiCard3, { borderColor: '#99F6E4' }]}
-        >
-          <LinearGradient colors={['#F0FDFA', '#CCFBF1']} style={styles.kpiGradient3}>
-            <View style={[styles.kpiIconWrap3, { backgroundColor: '#0D9488' }]}>
-              <MaterialCommunityIcons name="door-open" size={16} color="#FFFFFF" />
-            </View>
-            <Text style={[styles.kpiCount3, { color: '#0D9488' }]}>{siswaHadir}</Text>
-            <Text style={styles.kpiLabel3} numberOfLines={1}>Siswa Hadir</Text>
-            <Text style={[styles.kpiSub3, { color: '#0F766E' }]}>Tercatat</Text>
-          </LinearGradient>
-        </TouchableOpacity>
+                  {/* Divider Halus */}
+                  <View style={styles.kpiCarouselDivider} />
 
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => {
-            setActiveAbsensiTab('siswa_belum_absen');
-            setActiveKpiType('absensi_hari_ini');
-          }}
-          style={[styles.kpiCard3, { borderColor: '#FCD34D' }]}
-        >
-          <LinearGradient colors={['#FFFBEB', '#FEF3C7']} style={styles.kpiGradient3}>
-            <View style={[styles.kpiIconWrap3, { backgroundColor: '#D97706' }]}>
-              <MaterialCommunityIcons name="account-clock-outline" size={16} color="#FFFFFF" />
-            </View>
-            <Text style={[styles.kpiCount3, { color: '#D97706' }]}>{siswaBelumAbsen}</Text>
-            <Text style={styles.kpiLabel3} numberOfLines={1}>Belum Absen</Text>
-            <Text style={[styles.kpiSub3, { color: '#B45309' }]}>Belum Hadir</Text>
-          </LinearGradient>
-        </TouchableOpacity>
+                  {/* Baris Bawah: Detail Breakdown & Tombol Aksi */}
+                  <View style={styles.kpiCarouselBottomRow}>
+                    <View style={styles.kpiCarouselDetailWrap}>
+                      <MaterialCommunityIcons name="information-outline" size={13} color="#64748B" />
+                      <Text style={styles.kpiCarouselDetailText} numberOfLines={1}>{item.subDetail}</Text>
+                    </View>
+                    <View style={styles.kpiCarouselActionBtn}>
+                      <Text style={styles.kpiCarouselActionText}>{item.actionLabel}</Text>
+                      <MaterialCommunityIcons name="chevron-right" size={14} color="#0D9488" />
+                    </View>
+                  </View>
+                </LinearGradient>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => {
-            setActiveAbsensiTab('pegawai');
-            setActiveKpiType('absensi_hari_ini');
-          }}
-          style={[styles.kpiCard3, { borderColor: '#C7D2FE' }]}
-        >
-          <LinearGradient colors={['#EEF2FF', '#E0E7FF']} style={styles.kpiGradient3}>
-            <View style={[styles.kpiIconWrap3, { backgroundColor: '#4F46E5' }]}>
-              <MaterialCommunityIcons name="account-tie-outline" size={16} color="#FFFFFF" />
-            </View>
-            <Text style={[styles.kpiCount3, { color: '#4F46E5' }]}>{pegawaiHadir}</Text>
-            <Text style={styles.kpiLabel3} numberOfLines={1}>Guru Hadir</Text>
-            <Text style={[styles.kpiSub3, { color: '#3730A3' }]}>Staf Pengajar</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
-
-      {/* ── Baris 4: Kelengkapan Berkas Administrasi (2 Kolom Berdampingan) ── */}
-      <View style={styles.kpiGrid2}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('siswa_incomplete')}
-          style={[styles.kpiCard2, { borderColor: '#FCD34D' }]}
-        >
-          <LinearGradient colors={['#FFFBEB', '#FEF3C7']} style={styles.kpiGradient2}>
-            <View style={styles.kpiTopRow2}>
-              <View style={[styles.kpiIconWrap2, { backgroundColor: '#F59E0B' }]}>
-                <MaterialCommunityIcons name="account-alert-outline" size={16} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.kpiCount2, { color: '#D97706' }]}>{siswaIncomplete}</Text>
-            </View>
-            <Text style={styles.kpiLabel2}>Siswa Belum Lengkap</Text>
-            <Text style={styles.kpiSub2}>NISN / Tgl Lahir / Wali</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => setActiveKpiType('pegawai_incomplete')}
-          style={[styles.kpiCard2, { borderColor: '#FECACA' }]}
-        >
-          <LinearGradient colors={['#FEF2F2', '#FEE2E2']} style={styles.kpiGradient2}>
-            <View style={styles.kpiTopRow2}>
-              <View style={[styles.kpiIconWrap2, { backgroundColor: '#EF4444' }]}>
-                <MaterialCommunityIcons name="card-account-details-outline" size={16} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.kpiCount2, { color: '#EF4444' }]}>{pegawaiIncomplete}</Text>
-            </View>
-            <Text style={styles.kpiLabel2}>Pegawai Belum Lengkap</Text>
-            <Text style={styles.kpiSub2}>NIY / NIK belum diisi</Text>
-          </LinearGradient>
-        </TouchableOpacity>
+        {/* Indikator Titik / Dots Carousel */}
+        <View style={styles.kpiDotsContainer}>
+          {kpiCarouselItems.map((_, dotIdx) => {
+            const isDotActive = activeKpiSlide === dotIdx;
+            return (
+              <TouchableOpacity
+                key={`dot-${dotIdx}`}
+                activeOpacity={0.7}
+                onPress={() => handleScrollToKpiSlide(dotIdx)}
+                style={[
+                  styles.kpiDot,
+                  isDotActive ? styles.kpiDotActive : styles.kpiDotInactive,
+                ]}
+              />
+            );
+          })}
+        </View>
       </View>
 
       {/* ── Baris 5: Section Menu Utama (7 Menu Pilihan + 1 Menu "Semua Menu") ── */}
@@ -804,9 +1113,9 @@ export default function TuHomeScreenView({
             style={styles.menuItemCard}
           >
             <View style={[styles.menuIconWrap, { backgroundColor: '#EFF6FF' }]}>
-              <MaterialCommunityIcons name="account-group" size={24} color="#2563EB" />
+              <MaterialCommunityIcons name="account-school-outline" size={24} color="#2563EB" />
             </View>
-            <Text style={styles.menuItemLabel}>Data Siswa</Text>
+            <Text style={styles.menuItemLabel}>Buku Induk Siswa</Text>
           </TouchableOpacity>
 
           {/* 2. Data Guru */}
@@ -980,7 +1289,9 @@ export default function TuHomeScreenView({
         </View>
 
         <View style={styles.announcementContentCol}>
-          <Text style={styles.announcementTitle}>Pengumuman Internal</Text>
+          <Text style={styles.announcementTitle}>
+            {hasAnnouncement ? 'Pengumuman Terkini' : 'Pusat Informasi & Warta'}
+          </Text>
           <Text style={styles.announcementSubtitle} numberOfLines={2}>
             {announcementTitle}
           </Text>
@@ -1089,7 +1400,7 @@ export default function TuHomeScreenView({
           onClose={() => setActiveKpiType(null)}
           navigation={navigation}
           unitName={unitName}
-          academicYear={dashboard?.context?.tahun_ajaran?.nama || '2026/2027'}
+          academicYear={tahunAjaran}
         />
       )}
     </View>
@@ -1341,6 +1652,269 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#0D9488',
+  },
+
+  /* ── KPI Carousel Styles ── */
+  kpiCarouselSection: {
+    marginTop: 14,
+    marginBottom: 4,
+  },
+  kpiCarouselHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  kpiCarouselTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  kpiCarouselSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  kpiCounterPill: {
+    backgroundColor: 'rgba(13, 148, 136, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(13, 148, 136, 0.25)',
+  },
+  kpiCounterText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0D9488',
+  },
+  kpiCarouselSectionSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  kpiNavArrowsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  kpiNavArrowBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  kpiNavArrowBtnDisabled: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
+    opacity: 0.5,
+  },
+
+  /* Category Filter Chips */
+  kpiCategoryScroll: {
+    paddingHorizontal: 16,
+    gap: 8,
+    paddingBottom: 10,
+  },
+  kpiCategoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6.5,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  kpiCategoryChipActive: {
+    backgroundColor: '#0D9488',
+    borderColor: '#0F766E',
+    shadowColor: '#0D9488',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiCategoryChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  kpiCategoryChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  /* Carousel Cards Track */
+  kpiCardsTrack: {
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+    gap: KPI_CARD_GAP,
+  },
+  kpiCarouselCard: {
+    borderRadius: 20,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  kpiCarouselCardActive: {
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  kpiCarouselGradient: {
+    padding: 16,
+  },
+  kpiCarouselTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  kpiCarouselBadgeGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  kpiCarouselCategoryBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+  },
+  kpiCarouselCategoryText: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  kpiCarouselIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  kpiCarouselMainBody: {
+    marginBottom: 10,
+  },
+  kpiCarouselValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    marginBottom: 2,
+  },
+  kpiCarouselValue: {
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: -0.8,
+    lineHeight: 36,
+  },
+  kpiCarouselUnit: {
+    fontSize: 14,
+    fontWeight: '700',
+    opacity: 0.85,
+  },
+  kpiCarouselTitle: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 2,
+  },
+  kpiCarouselSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  kpiCarouselDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148, 163, 184, 0.2)',
+    marginBottom: 10,
+  },
+  kpiCarouselBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  kpiCarouselDetailWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginRight: 8,
+  },
+  kpiCarouselDetailText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  kpiCarouselActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 10,
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  kpiCarouselActionText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0D9488',
+  },
+
+  /* Dots Pagination */
+  kpiDotsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  kpiDot: {
+    height: 6,
+    borderRadius: 3,
+  },
+  kpiDotActive: {
+    width: 22,
+    backgroundColor: '#0D9488',
+  },
+  kpiDotInactive: {
+    width: 6,
+    backgroundColor: '#CBD5E1',
   },
 
   /* Baris Metrik Cepat Layanan (3 Kolom Sesuai Mockup Gambar, Rapi & Elegan) */

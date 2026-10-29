@@ -22,7 +22,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole, isDivisiRole } from '../utils/roles';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
@@ -209,7 +209,10 @@ export default function MaterialScreen({ route, navigation }: any) {
   const isParentWithChild = isParent && Boolean(activeChildId);
 
   const isTu = isTuRole(user?.roles || []);
-  const isStaff = isTu || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
+  const isPrincipal = isPrincipalRole(user?.roles || []);
+  const isDivisi = isDivisiRole(user?.roles || []);
+  const isSupervisor = isPrincipal || isDivisi;
+  const isStaff = isTu || isPrincipal || isDivisi || isSuperAdminRole(user?.roles || []);
   const isTeacherOnly = isTeacher || isStaff;
 
   // ── State Data Guru & Filter Terpadu ──
@@ -893,7 +896,7 @@ export default function MaterialScreen({ route, navigation }: any) {
   // ── Perhitungan 4 Master KPI Cards Modul Ajar (100% Selaras Web-Dashboard) ──
   const computedModulStats = useMemo(() => {
     const rawTotal = modulAjarStats?.total_modul ?? teacherModulAjars.length;
-    const total = Number(rawTotal) > 0 ? Number(rawTotal) : 928;
+    const total = Number(rawTotal) > 0 ? Number(rawTotal) : 0;
     const draft = modulAjarStats?.total_draft ?? teacherModulAjars.filter((m) => (m.status || '').toLowerCase() === 'draft').length;
     const review = modulAjarStats?.total_review ?? teacherModulAjars.filter((m) => (m.status || '').toLowerCase() === 'review').length;
     const draftReview = (Number(draft) || 0) + (Number(review) || 0);
@@ -901,9 +904,9 @@ export default function MaterialScreen({ route, navigation }: any) {
       const st = (m.status || '').toLowerCase();
       return st === 'publish' || st === 'published' || Boolean(m.is_published);
     }).length;
-    const published = Number(rawPub) > 0 ? Number(rawPub) : 928;
+    const published = Number(rawPub) > 0 ? Number(rawPub) : 0;
     const rawTp = modulAjarStats?.total_tp_tercover ?? teacherModulAjars.filter((m) => !!m.tp_id).length;
-    const tpTercover = Number(rawTp) > 0 ? Number(rawTp) : 3;
+    const tpTercover = Number(rawTp) > 0 ? Number(rawTp) : 0;
 
     return {
       total_modul: total,
@@ -1412,51 +1415,65 @@ export default function MaterialScreen({ route, navigation }: any) {
     setSupervisiCatatan(item?.catatan_koreksi || '');
   };
 
-  const handleAjukanTelaahMobile = (item: any) => {
-    Alert.alert(
-      'Ajukan Telaah Materi?',
-      `Ajukan materi "${item.judul || item.title}" kepada Kepala Sekolah / Divisi Pendidikan untuk ditinjau?`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Ajukan Sekarang',
-          onPress: async () => {
-            try {
-              await mobileApiService.ajukanTelaahLmsMateri(item.id);
-              Alert.alert('Berhasil', 'Materi telah berhasil diajukan untuk ditelaah.');
-              setSelectedDetailMaterial(null);
-              await loadTeacherData();
-            } catch (err: any) {
-              Alert.alert('Gagal', err?.response?.data?.message || 'Gagal mengajukan materi.');
-            }
-          },
-        },
-      ]
-    );
+  const handleAjukanTelaahMobile = async (item: any) => {
+    if (!item?.id) return;
+    try {
+      await mobileApiService.ajukanTelaahLmsMateri(item.id);
+      setSelectedDetailMaterial(null);
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Materi Berhasil Diajukan',
+        message: `Materi "${item.judul || item.title}" telah diajukan untuk ditelaah oleh Kepala Sekolah & Divisi Pendidikan.`,
+      });
+      await loadTeacherData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Mengajukan Materi',
+        message: err?.response?.data?.message || 'Terjadi kesalahan saat mengajukan telaah materi.',
+      });
+    }
   };
 
   const handleSubmitSupervisiMobile = async () => {
     if (!supervisiTarget) return;
     if (supervisiStatus === 'perlu_revisi' && !supervisiCatatan.trim()) {
-      Alert.alert('Peringatan', 'Catatan koreksi wajib diisi jika status perlu revisi.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Catatan Koreksi Wajib Diisi',
+        message: 'Mohon cantumkan poin arahan koreksi agar guru pengampu dapat memperbaikinya.',
+      });
       return;
     }
     setIsSupervisiSubmitting(true);
     try {
       await mobileApiService.supervisiLmsMateri(supervisiTarget.id, {
+        status: supervisiStatus,
         status_supervisi: supervisiStatus,
+        catatan: supervisiCatatan.trim(),
         catatan_koreksi: supervisiCatatan.trim(),
       });
-      Alert.alert(
-        'Supervisi Berhasil',
-        supervisiStatus === 'disetujui'
-          ? 'Materi telah disetujui & otomatis berstatus publish.'
-          : 'Catatan koreksi telah disimpan & dikembalikan ke guru pengampu.'
-      );
+      const isApproved = supervisiStatus === 'disetujui';
       setSupervisiTarget(null);
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: isApproved ? 'Bahan Ajar Disetujui' : 'Catatan Koreksi Dikirim',
+        message: isApproved
+          ? 'Materi pembelajaran telah disetujui & otomatis dipublikasikan ke siswa.'
+          : 'Catatan koreksi telah disimpan & status dikembalikan ke guru pengampu untuk direvisi.',
+      });
       await loadTeacherData();
     } catch (err: any) {
-      Alert.alert('Gagal Supervisi', err?.response?.data?.message || 'Gagal menyimpan supervisi materi.');
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Supervisi',
+        message: err?.response?.data?.message || 'Gagal menyimpan supervisi materi pembelajaran.',
+      });
     } finally {
       setIsSupervisiSubmitting(false);
     }
@@ -1914,6 +1931,30 @@ export default function MaterialScreen({ route, navigation }: any) {
           navigation={navigation}
           route={route}
           onBack={handleBack}
+          tabs={[
+            {
+              id: 'materials',
+              label: 'Bahan Ajar',
+              icon: 'book-open-page-variant',
+              count: showTrashMode ? filteredTeacherMaterials.length : computedLmsStats.total,
+              active: materialSubTab === 'materials',
+              onPress: () => {
+                setMaterialSubTab('materials');
+                setShowTrashMode(false);
+              },
+            },
+            {
+              id: 'modul_ajar',
+              label: 'Modul Ajar',
+              icon: 'layers-outline',
+              count: computedModulStats.total_modul,
+              active: materialSubTab === 'modul_ajar',
+              onPress: () => {
+                setMaterialSubTab('modul_ajar');
+                setShowTrashMode(false);
+              },
+            },
+          ]}
         />
       ) : (
         <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
@@ -1948,7 +1989,7 @@ export default function MaterialScreen({ route, navigation }: any) {
         style={styles.screen}
         contentContainerStyle={[
           styles.cleanMainScrollContent,
-          { paddingBottom: isTeacherOnly ? Math.max(bottomInset + 72, 94) : bottomInset + 30 },
+          { paddingBottom: isTeacherOnly ? Math.max(bottomInset + 140, 160) : bottomInset + 120 },
         ]}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -2280,24 +2321,34 @@ export default function MaterialScreen({ route, navigation }: any) {
                   <View style={styles.tuActionBarCard}>
                     {/* Baris 1: Tombol Tambah Utama + Tombol Refresh */}
                     <View style={styles.tuActionRowPrimary}>
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={openCreateMaterialModal}
-                        style={styles.tuBtnAddClean}
-                      >
-                        <MaterialCommunityIcons name="plus-circle" size={18} color="#FFFFFF" />
-                        <Text numberOfLines={1} style={styles.tuBtnAddTextClean}>
-                          + Tambah Bahan Ajar
-                        </Text>
-                      </TouchableOpacity>
+                      {(!isSupervisor || isTeacher) && (
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={openCreateMaterialModal}
+                          style={styles.tuBtnAddClean}
+                        >
+                          <MaterialCommunityIcons name="plus-circle" size={18} color="#FFFFFF" />
+                          <Text numberOfLines={1} style={styles.tuBtnAddTextClean}>
+                            + Tambah Bahan Ajar
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={onRefresh}
-                        style={styles.tuBtnRefreshClean}
+                        style={[
+                          styles.tuBtnRefreshClean,
+                          isSupervisor && !isTeacher && { flex: 1, width: '100%', height: 42, borderRadius: 12 },
+                        ]}
                         accessibilityLabel="Segarkan Data"
                       >
                         <MaterialCommunityIcons name="refresh" size={19} color="#059669" />
+                        {isSupervisor && !isTeacher && (
+                          <Text style={{ marginLeft: 6, fontSize: 13, fontWeight: '700', color: '#059669' }}>
+                            Segarkan Data Supervisi
+                          </Text>
+                        )}
                       </TouchableOpacity>
                     </View>
 
@@ -2847,15 +2898,69 @@ export default function MaterialScreen({ route, navigation }: any) {
 
                               <View style={styles.teacherItemActionsClean}>
                                 {isTrashed ? (
-                                  <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    onPress={() => setRestoreConfirmMaterial(item)}
-                                    style={styles.teacherBtnRestore}
-                                    accessibilityLabel="Pulihkan Materi"
-                                  >
-                                    <MaterialCommunityIcons name="history" size={14} color="#FFFFFF" />
-                                    <Text style={styles.teacherBtnRestoreText}>Pulihkan</Text>
-                                  </TouchableOpacity>
+                                  !isSupervisor && (
+                                    <TouchableOpacity
+                                      activeOpacity={0.8}
+                                      onPress={() => setRestoreConfirmMaterial(item)}
+                                      style={styles.teacherBtnRestore}
+                                      accessibilityLabel="Pulihkan Materi"
+                                    >
+                                      <MaterialCommunityIcons name="history" size={14} color="#FFFFFF" />
+                                      <Text style={styles.teacherBtnRestoreText}>Pulihkan</Text>
+                                    </TouchableOpacity>
+                                  )
+                                ) : isSupervisor ? (
+                                  <>
+                                    <TouchableOpacity
+                                      activeOpacity={0.8}
+                                      onPress={() => setSelectedDetailMaterial(item)}
+                                      style={styles.teacherBtnViewClean}
+                                      accessibilityLabel="Lihat Detail Materi"
+                                    >
+                                      <MaterialCommunityIcons name="eye-outline" size={15} color="#059669" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      activeOpacity={0.8}
+                                      onPress={() => openSupervisiModal(item)}
+                                      style={[
+                                        styles.teacherBtnSupervisiAction,
+                                        item.status_supervisi === 'disetujui' && styles.teacherBtnSupervisiApproved,
+                                        item.status_supervisi === 'perlu_revisi' && styles.teacherBtnSupervisiRevision,
+                                      ]}
+                                      accessibilityLabel="Supervisi & Koreksi Materi"
+                                    >
+                                      <MaterialCommunityIcons
+                                        name={
+                                          item.status_supervisi === 'disetujui'
+                                            ? 'check-circle-outline'
+                                            : item.status_supervisi === 'perlu_revisi'
+                                            ? 'alert-circle-outline'
+                                            : 'shield-check-outline'
+                                        }
+                                        size={13}
+                                        color={
+                                          item.status_supervisi === 'disetujui'
+                                            ? '#047857'
+                                            : item.status_supervisi === 'perlu_revisi'
+                                            ? '#BE123C'
+                                            : '#FFFFFF'
+                                        }
+                                      />
+                                      <Text
+                                        style={[
+                                          styles.teacherBtnSupervisiActionText,
+                                          item.status_supervisi === 'disetujui' && { color: '#047857' },
+                                          item.status_supervisi === 'perlu_revisi' && { color: '#BE123C' },
+                                        ]}
+                                      >
+                                        {item.status_supervisi === 'disetujui'
+                                          ? 'Disetujui'
+                                          : item.status_supervisi === 'perlu_revisi'
+                                          ? 'Revisi'
+                                          : 'Koreksi'}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  </>
                                 ) : (
                                   <>
                                     <TouchableOpacity
@@ -5781,27 +5886,28 @@ export default function MaterialScreen({ route, navigation }: any) {
               )}
 
               {/* Button Ajukan Telaah untuk Guru */}
-              {(selectedDetailMaterial?.status_supervisi === 'draft' ||
-                selectedDetailMaterial?.status_supervisi === 'perlu_revisi' ||
-                !selectedDetailMaterial?.status_supervisi) && (
-                <TouchableOpacity
-                  activeOpacity={0.88}
-                  onPress={() => handleAjukanTelaahMobile(selectedDetailMaterial)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingHorizontal: 12,
-                    paddingVertical: 9,
-                    borderRadius: 12,
-                    backgroundColor: '#0284C7',
-                    marginRight: 4,
-                  }}
-                >
-                  <MaterialCommunityIcons name="send-outline" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
-                  <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '700' }}>Ajukan Telaah</Text>
-                </TouchableOpacity>
-              )}
+              {!isSupervisor &&
+                (selectedDetailMaterial?.status_supervisi === 'draft' ||
+                  selectedDetailMaterial?.status_supervisi === 'perlu_revisi' ||
+                  !selectedDetailMaterial?.status_supervisi) && (
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    onPress={() => handleAjukanTelaahMobile(selectedDetailMaterial)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingHorizontal: 12,
+                      paddingVertical: 9,
+                      borderRadius: 12,
+                      backgroundColor: '#0284C7',
+                      marginRight: 4,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="send-outline" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '700' }}>Ajukan Telaah</Text>
+                  </TouchableOpacity>
+                )}
 
               <TouchableOpacity
                 activeOpacity={0.82}
@@ -5811,18 +5917,21 @@ export default function MaterialScreen({ route, navigation }: any) {
                 <MaterialCommunityIcons name="close-circle-outline" size={17} color="#64748B" style={{ marginRight: 6 }} />
                 <Text style={styles.detailCloseBtnText}>Tutup</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.88}
-                onPress={() => {
-                  const target = selectedDetailMaterial;
-                  setSelectedDetailMaterial(null);
-                  openEditMaterialModal(target);
-                }}
-                style={styles.detailEditBtn}
-              >
-                <MaterialCommunityIcons name="pencil-outline" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.detailEditBtnText}>Ubah</Text>
-              </TouchableOpacity>
+
+              {!isSupervisor && (
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={() => {
+                    const target = selectedDetailMaterial;
+                    setSelectedDetailMaterial(null);
+                    openEditMaterialModal(target);
+                  }}
+                  style={styles.detailEditBtn}
+                >
+                  <MaterialCommunityIcons name="pencil-outline" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.detailEditBtnText}>Ubah</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
@@ -9943,6 +10052,35 @@ const styles = StyleSheet.create({
     borderColor: '#FECDD3',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  teacherBtnSupervisiAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#059669',
+    gap: 4,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  teacherBtnSupervisiApproved: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  teacherBtnSupervisiRevision: {
+    backgroundColor: '#FFE4E6',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  teacherBtnSupervisiActionText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 
   // ── Modul Ajar Detail Button Clean & Specialized Styles ──

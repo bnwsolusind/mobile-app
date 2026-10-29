@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -16,15 +17,19 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { mobileApiService, unwrapCollection, unwrapApiData } from '../../services/mobileApiService';
 import { getApiErrorMessage } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
 import AppFeedbackModal, { FeedbackType } from '../AppFeedbackModal';
 import { TeacherMutabaahPrintModal } from './TeacherMutabaahPrintModal';
 import { getDynamicAcademicYear } from '../../utils/academicYear';
 import { isPrincipalRole } from '../../utils/roles';
+import { TeacherStickyHeader } from '../TeacherStickyHeader';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 const padZero = (n: number) => (n < 10 ? `0${n}` : String(n));
 
@@ -74,10 +79,38 @@ const STATUS_OPTIONS = [
   { value: 'na', label: 'Uzur/NA', color: '#64748B', bg: '#F1F5F9', short: '—' },
 ];
 
-export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => void }) {
+export interface TeacherMutabaahWorkspaceProps {
+  onBack?: () => void;
+  navigation?: any;
+}
+
+export default function TeacherMutabaahWorkspace({
+  onBack,
+  navigation: propNavigation,
+}: TeacherMutabaahWorkspaceProps) {
+  const internalNavigation = useNavigation<any>();
+  const navigation = propNavigation || internalNavigation;
   const user = useAuthStore((state) => state.user);
   const insets = useSafeAreaInsets();
   const isPrincipal = useMemo(() => isPrincipalRole(user?.roles || []), [user?.roles]);
+
+  const handleBack = useCallback(() => {
+    if (onBack) {
+      onBack();
+      return;
+    }
+    const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+    if (handled) return;
+    const navState = navigation?.getState?.();
+    const canPop = navState && typeof navState.index === 'number' && navState.index > 0;
+    if (canPop && navigation?.canGoBack?.()) {
+      try {
+        navigation.goBack();
+        return;
+      } catch {}
+    }
+    navigation?.navigate('Beranda' as any);
+  }, [onBack, navigation]);
 
   // Scroll & Sticky Header Animation (Identik dengan Workspace Tahfizh)
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -396,103 +429,66 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
 
   return (
     <View style={styles.container}>
-      {/* ── 1. STICKY HEADER (Muncul saat di-scroll) ── */}
-      <Animated.View
-        pointerEvents={isStickyActive ? 'auto' : 'none'}
-        style={[
-          styles.stickyHeaderContainer,
-          {
-            paddingTop: insets.top + 6,
-            opacity: stickyOpacity,
-            transform: [{ translateY: stickyTranslateY }],
-          },
-        ]}
-      >
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK JADWAL & MATERI) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
         <LinearGradient
-          colors={['#78350F', '#B45309', '#D97706']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={[
+            'rgba(240, 253, 244, 0)',
+            'rgba(240, 253, 244, 0.50)',
+            '#F0FDF4',
+          ]}
+          locations={[0.45, 0.78, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={styles.stickyDecorCircle1} />
-        <View style={styles.stickyDecorCircle2} />
+      </View>
 
-        {/* Baris 1 Sticky: Tombol Back, Judul & Mini Counter, Refresh */}
-        <View style={styles.stickyTopRow}>
-          {onBack && (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={onBack}
-              style={styles.stickySquircleBtn}
-              accessibilityLabel="Kembali"
-            >
-              <MaterialCommunityIcons name="arrow-left" size={19} color="#B45309" />
-            </TouchableOpacity>
-          )}
-
-          <View style={styles.stickyTitleGroup}>
-            <Text style={styles.stickyTitleText} numberOfLines={1}>
-              {isPrincipal ? "Supervisi Mutaba'ah" : "Mutaba'ah Yaumiyyah"}
-            </Text>
-            <Text style={styles.stickySubText} numberOfLines={1}>
-              {currentAssignment?.rombel_name || 'Rombel Unit'} · {stats.total} Santri
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            onPress={() => loadStudents()}
-            style={styles.stickyRefreshBtn}
-            activeOpacity={0.8}
-          >
-            <MaterialCommunityIcons name="sync" size={16} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Baris 2 Sticky: DROPDOWN ROMBEL & TANGGAL AKTIF KETIKA DI-SCROLL */}
-        <View style={styles.stickyControlsRow}>
-          {/* Rombel Dropdown Aktif di Sticky Header */}
-          <TouchableOpacity
-            onPress={() => setClassPickerVisible(true)}
-            style={styles.stickyRombelSelectBtn}
-            activeOpacity={0.85}
-          >
-            <MaterialCommunityIcons name="google-classroom" size={14} color="#FEF3C7" />
-            <Text style={styles.stickyRombelSelectText} numberOfLines={1}>
-              {currentAssignment?.rombel_name || currentAssignment?.kelas_name || 'Pilih Rombel'}
-            </Text>
-            <MaterialCommunityIcons name="chevron-down" size={14} color="#FEF3C7" />
-          </TouchableOpacity>
-
-          {/* Date Navigator Aktif di Sticky Header */}
-          <View style={styles.stickyDateNavigator}>
-            <TouchableOpacity onPress={() => shiftDate(-1)} style={styles.stickyDateShiftBtn} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="chevron-left" size={16} color="#FFFFFF" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setSelectedDate(isoDate(new Date()))}
-              style={styles.stickyDateCenterBtn}
-              activeOpacity={0.8}
-            >
-              <MaterialCommunityIcons name="calendar" size={12} color="#FEF3C7" />
-              <Text style={styles.stickyDateCenterText} numberOfLines={1}>
-                {new Date(selectedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => shiftDate(1)} style={styles.stickyDateShiftBtn} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="chevron-right" size={16} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Animated.View>
+      {/* ── 1. STICKY HEADER DENGAN TAB STATUS (Translucent Frosted Mint) ── */}
+      <TeacherStickyHeader
+        scrollY={scrollY}
+        topInset={insets.top}
+        title={isPrincipal ? "Supervisi Mutaba'ah" : "Mutaba'ah Yaumiyyah"}
+        subtitle={`${currentAssignment?.rombel_name || currentAssignment?.kelas_name || 'Rombel Unit'} · ${new Date(selectedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`}
+        navigation={navigation}
+        onBack={handleBack}
+        tabs={[
+          {
+            id: 'all',
+            label: 'Semua',
+            icon: 'account-group-outline',
+            count: stats.total,
+            active: statusFilter === 'all',
+            onPress: () => setStatusFilter('all'),
+          },
+          {
+            id: 'finalized',
+            label: 'Terverifikasi',
+            icon: 'check-decagram-outline',
+            count: stats.verified,
+            active: statusFilter === 'finalized',
+            onPress: () => setStatusFilter('finalized'),
+          },
+          {
+            id: 'pending',
+            label: 'Menunggu',
+            icon: 'clock-outline',
+            count: stats.pending,
+            active: statusFilter === 'pending',
+            onPress: () => setStatusFilter('pending'),
+          },
+        ]}
+      />
 
       {/* ── 2. SCROLLVIEW UTAMA ── */}
       <Animated.ScrollView
         style={styles.screen}
         contentContainerStyle={[
           styles.mainScrollContent,
-          { paddingBottom: Math.max(insets.bottom + 80, 100) },
+          { paddingBottom: Math.max(insets.bottom + 140, 160) },
         ]}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -504,33 +500,22 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
               setRefreshing(true);
               void loadStudents();
             }}
-            colors={['#B45309']}
+            colors={['#059669']}
           />
         }
       >
-        {/* 2a. Header Statis Workspace (Palet Warna Amber Asli Mutabaah Tetap Terjaga) */}
+        {/* 2a. Header Statis Workspace (Non-solid, bersih & elegan) */}
         <View style={[styles.staticTopBarWrapper, { paddingTop: insets.top + 8 }]}>
-          <LinearGradient
-            colors={['#78350F', '#B45309', '#D97706']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={styles.staticDecorCircle1} />
-          <View style={styles.staticDecorCircle2} />
-
           <View style={styles.staticTopBarRow}>
-            {onBack && (
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={onBack}
-                style={styles.staticSquircleBackBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={handleBack}
+              style={styles.staticSquircleBackBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Kembali"
+            >
+              <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
+            </TouchableOpacity>
 
             <View style={styles.staticHeaderTitles}>
               <View style={styles.staticBadgeRow}>
@@ -538,7 +523,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
                   <MaterialCommunityIcons
                     name={isPrincipal ? "shield-check-outline" : "clipboard-check-outline"}
                     size={12}
-                    color="#FEF3C7"
+                    color="#047857"
                   />
                   <Text style={styles.staticRoleText}>
                     {isPrincipal ? "Supervisi Kepala Sekolah" : "Portal Guru & Musyrif"}
@@ -564,7 +549,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
           <View style={styles.filterCard}>
             <View style={styles.filterCardHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <MaterialCommunityIcons name="filter-variant" size={17} color="#B45309" />
+                <MaterialCommunityIcons name="filter-variant" size={17} color="#059669" />
                 <Text style={styles.filterCardTitle}>Filter Data Mutaba'ah</Text>
               </View>
               {(searchQuery.length > 0 || statusFilter !== 'all' || selectedDate !== isoDate(new Date())) ? (
@@ -583,7 +568,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
 
             {/* In-Card Search Input Bar (Harmonisasi VIS-B2-005) */}
             <View style={styles.searchBox}>
-              <MaterialCommunityIcons name="magnify" size={18} color="#64748B" />
+              <MaterialCommunityIcons name="magnify" size={18} color="#059669" />
               <TextInput
                 placeholder="Cari santri berdasarkan nama / NIS..."
                 placeholderTextColor="#94A3B8"
@@ -606,7 +591,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
             >
               <View style={styles.bodyRombelLeft}>
                 <View style={styles.bodyRombelIconBox}>
-                  <MaterialCommunityIcons name="google-classroom" size={18} color="#B45309" />
+                  <MaterialCommunityIcons name="google-classroom" size={18} color="#059669" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.bodyRombelSubLabel}>Rombel / Kelompok Binaan</Text>
@@ -619,14 +604,14 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
                 </View>
               </View>
               <View style={styles.bodyRombelChevronBox}>
-                <MaterialCommunityIcons name="chevron-down" size={18} color="#B45309" />
+                <MaterialCommunityIcons name="chevron-down" size={18} color="#059669" />
               </View>
             </TouchableOpacity>
 
             {/* Card Pemilihan Tanggal di Bodi */}
             <View style={styles.bodyDateCard}>
               <TouchableOpacity onPress={() => shiftDate(-1)} style={styles.bodyDateNavBtn} activeOpacity={0.8}>
-                <MaterialCommunityIcons name="chevron-left" size={18} color="#78350F" />
+                <MaterialCommunityIcons name="chevron-left" size={18} color="#064E3B" />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -634,7 +619,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
                 style={styles.bodyDateInfoCenter}
                 activeOpacity={0.8}
               >
-                <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#B45309" />
+                <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#059669" />
                 <View style={{ alignItems: 'center' }}>
                   <Text style={styles.bodyDateDayText}>
                     {new Date(selectedDate).toLocaleDateString('id-ID', {
@@ -651,7 +636,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
               </TouchableOpacity>
 
               <TouchableOpacity onPress={() => shiftDate(1)} style={styles.bodyDateNavBtn} activeOpacity={0.8}>
-                <MaterialCommunityIcons name="chevron-right" size={18} color="#78350F" />
+                <MaterialCommunityIcons name="chevron-right" size={18} color="#064E3B" />
               </TouchableOpacity>
             </View>
           </View>
@@ -696,7 +681,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
         <View style={styles.studentListSection}>
           {loading ? (
             <View style={styles.loaderBox}>
-              <ActivityIndicator size="large" color="#B45309" />
+              <ActivityIndicator size="large" color="#059669" />
               <Text style={styles.loaderText}>Memuat amalan ibadah santri...</Text>
             </View>
           ) : filteredStudents.length === 0 ? (
@@ -846,7 +831,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
                     <MaterialCommunityIcons
                       name={isSelected ? 'check-circle' : 'circle-outline'}
                       size={18}
-                      color={isSelected ? '#B45309' : '#94A3B8'}
+                      color={isSelected ? '#059669' : '#94A3B8'}
                     />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.pickerItemText, isSelected && styles.pickerItemTextActive]}>
@@ -947,7 +932,7 @@ export default function TeacherMutabaahWorkspace({ onBack }: { onBack?: () => vo
             <ScrollView style={styles.inputItemsScroll} showsVerticalScrollIndicator={false}>
               {loadingInputModal ? (
                 <View style={styles.loaderBox}>
-                  <ActivityIndicator size="small" color="#B45309" />
+                  <ActivityIndicator size="small" color="#059669" />
                   <Text style={styles.loaderText}>Memuat agenda amalan...</Text>
                 </View>
               ) : (
@@ -1081,160 +1066,25 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
 
-  // 1. STICKY HEADER (Muncul halus saat scroll > 65)
-  stickyHeaderContainer: {
+  topFoliageWrapper: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 99,
-    paddingBottom: 10,
+    zIndex: 0,
     overflow: 'hidden',
-    shadowColor: '#78350F',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 8,
   },
-  stickyDecorCircle1: {
-    position: 'absolute',
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    top: -40,
-    right: -20,
-  },
-  stickyDecorCircle2: {
-    position: 'absolute',
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    bottom: -20,
-    left: 40,
-  },
-  stickyTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    gap: 10,
-  },
-  stickySquircleBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  stickyTitleGroup: {
-    flex: 1,
-  },
-  stickyTitleText: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  stickySubText: {
-    fontSize: 10.5,
-    color: '#FEF3C7',
-    marginTop: 1,
-  },
-  stickyControlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 6,
-  },
-  stickyRombelSelectBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.22)',
-    paddingHorizontal: 10,
-    paddingVertical: 5.5,
-    borderRadius: 10,
-    gap: 6,
-  },
-  stickyRombelSelectText: {
-    flex: 1,
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#FEF3C7',
-  },
-  stickyDateNavigator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.22)',
-    borderRadius: 10,
-    padding: 2,
-    gap: 2,
-  },
-  stickyDateShiftBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stickyDateCenterBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    gap: 4,
-  },
-  stickyDateCenterText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  stickyRefreshBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  topFoliageBgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
   },
 
-  // 2. HEADER STATIS WORKSPACE (Tanpa Tab, Rombel & Tanggal dipindahkan ke Bodi)
+  // 2. HEADER STATIS WORKSPACE (Translucent, Bersih & Elegan)
   staticTopBarWrapper: {
     paddingHorizontal: 16,
     paddingBottom: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
-    elevation: 4,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-  },
-  staticDecorCircle1: {
-    position: 'absolute',
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    top: -40,
-    right: -30,
-  },
-  staticDecorCircle2: {
-    position: 'absolute',
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    bottom: 0,
-    left: 20,
+    backgroundColor: 'transparent',
   },
   staticTopBarRow: {
     flexDirection: 'row',
@@ -1245,9 +1095,16 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   staticHeaderTitles: {
     flex: 1,
@@ -1261,7 +1118,9 @@ const styles = StyleSheet.create({
   staticRoleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
@@ -1270,21 +1129,21 @@ const styles = StyleSheet.create({
   staticRoleText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#FEF3C7',
+    color: '#064E3B',
   },
   staticYearText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FDE68A',
+    color: '#047857',
   },
   staticMainTitle: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
   },
   staticSubTitle: {
     fontSize: 11,
-    color: '#FEF3C7',
+    color: '#047857',
     marginTop: 2,
   },
 
@@ -1296,14 +1155,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     padding: 14,
     marginHorizontal: 16,
     marginBottom: 8,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     elevation: 2,
     gap: 8,
   },
@@ -1313,17 +1172,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#ECFDF5',
   },
   filterCardTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#064E3B',
   },
   filterResetBtn: {
     fontSize: 11.5,
     fontWeight: '700',
-    color: '#B45309',
+    color: '#059669',
   },
   bodyRombelCard: {
     flexDirection: 'row',
@@ -1334,7 +1193,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderWidth: 1.2,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
   },
   bodyRombelLeft: {
     flexDirection: 'row',
@@ -1346,14 +1205,14 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
   },
   bodyRombelSubLabel: {
     fontSize: 9.5,
     fontWeight: '700',
-    color: '#B45309',
+    color: '#059669',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
@@ -1386,7 +1245,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 5,
     borderWidth: 1.2,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
   },
   bodyDateNavBtn: {
     width: 32,
@@ -1421,14 +1280,19 @@ const styles = StyleSheet.create({
   statsBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 12,
     borderRadius: 14,
     padding: 4,
     gap: 4,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   statItem: {
     flex: 1,
@@ -1441,16 +1305,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   statItemActiveAll: {
-    backgroundColor: '#78350F',
-    shadowColor: '#78350F',
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 3,
   },
   statItemActiveFinalized: {
-    backgroundColor: '#059669',
-    shadowColor: '#059669',
+    backgroundColor: '#047857',
+    shadowColor: '#047857',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -1493,13 +1357,18 @@ const styles = StyleSheet.create({
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderWidth: 1.2,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     gap: 8,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -1519,11 +1388,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 12,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
     elevation: 2,
   },
   cardHeader: {
@@ -1535,9 +1404,9 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#ECFDF5',
     borderWidth: 1.2,
-    borderColor: '#FDE68A',
+    borderColor: '#A7F3D0',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -1546,7 +1415,7 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 14,
     fontWeight: '900',
-    color: '#B45309',
+    color: '#065F46',
   },
   metaCol: {
     flex: 1,
@@ -1611,7 +1480,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#ECFDF5',
     paddingTop: 9,
   },
   cardInputBtn: {
@@ -1654,9 +1523,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    backgroundColor: '#B45309',
+    backgroundColor: '#059669',
     paddingVertical: 7,
     borderRadius: 10,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
   },
   cardVerifyBtnText: {
     fontSize: 10.5,
@@ -1776,7 +1650,7 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   pickerItemTextActive: {
-    color: '#B45309',
+    color: '#059669',
     fontWeight: '800',
   },
   pickerItemSub: {
@@ -1793,13 +1667,13 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     paddingVertical: 8,
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#F0FDF4',
   },
   sheetHandleBar: {
     width: 44,
     height: 4.5,
     borderRadius: 3,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: '#A7F3D0',
   },
   inputModalContent: {
     width: '100%',
@@ -1824,17 +1698,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#FDE68A',
-    backgroundColor: '#FFFBEB',
+    borderBottomColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
   },
   inputModalTitle: {
     fontSize: 13.5,
     fontWeight: '800',
-    color: '#78350F',
+    color: '#064E3B',
   },
   inputModalSub: {
     fontSize: 10.5,
-    color: '#B45309',
+    color: '#047857',
     marginTop: 2,
     fontWeight: '600',
   },

@@ -17,11 +17,13 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { mobileApiService, unwrapCollection } from '../../services/mobileApiService';
 import { getApiErrorMessage } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import AppFeedbackModal, { FeedbackType } from '../AppFeedbackModal';
 import EmptyStateCard from '../EmptyStateCard';
+import { TeacherStickyHeader } from '../TeacherStickyHeader';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
@@ -147,12 +149,16 @@ interface GradeRow {
 interface TeacherGradeWorkspaceProps {
   onBack?: () => void;
   initialTab?: 'grades' | 'analysis';
+  navigation?: any;
 }
 
 export default function TeacherGradeWorkspace({
   onBack,
   initialTab = 'grades',
+  navigation: propNavigation,
 }: TeacherGradeWorkspaceProps) {
+  const internalNavigation = useNavigation<any>();
+  const navigation = propNavigation || internalNavigation;
   const user = useAuthStore((state) => state.user);
   const insets = useSafeAreaInsets();
 
@@ -584,142 +590,170 @@ export default function TeacherGradeWorkspace({
         />
       </View>
 
-      {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG & DATA SISWA ── */}
-      <View style={[styles.headerContainer, { paddingTop: insets.top + 6 }]}>
-        <View style={styles.headerTopRow}>
-          {onBack && (
-            <TouchableOpacity
-              activeOpacity={0.75}
-              onPress={onBack}
-              style={styles.backButton}
-              accessibilityLabel="Kembali"
-            >
-              <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
-            </TouchableOpacity>
-          )}
+      {/* ── 1. STICKY HEADER DENGAN TAB DAFTAR NILAI & REKAP/ANALISIS ── */}
+      <TeacherStickyHeader
+        scrollY={scrollY}
+        topInset={insets.top}
+        title="Buku Nilai & Rapor Santri"
+        subtitle={activeSchedule ? `${currentFilterScheduleLabel} · ${academicInfo}` : academicInfo}
+        navigation={navigation}
+        onBack={onBack}
+        tabs={[
+          {
+            id: 'grades',
+            label: 'Daftar Nilai',
+            icon: 'clipboard-text-outline',
+            count: gradeRows.length,
+            active: activeTab === 'grades',
+            onPress: () => setActiveTab('grades'),
+          },
+          {
+            id: 'analysis',
+            label: 'Rekap & Analisis',
+            icon: 'chart-box-outline',
+            active: activeTab === 'analysis',
+            onPress: () => setActiveTab('analysis'),
+          },
+        ]}
+      />
 
-          <View style={styles.headerTitleWrap}>
-            <View style={styles.headerBadge}>
-              <View style={styles.pulseDot} />
-              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
-                GURU • BUKU NILAI & RAPOR SANTRI
+      {/* ── 2. SCROLLVIEW UTAMA ── */}
+      <Animated.ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.cleanMainScrollContent,
+          { paddingBottom: Math.max(insets.bottom + 140, 160) },
+        ]}
+        onScroll={handleMainScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
+        }
+      >
+        {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG & DATA SISWA ── */}
+        <View style={[styles.headerContainer, { paddingTop: insets.top + 6 }]}>
+          <View style={styles.headerTopRow}>
+            {onBack && (
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={onBack}
+                style={styles.backButton}
+                accessibilityLabel="Kembali"
+              >
+                <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.headerTitleWrap}>
+              <View style={styles.headerBadge}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                  GURU • BUKU NILAI & RAPOR SANTRI
+                </Text>
+              </View>
+              <Text style={styles.headerMainTitle} numberOfLines={1}>
+                Buku Nilai & Rapor Santri
+              </Text>
+              <Text style={styles.headerSubtitle} numberOfLines={1}>
+                Kelola asesmen formatif, sumatif & capaian santri
               </Text>
             </View>
-            <Text style={styles.headerMainTitle} numberOfLines={1}>
-              Buku Nilai & Rapor Santri
-            </Text>
-            <Text style={styles.headerSubtitle} numberOfLines={1}>
-              Kelola asesmen formatif, sumatif & capaian santri
-            </Text>
-          </View>
 
-          <TouchableOpacity
-            activeOpacity={0.75}
-            onPress={() => {
-              setRefreshing(true);
-              void onRefresh();
-            }}
-            style={styles.refreshButton}
-            accessibilityLabel="Muat Ulang"
-          >
-            <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Search Bar langsung di Header identik Buku Penghubung */}
-        <View style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Cari santri berdasarkan nama atau NIS..."
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => {
+                setRefreshing(true);
+                void onRefresh();
+              }}
+              style={styles.refreshButton}
+              accessibilityLabel="Muat Ulang"
+            >
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
             </TouchableOpacity>
-          )}
+          </View>
+
+          {/* Search Bar langsung di Header identik Buku Penghubung */}
+          <View style={styles.searchBar}>
+            <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Cari santri berdasarkan nama atau NIS..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 3 KPI Cards Row Terpadu */}
+          <View style={styles.kpiCardsRow}>
+            {/* Card 1: Rata-Rata Kelas */}
+            <View style={[styles.kpiBox, { borderColor: '#A7F3D0' }]}>
+              <LinearGradient colors={['#FFFFFF', '#F0FDF4']} style={styles.kpiBoxGradient}>
+                <View style={styles.kpiHeaderRow}>
+                  <View style={[styles.kpiIconSquare, { backgroundColor: '#047857' }]}>
+                    <MaterialCommunityIcons name="chart-line" size={14} color="#FFFFFF" />
+                  </View>
+                  <Text style={[styles.kpiVal, { color: '#047857' }]}>{stats.avg}</Text>
+                </View>
+                <Text style={[styles.kpiLbl, { color: '#047857' }]} numberOfLines={1}>Rata-Rata</Text>
+                <Text style={styles.kpiSub} numberOfLines={1}>Nilai Kelas</Text>
+              </LinearGradient>
+            </View>
+
+            {/* Card 2: Tuntas KKM */}
+            <View style={[styles.kpiBox, { borderColor: '#BFDBFE' }]}>
+              <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={styles.kpiBoxGradient}>
+                <View style={styles.kpiHeaderRow}>
+                  <View style={[styles.kpiIconSquare, { backgroundColor: '#2563EB' }]}>
+                    <MaterialCommunityIcons name="check-decagram" size={14} color="#FFFFFF" />
+                  </View>
+                  <Text style={[styles.kpiVal, { color: '#2563EB' }]}>
+                    {activeKKM !== null ? stats.passed : '-'}
+                    {activeKKM !== null && (
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#60A5FA' }}>/{stats.total}</Text>
+                    )}
+                  </Text>
+                </View>
+                <Text style={[styles.kpiLbl, { color: '#2563EB' }]} numberOfLines={1}>
+                  {activeKKM !== null ? `Tuntas (${activeKKM})` : 'KKM: -'}
+                </Text>
+                <Text style={styles.kpiSub} numberOfLines={1}>
+                  {activeKKM !== null ? `${stats.passPercentage}% Tuntas` : 'Belum Ada KKM'}
+                </Text>
+              </LinearGradient>
+            </View>
+
+            {/* Card 3: Total Santri / Tertinggi */}
+            <View style={[styles.kpiBox, { borderColor: '#FDE68A' }]}>
+              <LinearGradient colors={['#FFFFFF', '#FFFBEB']} style={styles.kpiBoxGradient}>
+                <View style={styles.kpiHeaderRow}>
+                  <View style={[styles.kpiIconSquare, { backgroundColor: '#D97706' }]}>
+                    <MaterialCommunityIcons name="trophy-outline" size={14} color="#FFFFFF" />
+                  </View>
+                  <Text style={[styles.kpiVal, { color: '#D97706' }]}>
+                    {stats.highest !== '-' ? stats.highest : stats.total}
+                  </Text>
+                </View>
+                <Text style={[styles.kpiLbl, { color: '#D97706' }]} numberOfLines={1}>
+                  {stats.highest !== '-' ? 'Tertinggi' : 'Total Santri'}
+                </Text>
+                <Text style={styles.kpiSub} numberOfLines={1}>
+                  {stats.highestStudent !== '-' ? stats.highestStudent : 'Rombel Aktif'}
+                </Text>
+              </LinearGradient>
+            </View>
+          </View>
         </View>
 
-        {/* 3 KPI Cards Row Terpadu */}
-        <View style={styles.kpiCardsRow}>
-          {/* Card 1: Rata-Rata Kelas */}
-          <View style={[styles.kpiBox, { borderColor: '#A7F3D0' }]}>
-            <LinearGradient colors={['#FFFFFF', '#F0FDF4']} style={styles.kpiBoxGradient}>
-              <View style={styles.kpiHeaderRow}>
-                <View style={[styles.kpiIconSquare, { backgroundColor: '#047857' }]}>
-                  <MaterialCommunityIcons name="chart-line" size={14} color="#FFFFFF" />
-                </View>
-                <Text style={[styles.kpiVal, { color: '#047857' }]}>{stats.avg}</Text>
-              </View>
-              <Text style={[styles.kpiLbl, { color: '#047857' }]} numberOfLines={1}>Rata-Rata</Text>
-              <Text style={styles.kpiSub} numberOfLines={1}>Nilai Kelas</Text>
-            </LinearGradient>
-          </View>
-
-          {/* Card 2: Tuntas KKM */}
-          <View style={[styles.kpiBox, { borderColor: '#BFDBFE' }]}>
-            <LinearGradient colors={['#FFFFFF', '#EFF6FF']} style={styles.kpiBoxGradient}>
-              <View style={styles.kpiHeaderRow}>
-                <View style={[styles.kpiIconSquare, { backgroundColor: '#2563EB' }]}>
-                  <MaterialCommunityIcons name="check-decagram" size={14} color="#FFFFFF" />
-                </View>
-                <Text style={[styles.kpiVal, { color: '#2563EB' }]}>
-                  {activeKKM !== null ? stats.passed : '-'}
-                  {activeKKM !== null && (
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#60A5FA' }}>/{stats.total}</Text>
-                  )}
-                </Text>
-              </View>
-              <Text style={[styles.kpiLbl, { color: '#2563EB' }]} numberOfLines={1}>
-                {activeKKM !== null ? `Tuntas (${activeKKM})` : 'KKM: -'}
-              </Text>
-              <Text style={styles.kpiSub} numberOfLines={1}>
-                {activeKKM !== null ? `${stats.passPercentage}% Tuntas` : 'Belum Ada KKM'}
-              </Text>
-            </LinearGradient>
-          </View>
-
-          {/* Card 3: Total Santri / Tertinggi */}
-          <View style={[styles.kpiBox, { borderColor: '#FDE68A' }]}>
-            <LinearGradient colors={['#FFFFFF', '#FFFBEB']} style={styles.kpiBoxGradient}>
-              <View style={styles.kpiHeaderRow}>
-                <View style={[styles.kpiIconSquare, { backgroundColor: '#D97706' }]}>
-                  <MaterialCommunityIcons name="trophy-outline" size={14} color="#FFFFFF" />
-                </View>
-                <Text style={[styles.kpiVal, { color: '#D97706' }]}>
-                  {stats.highest !== '-' ? stats.highest : stats.total}
-                </Text>
-              </View>
-              <Text style={[styles.kpiLbl, { color: '#D97706' }]} numberOfLines={1}>
-                {stats.highest !== '-' ? 'Tertinggi' : 'Total Santri'}
-              </Text>
-              <Text style={styles.kpiSub} numberOfLines={1}>
-                {stats.highestStudent !== '-' ? stats.highestStudent : 'Rombel Aktif'}
-              </Text>
-            </LinearGradient>
-          </View>
-        </View>
-      </View>
-
-      {/* ── SHEET CONTAINER & MAIN SCROLL CONTENT ── */}
-      <View style={styles.sheetContainer}>
-        <Animated.ScrollView
-          style={styles.screen}
-          contentContainerStyle={[
-            styles.cleanMainScrollContent,
-            { paddingBottom: Math.max(insets.bottom + 80, 100) },
-          ]}
-          onScroll={handleMainScroll}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} />
-          }
-        >
+        {/* ── SHEET CONTAINER & MAIN SCROLL CONTENT ── */}
+        <View style={styles.sheetContainer}>
           <View style={styles.bodyContentWrapper}>
             {/* TAB SWITCHER IDENTIK DUAL ROLE PILL BUKU PENGHUBUNG */}
             <View style={styles.dualRolePillContainer}>
@@ -875,29 +909,45 @@ export default function TeacherGradeWorkspace({
 
                     {/* Score Grid: Tugas 20%, Kuis 20%, UTS 30%, UAS 30%, Nilai Akhir */}
                     <View style={styles.scoreGrid}>
-                      <View style={styles.scoreBox}>
-                        <Text style={styles.scoreLabel}>Tugas (20%)</Text>
-                        <Text style={styles.scoreVal}>{row.nilai_tugas || '-'}</Text>
+                      <View style={[styles.scoreBox, styles.scoreBoxTugas]}>
+                        <View style={styles.scoreHeaderMini}>
+                          <MaterialCommunityIcons name="clipboard-edit-outline" size={11} color="#2563EB" />
+                          <Text style={styles.scoreLabelTugas}>Tugas</Text>
+                        </View>
+                        <Text style={styles.scoreWeightText}>20%</Text>
+                        <Text style={styles.scoreValTugas}>{row.nilai_tugas || '-'}</Text>
                       </View>
-                      <View style={styles.scoreBox}>
-                        <Text style={styles.scoreLabel}>Kuis (20%)</Text>
-                        <Text style={styles.scoreVal}>{row.nilai_kuis || '-'}</Text>
+                      <View style={[styles.scoreBox, styles.scoreBoxKuis]}>
+                        <View style={styles.scoreHeaderMini}>
+                          <MaterialCommunityIcons name="help-circle-outline" size={11} color="#D97706" />
+                          <Text style={styles.scoreLabelKuis}>Kuis</Text>
+                        </View>
+                        <Text style={styles.scoreWeightText}>20%</Text>
+                        <Text style={styles.scoreValKuis}>{row.nilai_kuis || '-'}</Text>
                       </View>
-                      <View style={styles.scoreBox}>
-                        <Text style={styles.scoreLabel}>UTS (30%)</Text>
-                        <Text style={styles.scoreVal}>{row.nilai_uts || '-'}</Text>
+                      <View style={[styles.scoreBox, styles.scoreBoxUts]}>
+                        <View style={styles.scoreHeaderMini}>
+                          <MaterialCommunityIcons name="file-document-outline" size={11} color="#9333EA" />
+                          <Text style={styles.scoreLabelUts}>UTS</Text>
+                        </View>
+                        <Text style={styles.scoreWeightText}>30%</Text>
+                        <Text style={styles.scoreValUts}>{row.nilai_uts || '-'}</Text>
                       </View>
-                      <View style={styles.scoreBox}>
-                        <Text style={styles.scoreLabel}>UAS (30%)</Text>
-                        <Text style={styles.scoreVal}>{row.nilai_uas || '-'}</Text>
+                      <View style={[styles.scoreBox, styles.scoreBoxUas]}>
+                        <View style={styles.scoreHeaderMini}>
+                          <MaterialCommunityIcons name="school-outline" size={11} color="#E11D48" />
+                          <Text style={styles.scoreLabelUas}>UAS</Text>
+                        </View>
+                        <Text style={styles.scoreWeightText}>30%</Text>
+                        <Text style={styles.scoreValUas}>{row.nilai_uas || '-'}</Text>
                       </View>
                       <View style={[styles.scoreBox, styles.finalScoreBox]}>
-                        <Text style={[styles.scoreLabel, { color: '#047857', fontWeight: '800' }]}>
-                          Akhir
-                        </Text>
-                        <Text style={[styles.scoreVal, { color: '#064E3B', fontWeight: '900' }]}>
-                          {row.nilai_akhir || '-'}
-                        </Text>
+                        <View style={styles.scoreHeaderMini}>
+                          <MaterialCommunityIcons name="star-circle" size={11} color="#059669" />
+                          <Text style={styles.scoreLabelFinal}>Akhir</Text>
+                        </View>
+                        <Text style={styles.scoreWeightTextFinal}>100%</Text>
+                        <Text style={styles.scoreValFinal}>{row.nilai_akhir || '-'}</Text>
                       </View>
                     </View>
 
@@ -1093,9 +1143,9 @@ export default function TeacherGradeWorkspace({
               </View>
             </View>
           )}
+          </View>
         </View>
       </Animated.ScrollView>
-    </View>
 
       {/* ── 3. MODAL POP-UP PICKER JADWAL/ROMBEL (Matching TeacherAssignmentWorkspace) ── */}
       <Modal
@@ -1550,11 +1600,18 @@ const styles = StyleSheet.create({
   /* ── Tab Switcher Dual Role Pill ── */
   dualRolePillContainer: {
     flexDirection: 'row',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 4,
     marginBottom: 12,
     gap: 6,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   dualRolePill: {
     flex: 1,
@@ -1696,14 +1753,14 @@ const styles = StyleSheet.create({
   studentCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     padding: 13,
     marginBottom: 10,
-    shadowColor: '#000',
+    shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOpacity: 0.07,
+    shadowRadius: 5,
     elevation: 2,
   },
   cardHeader: {
@@ -1712,18 +1769,18 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   indexCircle: {
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
     borderRadius: 10,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#DEF7EC',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
-    borderWidth: 1,
+    borderWidth: 1.2,
     borderColor: '#A7F3D0',
   },
   indexText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '800',
     color: '#047857',
   },
@@ -1732,72 +1789,151 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   studentName: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#064E3B',
   },
   studentNis: {
     fontSize: 10.5,
-    color: '#64748B',
+    color: '#059669',
+    fontWeight: '600',
     marginTop: 1,
   },
   predicateBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
     borderRadius: 8,
     borderWidth: 1,
     marginRight: 6,
   },
   predicateText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '900',
   },
   editBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 8,
-    gap: 3,
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 10,
+    paddingVertical: 5.5,
+    borderRadius: 9,
+    gap: 4,
     borderWidth: 1,
     borderColor: '#A7F3D0',
   },
   editBtnText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#0E5C44',
+    color: '#047857',
   },
   scoreGrid: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 8,
-    gap: 6,
+    padding: 4,
+    gap: 5,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
   },
   scoreBox: {
     flex: 1,
     alignItems: 'center',
+    borderRadius: 9,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    borderWidth: 1,
+  },
+  scoreHeaderMini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  scoreBoxTugas: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  scoreLabelTugas: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  scoreValTugas: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E3A8A',
+    marginTop: 2,
+  },
+  scoreBoxKuis: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  scoreLabelKuis: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  scoreValKuis: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#78350F',
+    marginTop: 2,
+  },
+  scoreBoxUts: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
+  },
+  scoreLabelUts: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#7E22CE',
+  },
+  scoreValUts: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#581C87',
+    marginTop: 2,
+  },
+  scoreBoxUas: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  scoreLabelUas: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#BE123C',
+  },
+  scoreValUas: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#881337',
+    marginTop: 2,
   },
   finalScoreBox: {
     backgroundColor: '#ECFDF5',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-    paddingVertical: 2,
+    borderColor: '#6EE7B7',
   },
-  scoreLabel: {
+  scoreLabelFinal: {
     fontSize: 8.5,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  scoreVal: {
-    fontSize: 12.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#047857',
+  },
+  scoreValFinal: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#064E3B',
     marginTop: 2,
+  },
+  scoreWeightText: {
+    fontSize: 7.5,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 0.5,
+  },
+  scoreWeightTextFinal: {
+    fontSize: 7.5,
+    fontWeight: '700',
+    color: '#059669',
+    marginTop: 0.5,
   },
   cardFooter: {
     flexDirection: 'row',
@@ -1812,15 +1948,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 3.5,
     borderRadius: 8,
     gap: 4,
+    borderWidth: 1,
   },
   kkmPillPassed: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#DEF7EC',
+    borderColor: '#A7F3D0',
   },
   kkmPillRemedial: {
-    backgroundColor: '#FFF1F2',
+    backgroundColor: '#FFE4E6',
+    borderColor: '#FECDD3',
   },
   kkmPillText: {
     fontSize: 10,

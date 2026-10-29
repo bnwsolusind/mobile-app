@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -21,6 +22,8 @@ import { mobileApiService, unwrapCollection } from '../services/mobileApiService
 import { useAuthStore } from '../stores/authStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+
+const PARENT_HOME_BG = require('../../assets/parent_home_bg.jpg');
 
 type EducationUnitNameSource = {
   name?: string | null;
@@ -267,7 +270,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
       title: 'Pilih Kelas Tujuan Penempatan',
       message: `Persetujuan mutasi masuk untuk ${studentName} memerlukan penetapan rombel/kelas tujuan. Anda diarahkan ke menu Kelola Siswa.`,
     });
-    nav.navigate('DataManagement', {
+    nav.navigate('Data', {
       resource: 'students',
       filterStatus: 'mutasi',
       mode: 'mutasi',
@@ -421,34 +424,68 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.container}>
-      {/* ── HEADER HALAMAN KELOLA ALUMNI & MUTASI ── */}
-      <LinearGradient
-        colors={['#4C1D95', '#6D28D9', '#7C3AED']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.headerContainer, { paddingTop: topInset + 6 }]}
-      >
+      {/* ── Background Mosque & School (Identik Halaman Utama & Halaman Penilaian) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Halaman Penilaian & Buku Nilai */}
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── HEADER HALAMAN KELOLA ALUMNI & MUTASI (IDENTIK HALAMAN PENILAIAN) ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
         <View style={styles.headerTopRow}>
-          <TouchableOpacity activeOpacity={0.7} onPress={handleGoBack} style={styles.backButton}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={handleGoBack}
+            style={styles.backButton}
+            accessibilityRole="button"
+            accessibilityLabel="Kembali"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
 
           <View style={styles.headerTitleWrap}>
             <View style={styles.headerBadge}>
-              <MaterialCommunityIcons name="account-switch" size={12} color="#E9D5FF" />
-              <Text style={styles.headerBadgeText}>LAYANAN KESISWAAN TERPADU</Text>
+              <View style={styles.pulseDot} />
+              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                KEPALA SEKOLAH • ALUMNI & MUTASI SISWA
+              </Text>
             </View>
-            <Text style={styles.headerMainTitle}>Kelola Alumni & Mutasi</Text>
+            <Text style={styles.headerMainTitle} numberOfLines={1}>
+              Kelola Alumni & Mutasi
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              Layanan Kesiswaan & Penelusuran Lulusan Terpadu
+            </Text>
           </View>
 
-          <TouchableOpacity activeOpacity={0.7} onPress={() => loadData(true)} style={styles.refreshButton}>
-            <MaterialCommunityIcons name="refresh" size={20} color="#FFFFFF" />
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => loadData(true)}
+            style={styles.refreshButton}
+            accessibilityRole="button"
+            accessibilityLabel="Muat Ulang"
+          >
+            <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
           </TouchableOpacity>
         </View>
 
-        {/* Search Bar */}
+        {/* Search Bar Modern Emerald */}
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#64748B" />
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
           <TextInput
             style={styles.searchInput}
             placeholder={
@@ -528,37 +565,37 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
             </LinearGradient>
           </TouchableOpacity>
 
-          {/* Card 4: Antrean Masuk (Purple) */}
+          {/* Card 4: Antrean Masuk (Teal / Emerald) */}
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setActiveTab('antrean')}
-            style={[styles.kpiBox, { borderColor: '#DDD6FE' }]}
+            style={[styles.kpiBox, { borderColor: '#A7F3D0' }]}
           >
-            <LinearGradient colors={['#F5F3FF', '#EDE9FE']} style={styles.kpiBoxGradient}>
+            <LinearGradient colors={['#F0FDF4', '#DCFCE7']} style={styles.kpiBoxGradient}>
               <View style={styles.kpiHeaderRow}>
-                <View style={[styles.kpiIconSquare, { backgroundColor: '#7C3AED' }]}>
+                <View style={[styles.kpiIconSquare, { backgroundColor: '#0D9488' }]}>
                   <MaterialCommunityIcons name="bell-ring-outline" size={14} color="#FFF" />
                 </View>
-                <Text style={[styles.kpiVal, { color: '#6D28D9' }]}>{stats.incoming}</Text>
+                <Text style={[styles.kpiVal, { color: '#0F766E' }]}>{stats.incoming}</Text>
               </View>
-              <Text style={[styles.kpiLbl, { color: '#5B21B6' }]}>Antrean Masuk</Text>
+              <Text style={[styles.kpiLbl, { color: '#115E59' }]}>Antrean Masuk</Text>
               <Text style={styles.kpiSub}>Menunggu Validasi</Text>
             </LinearGradient>
           </TouchableOpacity>
         </ScrollView>
-      </LinearGradient>
+      </View>
 
       {/* ── SEGMENTED SUB-TABS (CANONICAL 3-SECTION PARITY) ── */}
       <View style={styles.segmentContainer}>
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => setActiveTab('mutasi')}
-          style={[styles.segmentBtn, (activeTab === 'mutasi' || (activeTab as any) === 'daftar') && styles.segmentBtnActiveAmber]}
+          style={[styles.segmentBtn, (activeTab === 'mutasi' || (activeTab as any) === 'daftar') && styles.segmentBtnActive]}
         >
           <MaterialCommunityIcons
             name="account-switch"
             size={16}
-            color={(activeTab === 'mutasi' || (activeTab as any) === 'daftar') ? '#FFFFFF' : '#64748B'}
+            color={(activeTab === 'mutasi' || (activeTab as any) === 'daftar') ? '#FFFFFF' : '#047857'}
           />
           <Text style={[styles.segmentBtnText, (activeTab === 'mutasi' || (activeTab as any) === 'daftar') && styles.segmentBtnTextActive]}>
             Mutasi ({stats.totalMutasi})
@@ -568,12 +605,12 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => setActiveTab('alumni')}
-          style={[styles.segmentBtn, activeTab === 'alumni' && styles.segmentBtnActiveEmerald]}
+          style={[styles.segmentBtn, activeTab === 'alumni' && styles.segmentBtnActive]}
         >
           <MaterialCommunityIcons
             name="school"
             size={16}
-            color={activeTab === 'alumni' ? '#FFFFFF' : '#64748B'}
+            color={activeTab === 'alumni' ? '#FFFFFF' : '#047857'}
           />
           <Text style={[styles.segmentBtnText, activeTab === 'alumni' && styles.segmentBtnTextActive]}>
             Alumni ({stats.totalAlumni})
@@ -583,12 +620,12 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => setActiveTab('antrean')}
-          style={[styles.segmentBtn, activeTab === 'antrean' && styles.segmentBtnActivePurple]}
+          style={[styles.segmentBtn, activeTab === 'antrean' && styles.segmentBtnActive]}
         >
           <MaterialCommunityIcons
             name="tray-full"
             size={16}
-            color={activeTab === 'antrean' ? '#FFFFFF' : '#64748B'}
+            color={activeTab === 'antrean' ? '#FFFFFF' : '#047857'}
           />
           <Text style={[styles.segmentBtnText, activeTab === 'antrean' && styles.segmentBtnTextActive]}>
             Antrean ({stats.incoming})
@@ -600,7 +637,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
       {(activeTab === 'mutasi' || (activeTab as any) === 'daftar') && (
         <View style={styles.filterPillsRow}>
           <TouchableOpacity
-            style={[styles.pillBtn, filterType === 'all' && styles.pillBtnActiveAmber]}
+            style={[styles.pillBtn, filterType === 'all' && styles.pillBtnActiveEmerald]}
             onPress={() => setFilterType('all')}
           >
             <Text style={[styles.pillBtnText, filterType === 'all' && styles.pillBtnTextActive]}>
@@ -608,7 +645,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.pillBtn, filterType === 'unit' && styles.pillBtnActiveAmber]}
+            style={[styles.pillBtn, filterType === 'unit' && styles.pillBtnActiveEmerald]}
             onPress={() => setFilterType('unit')}
           >
             <Text style={[styles.pillBtnText, filterType === 'unit' && styles.pillBtnTextActive]}>
@@ -616,7 +653,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.pillBtn, filterType === 'keluar' && styles.pillBtnActiveAmber]}
+            style={[styles.pillBtn, filterType === 'keluar' && styles.pillBtnActiveEmerald]}
             onPress={() => setFilterType('keluar')}
           >
             <Text style={[styles.pillBtnText, filterType === 'keluar' && styles.pillBtnTextActive]}>
@@ -706,7 +743,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
       {activeTab === 'mutasi' || (activeTab as any) === 'daftar' ? (
         loading ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#7C3AED" />
+            <ActivityIndicator size="large" color="#059669" />
             <Text style={styles.loadingText}>Memuat data mutasi santri...</Text>
           </View>
         ) : (
@@ -716,7 +753,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} colors={['#7C3AED']} />
+              <RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} colors={['#059669']} />
             }
             ListEmptyComponent={
               <View style={styles.emptyBox}>
@@ -876,7 +913,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} colors={['#7C3AED']} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} colors={['#059669']} />
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
@@ -894,7 +931,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
               <View style={styles.incomingCard}>
                 <View style={styles.incomingHeader}>
                   <View style={styles.incomingAvatar}>
-                    <MaterialCommunityIcons name="arrow-bottom-left" size={20} color="#7C3AED" />
+                    <MaterialCommunityIcons name="arrow-bottom-left" size={20} color="#059669" />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.incomingName}>{studentName}</Text>
@@ -938,7 +975,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
           style={styles.fabBtn}
         >
           <LinearGradient
-            colors={['#7C3AED', '#6D28D9']}
+            colors={['#059669', '#047857']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.fabGradient}
@@ -960,7 +997,7 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleRow}>
-                <MaterialCommunityIcons name="file-document-edit-outline" size={20} color="#7C3AED" />
+                <MaterialCommunityIcons name="file-document-edit-outline" size={20} color="#059669" />
                 <Text style={styles.modalTitle}>Formulir Mutasi Santri</Text>
               </View>
               <TouchableOpacity onPress={() => setFormModalVisible(false)} style={styles.modalCloseBtn}>
@@ -1189,68 +1226,122 @@ export default function MutasiSiswaScreen({ navigation, route }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
+  },
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 440,
+    overflow: 'hidden',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
   },
   headerContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    elevation: 4,
-    shadowColor: '#581C87',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
+    paddingBottom: 12,
+    backgroundColor: 'transparent',
+    zIndex: 10,
   },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    marginBottom: 10,
   },
   backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   headerTitleWrap: {
     flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
   },
   headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 20,
+    marginBottom: 2,
+    maxWidth: '100%',
+  },
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+    marginRight: 5,
   },
   headerBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
-    color: '#E9D5FF',
-    letterSpacing: 0.6,
+    color: '#047857',
+    letterSpacing: 0.5,
+    flexShrink: 1,
   },
   headerMainTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
+    color: '#064E3B',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+    marginTop: 1,
   },
   refreshButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
-    height: 42,
-    marginTop: 12,
+    height: 44,
     gap: 8,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
@@ -1270,13 +1361,18 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   kpiBox: {
-    minWidth: 108,
+    minWidth: 112,
     borderRadius: 14,
-    borderWidth: 1.2,
+    borderWidth: 1.5,
     overflow: 'hidden',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   kpiBoxGradient: {
-    padding: 9,
+    padding: 10,
   },
   kpiHeaderRow: {
     flexDirection: 'row',
@@ -1307,12 +1403,15 @@ const styles = StyleSheet.create({
   },
   segmentContainer: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 14,
+    marginHorizontal: 14,
+    marginTop: 4,
+    marginBottom: 8,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 6,
   },
   segmentBtn: {
     flex: 1,
@@ -1321,36 +1420,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
     gap: 6,
   },
   segmentBtnActive: {
     backgroundColor: '#059669',
-  },
-  segmentBtnActiveAmber: {
-    backgroundColor: '#D97706',
-  },
-  segmentBtnActiveEmerald: {
-    backgroundColor: '#059669',
-  },
-  segmentBtnActivePurple: {
-    backgroundColor: '#7C3AED',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   segmentBtnText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#047857',
   },
   segmentBtnTextActive: {
     color: '#FFFFFF',
+    fontWeight: '800',
   },
   filterPillsRow: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingBottom: 8,
     gap: 8,
   },
   filterPillsScroll: {
@@ -1363,35 +1455,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: '#F1F5F9',
-  },
-  pillBtnActiveAmber: {
-    backgroundColor: '#D97706',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   pillBtnActiveEmerald: {
     backgroundColor: '#059669',
+    borderColor: '#059669',
   },
   pillBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#475569',
   },
   pillBtnTextActive: {
     color: '#FFFFFF',
+    fontWeight: '800',
   },
   tracerSectionWrap: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingTop: 10,
+    paddingTop: 2,
   },
   tracerBanner: {
     marginHorizontal: 14,
     marginBottom: 8,
     padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: 14,
+    borderWidth: 1.5,
     borderColor: '#A7F3D0',
+    shadowColor: '#059669',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   tracerBannerHeader: {
     flexDirection: 'row',
@@ -1438,7 +1532,8 @@ const styles = StyleSheet.create({
     borderColor: '#A7F3D0',
     padding: 12,
     shadowColor: '#059669',
-    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
   },
@@ -1523,7 +1618,7 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#047857',
   },
   emptyBox: {
     alignItems: 'center',
@@ -1545,10 +1640,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#A7F3D0',
     padding: 12,
-    shadowColor: '#581C87',
-    shadowOpacity: 0.04,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
   },
@@ -1595,7 +1691,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   detailBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
     borderRadius: 10,
     padding: 8,
     marginTop: 8,
@@ -1621,10 +1717,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#DDD6FE',
+    borderColor: '#A7F3D0',
     padding: 12,
-    shadowColor: '#7C3AED',
-    shadowOpacity: 0.05,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
   },
@@ -1637,7 +1734,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: '#F5F3FF',
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1668,7 +1765,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#ECFDF5',
     paddingTop: 8,
   },
   rejectBtn: {
@@ -1676,8 +1773,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
     backgroundColor: '#FEF2F2',
     gap: 4,
   },
@@ -1691,9 +1788,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#7C3AED',
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#059669',
     gap: 4,
   },
   approveBtnText: {
@@ -1707,7 +1804,8 @@ const styles = StyleSheet.create({
     right: 18,
     borderRadius: 24,
     elevation: 6,
-    shadowColor: '#7C3AED',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.35,
     shadowRadius: 8,
   },
@@ -1752,7 +1850,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#064E3B',
   },
   modalCloseBtn: {
     padding: 4,
@@ -1764,7 +1862,7 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#334155',
+    color: '#065F46',
     marginTop: 4,
   },
   formTypeRow: {
@@ -1777,9 +1875,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   typeOptionActive: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#059669',
+    borderColor: '#059669',
   },
   typeOptionText: {
     fontSize: 11.5,
@@ -1794,19 +1895,22 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   studentPill: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     marginRight: 6,
   },
   studentPillActive: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#059669',
+    borderColor: '#059669',
   },
   studentPillText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#047857',
   },
   studentPillTextActive: {
     color: '#FFFFFF',
@@ -1817,26 +1921,29 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   unitPill: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
   },
   unitPillActive: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#059669',
+    borderColor: '#059669',
   },
   unitPillText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#047857',
   },
   unitPillTextActive: {
     color: '#FFFFFF',
   },
   textInput: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1848,10 +1955,15 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   submitBtn: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#059669',
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   submitBtnText: {
     fontSize: 13,

@@ -52,13 +52,18 @@ import {
   roleLabel,
 } from '../utils/roles';
 import EmployeeHeaderCard from '../components/dashboard/EmployeeHeaderCard';
+import DualRoleLandingGate from '../components/dashboard/DualRoleLandingGate';
+import DualRoleHeroCarousel from '../components/dashboard/DualRoleHeroCarousel';
 import TeacherDashboardView from '../components/dashboard/TeacherDashboardView';
 import TeacherRombelSelectorCard from '../components/dashboard/TeacherRombelSelectorCard';
 import FoundationDashboardView from '../components/dashboard/FoundationDashboardView';
 import StaffDashboardView from '../components/dashboard/StaffDashboardView';
 import TuDashboardView from '../components/dashboard/TuDashboardView';
 import TuHomeScreenView from '../components/dashboard/TuHomeScreenView';
+import MusyrifHomeScreenView from '../components/dashboard/MusyrifHomeScreenView';
 import PrincipalHomeSection from '../components/dashboard/PrincipalHomeSection';
+import PrincipalHomeScreenView from '../components/dashboard/PrincipalHomeScreenView';
+import DivisiHomeScreenView from '../components/dashboard/DivisiHomeScreenView';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { GenericCarousel } from '../components/GenericCarousel';
 import { getStudentAttendanceStatus } from '../utils/studentAttendanceHelper';
@@ -155,8 +160,15 @@ const MENU_SUBTITLES: Record<string, string> = {
   'Bank Soal': 'Latihan soal mandiri',
   'Tagihan & SPP': 'Biaya pendidikan',
   'Mutabaah': 'Pantau ibadah',
+  'Mutabaah Asrama': 'Amalan yaumiyyah santri',
   'Mutaba\'ah Yaumiyyah': 'Ibadah & mutabaah harian',
   'Absensi': 'Kehadiran siswa',
+  'Absensi Asrama': 'Presensi sholat & kamar',
+  'Izin Santri': 'Verifikasi pesiar & pulang',
+  'Setoran Tahfizh': 'Ziyadah & muraja\'ah',
+  'Chat Wali & Staf': 'Pesan asrama & wali',
+  'Kalender Pondok': 'Agenda & kegiatan asrama',
+  'Warta Pesantren': 'Kabar & maklumat asrama',
   'Kisi-kisi': 'Persiapan ujian',
   'Kisi-kisi Ujian CBT': 'Persiapan ujian',
   'Ujian CBT': 'Ujian online',
@@ -174,6 +186,14 @@ const MENU_SUBTITLES: Record<string, string> = {
   'Monitoring': 'Pantau progres',
   'Data Master': 'Kelola data pokok',
   'Data Siswa': 'Kelola siswa',
+  'Buku Induk Siswa': 'Database santri unit',
+  'Data SDM Guru & Staf': 'Pendidik & pegawai',
+  'Pantau Kelas & Rombel': 'Supervisi kelas aktif',
+  'Izin & Cuti Sekolah': 'Persetujuan izin & cuti',
+  'Monitoring Tahfizh': 'Rekap hafalan santri',
+  'Rekap Mutaba\'ah': 'Evaluasi amalan ibadah',
+  'Supervisi Materi': 'Bahan ajar & kurikulum',
+  'Monitoring Tugas': 'Tinjau tugas belajar',
   'Data Pegawai': 'Kelola pegawai',
   'Absensi Gerbang': 'Scan RFID & QR',
   'Rekap Siswa': 'Kehadiran santri',
@@ -358,6 +378,11 @@ export default function HomeScreen({ navigation, route }: any) {
   const divisi = isDivisiRole(roles);
   const isTuOnly = tu && !principal && !foundation && !superAdmin && !divisi;
   const musyrif = isMusyrifRole(roles);
+  const isDualRole = teacher && musyrif;
+  const [dualRoleMode, setDualRoleMode] = useState<'teacher' | 'musyrif'>('musyrif');
+  const [isDualRoleWorkspaceActive, setIsDualRoleWorkspaceActive] = useState<boolean>(false);
+  const isMusyrifActive = musyrif && (!isDualRole || dualRoleMode === 'musyrif');
+  const activeStaffMode = isDualRole ? dualRoleMode : (teacher ? 'teacher' : (musyrif ? 'musyrif' : 'other'));
   const mobileConfig = useMobileConfigStore((state) => state.config);
   const theme = mobileConfig.theme || {};
 
@@ -1406,6 +1431,8 @@ export default function HomeScreen({ navigation, route }: any) {
     ? `Orang Tua dari ${user?.student_name || 'Siswa'}`
     : alumni
     ? 'Alumni'
+    : isDualRole
+    ? (dualRoleMode === 'musyrif' ? 'Musyrif Asrama' : 'Guru Pengajar')
     : musyrif
     ? 'Musyrif Asrama'
     : teacher
@@ -1416,8 +1443,78 @@ export default function HomeScreen({ navigation, route }: any) {
     ? 'Yayasan & Pimpinan'
     : 'Tata Usaha / Staf';
 
-  // 4-Column Dynamic Menus Mapped Per Role (Mockup #4)
+  // 4-Column Dynamic Menus Mapped Per Role (Mockup #4 & Web Dashboard Unified Config)
   const roleMenus = useMemo(() => {
+    const currentRoleKey = alumni
+      ? 'alumni'
+      : isDualRole
+      ? dualRoleMode
+      : musyrif
+      ? 'musyrif'
+      : principal
+      ? 'principal'
+      : (foundation || superAdmin || divisi)
+      ? 'foundation'
+      : teacher
+      ? 'teacher'
+      : parent
+      ? 'parent'
+      : student
+      ? 'student'
+      : tu
+      ? 'tu'
+      : 'staff';
+
+    const dynamicMenus = mobileConfig?.role_menus?.[currentRoleKey];
+    if (dynamicMenus && Array.isArray(dynamicMenus) && dynamicMenus.length > 0) {
+      const seenRoutes = new Set<string>();
+      const active = dynamicMenus.filter((item) => {
+        if (item.is_active === false || item.enabled === false) return false;
+        // Filter out web URL routes (e.g. /dashboard/...) that do not correspond to native mobile screens
+        if (typeof item.route === 'string' && item.route.startsWith('/')) return false;
+
+        if (currentRoleKey === 'principal') {
+          const unauthorizedForPrincipal = [
+            'dash-tu',
+            'portal-musyrif-workspace',
+            'mob-bank-soal',
+            'lms-bank-soal',
+            'portal-guru-workspace',
+            'dash-tahfizh',
+            'portal-sivitas',
+            'mob-perizinan-santri',
+            'mob-tugas-lms',
+            'lms-penugasan',
+            'mob-buku-hubung',
+            'mob-tagihan-spp',
+          ];
+          if (unauthorizedForPrincipal.includes(item.id)) return false;
+        }
+
+        // Deduplication by destination screen & tab: jangan ada menu ganda yang direct ke halaman yang sama
+        const destKey = `${item.route || 'HomeScreen'}__${item.tab || ''}`;
+        if (seenRoutes.has(destKey)) return false;
+        seenRoutes.add(destKey);
+
+        return true;
+      });
+      if (active.length > 0) {
+        return active.map((item) => {
+          const row: any[] = [
+            item.label,
+            item.icon || 'circle-outline',
+            item.color || '#059669',
+            item.bg || '#ECFDF5',
+            item.route || 'HomeScreen',
+          ];
+          if (item.tab) {
+            row.push(item.tab);
+          }
+          return row;
+        });
+      }
+    }
+
     if (alumni) {
       return [
         ['Informasi', 'bullhorn', '#E11D48', '#FFF1F2', 'Informasi'],
@@ -1430,37 +1527,38 @@ export default function HomeScreen({ navigation, route }: any) {
     }
     if (musyrif) {
       return [
+        ['Presensi Mandiri', 'account-clock-outline', '#10B981', '#ECFDF5', 'PresensiMandiriStaff'],
+        ['Absensi Asrama', 'home-account', '#0D9488', '#E6FFFA', 'Absensi', 'boarding'],
+        ['Izin Santri', 'card-account-details-outline', '#EF4444', '#FEF2F2', 'Perizinan', 'asrama'],
+        ['Mutabaah Asrama', 'clipboard-check', '#F59E0B', '#FEF9EC', 'Mutabaah'],
+        ['Setoran Tahfizh', 'book-marker', '#2563EB', '#EFF6FF', 'Tahfizh'],
         ['Al-Qur\'an', 'book-open-variant', '#059669', '#F0FDF4', 'Quran'],
         ['Doa & Dzikir', 'hands-pray', '#F97316', '#FFF7ED', 'DoaDzikir'],
-        ['Absensi Asrama', 'home-account', '#0D9488', '#E6FFFA', 'Absensi', 'boarding'],
-        ['Izin Santri', 'card-account-details-outline', '#EF4444', '#FEF2F2', 'Perizinan'],
-        ['Mutabaah Asrama', 'clipboard-check', '#F59E0B', '#FEF9EC', 'Mutabaah'],
-        ['Tahfizh', 'book-marker', '#2563EB', '#EFF6FF', 'Tahfizh'],
-        ['Kalender', 'calendar-month', '#2563EB', '#EFF6FF', 'Kalender'],
-        ['Informasi', 'bullhorn', '#E11D48', '#FFF1F2', 'Informasi'],
-        ['Pengaturan', 'cog', '#64748B', '#F8FAFC', 'Lainnya'],
+        ['Chat Wali & Staf', 'message-text-outline', '#059669', '#ECFDF5', 'Chat Guru'],
+        ['Kalender Pondok', 'calendar-month', '#0891B2', '#CFFAFE', 'Kalender'],
+        ['Pengumuman & Informasi', 'newspaper-variant-outline', '#E11D48', '#FFF1F2', 'Informasi'],
+        ['Pengaturan', 'cog-outline', '#64748B', '#F1F5F9', 'Lainnya'],
       ];
     }
     if (principal) {
       return [
         ['Dashboard Kepala Sekolah', 'view-dashboard-outline', '#059669', '#E6F4EA', 'PrincipalDashboard'],
+        ['Supervisi KBM', 'human-male-board', '#0F766E', '#F0FDFA', 'SupervisiKbm'],
         ['Presensi Guru', 'account-check-outline', '#059669', '#ECFDF5', 'RekapPresensiGuru', 'pegawai'],
         ['Presensi Siswa', 'account-group', '#0284C7', '#E0F2FE', 'RekapPresensiSiswa', 'siswa'],
         ['Presensi Mandiri', 'account-clock-outline', '#10B981', '#ECFDF5', 'PresensiMandiriStaff'],
-        ['Monitoring Guru Mengajar', 'google-classroom', '#D97706', '#FEF3C7', 'PantauKelas'],
-        ['Buku Induk Siswa', 'database-outline', '#0284C7', '#E0F2FE', 'Data'],
+        ['Pantau Kelas & Rombel', 'google-classroom', '#D97706', '#FEF3C7', 'PantauKelas'],
+        ['Buku Induk Siswa', 'account-school-outline', '#0284C7', '#E0F2FE', 'MasterSiswa'],
+        ['Data SDM Guru & Staf', 'account-group-outline', '#7C3AED', '#F5F3FF', 'Data', 'employees'],
         ['Kelola Alumni & Mutasi', 'account-switch', '#7C3AED', '#F5F3FF', 'MutasiSiswa'],
-        ['KBM Pengganti', 'account-switch-outline', '#0D9488', '#CCFBF1', 'PresensiKbmPengganti'],
-        ['Izin & Cuti', 'file-document-edit', '#D97706', '#FEF3C7', 'Perizinan'],
-        ['Izin Asrama', 'door-open', '#E11D48', '#FFE4E6', 'Perizinan', 'asrama'],
+        ['Izin & Cuti Sekolah', 'file-document-edit', '#D97706', '#FEF3C7', 'Perizinan', 'permissions'],
         ['Jadwal Pelajaran', 'calendar-clock', '#2563EB', '#EFF6FF', 'Jadwal'],
         ['Kalender Akademik', 'calendar-month', '#0891B2', '#CFFAFE', 'Kalender'],
-        ['Materi Belajar', 'book-open-page-variant', '#0D9488', '#CCFBF1', 'Materi'],
-        ['Tugas Siswa', 'clipboard-text', '#F59E0B', '#FEF9EC', 'Tugas'],
+        ['Supervisi Materi', 'book-open-page-variant', '#0D9488', '#CCFBF1', 'Materi'],
+        ['Monitoring Tugas', 'clipboard-text', '#F59E0B', '#FEF9EC', 'Tugas'],
         ['Penilaian & Rapor', 'card-account-details-star-outline', '#059669', '#E6F4EA', 'Nilai'],
-        ['Bank Soal', 'laptop', '#7C3AED', '#F5F3FF', 'BankSoal'],
-        ['Setoran Tahfizh', 'book-marker', '#059669', '#E6F4EA', 'Tahfizh'],
-        ['Mutaba\'ah Yaumiyah', 'clipboard-check', '#E11D48', '#FFE4E6', 'Mutabaah'],
+        ['Monitoring Tahfizh', 'book-marker', '#059669', '#E6F4EA', 'Tahfizh'],
+        ['Rekap Mutaba\'ah', 'clipboard-check', '#E11D48', '#FFE4E6', 'Mutabaah'],
         ['Al-Qur\'an', 'book-open-variant', '#0284C7', '#E0F2FE', 'Quran'],
         ['Doa & Dzikir', 'hands-pray', '#0D9488', '#E6FFFA', 'DoaDzikir'],
         ['Chat Pegawai', 'message-text-outline', '#059669', '#ECFDF5', 'Chat Guru'],
@@ -1585,19 +1683,13 @@ export default function HomeScreen({ navigation, route }: any) {
       ['Profil Staf', 'account-circle-outline', '#0D9488', '#E6FFFA', 'Profil'],
       ['Pengaturan', 'cog-outline', '#64748B', '#F1F5F9', 'Lainnya'],
     ];
-  }, [principal, foundation, superAdmin, divisi, musyrif, alumni, teacher, parent, student, tu]);
+  }, [principal, foundation, superAdmin, divisi, musyrif, alumni, teacher, parent, student, tu, isDualRole, dualRoleMode, mobileConfig?.role_menus]);
 
   const primaryMenuItems = useMemo(() => {
     if (student || parent) {
+      const top7 = roleMenus.slice(0, 7);
       return [
-        ['Jadwal Pelajaran', 'calendar-clock', '#0D9488', '#ECFDF5', 'Jadwal'],
-        ['Tugas LMS', 'clipboard-text-outline', '#10B981', '#ECFDF5', 'Tugas'],
-        ['Materi Belajar', 'book-open-page-variant', '#0284C7', '#EFF6FF', 'Materi'],
-        ['Penilaian & Rapor', 'chart-box-outline', '#8B5CF6', '#F5F3FF', 'Nilai'],
-        ['Tahfizh Al-Qur\'an', 'book-marker', '#059669', '#ECFDF5', 'Tahfizh'],
-        ['Mutaba\'ah Yaumiyyah', 'clipboard-check-outline', '#D97706', '#FFFBEB', 'Mutabaah'],
-        ['Buku Hubung', 'notebook-edit-outline', '#E11D48', '#FFF1F2', 'Komentar'],
-        ['Bank Soal', 'database-outline', '#0D9488', '#E6FFFA', 'BankSoal'],
+        ...top7,
         ['Semua Menu', 'view-grid-outline', '#475569', '#F8FAFC', '__OPEN_MODAL__'],
       ];
     }
@@ -2506,12 +2598,19 @@ export default function HomeScreen({ navigation, route }: any) {
         </View>
       )}
 
-      {/* 1. STICKY RICH APP BAR — Contextual per role, muncul saat halaman di-scroll ke bawah (dihapus untuk role parent & TU) */}
-      {(!parent && !isTuOnly) && (
+      {/* 1. STICKY RICH APP BAR — Contextual per role, muncul saat halaman di-scroll ke bawah (dihapus untuk role parent, TU, dan landing gate dual-role) */}
+      {(!parent && !isTuOnly && !(isDualRole && !isDualRoleWorkspaceActive)) && (
       <Animated.View
         pointerEvents={isStickyActive ? 'box-none' : 'none'}
         style={[
           styles.stickyHeaderBar,
+          teacher && {
+            backgroundColor: '#F0FDF4',
+            borderBottomColor: '#CCFBF1',
+            borderBottomWidth: 1,
+            shadowColor: '#064E3B',
+            shadowOpacity: 0.06,
+          },
           {
             paddingTop: topInset + 4,
             opacity: stickyOpacity,
@@ -2519,43 +2618,73 @@ export default function HomeScreen({ navigation, route }: any) {
           },
         ]}
       >
-        {/* Background: foto gedung sekolah & masjid (Splashscreen 2) + overlay hijau #18A165 */}
+        {/* Background: foto gedung sekolah & masjid (Splashscreen 2) + overlay cerah selaras halaman */}
         <View
           style={[
             StyleSheet.absoluteFill,
             {
-              bottom: (parent || student || teacher || tu || principal) ? 40 : 0,
               overflow: 'hidden',
               pointerEvents: 'none',
+              backgroundColor: (teacher || musyrif || principal) ? '#F0FDF4' : undefined,
             },
           ]}
         >
-          <Image
-            source={PARENT_HOME_BG}
-            style={[StyleSheet.absoluteFill, styles.stickyMosqueBgImage]}
-            resizeMode="cover"
-          />
+          {!(teacher || musyrif || principal) && (
+            <Image
+              source={PARENT_HOME_BG}
+              style={[StyleSheet.absoluteFill, styles.stickyMosqueBgImage]}
+              resizeMode="cover"
+            />
+          )}
           <LinearGradient
-            colors={['rgba(24, 161, 101, 0.40)', 'rgba(24, 161, 101, 0.75)', 'rgba(18, 128, 80, 0.92)']}
+            colors={
+              (teacher || musyrif || principal)
+                ? ['#F0FDF4', '#F0FDF4', '#F0FDF4']
+                : ['rgba(24, 161, 101, 0.40)', 'rgba(24, 161, 101, 0.75)', 'rgba(18, 128, 80, 0.92)']
+            }
             locations={[0, 0.45, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
-          <View style={styles.stickyDecorCircle1} />
-          <View style={styles.stickyDecorCircle2} />
+          {!(teacher || musyrif || principal) && (
+            <>
+              <View style={styles.stickyDecorCircle1} />
+              <View style={styles.stickyDecorCircle2} />
+            </>
+          )}
         </View>
 
         {/* ── BARIS ATAS: Logo SIMSIT + Nama Sekolah + Bell + Avatar ── */}
         <View style={styles.stickyTopRow}>
           <View style={styles.stickyBrandGroup}>
-            <View style={styles.stickyLogoWrap}>
+            <View style={[styles.stickyLogoWrap, (teacher || musyrif || principal || divisi) && { borderColor: '#E2E8F0', elevation: 2 }]}>
               <Image source={SPLASH_LOGO} style={styles.stickyLogoImg} resizeMode="contain" />
             </View>
             <View style={styles.stickyBrandTextCol}>
-              <Text style={styles.stickyBrandLabel}>SIMSIT</Text>
-              <Text numberOfLines={1} style={styles.stickyBrandSub}>
-                {mobileConfig.branding?.school_name || 'Yayasan Dar El-Iman'}
+              <Text style={[styles.stickyBrandLabel, (teacher || musyrif || principal || divisi) && { color: '#064E3B', textShadowColor: 'transparent' }]}>
+                {teacher && (!isDualRole || dualRoleMode === 'teacher')
+                  ? 'Guru & Akademik'
+                  : musyrif && (!isDualRole || dualRoleMode === 'musyrif')
+                  ? 'Musyrif & Asrama'
+                  : principal
+                  ? 'Kepala Sekolah'
+                  : divisi
+                  ? 'Divisi Pendidikan'
+                  : isTuOnly
+                  ? 'Tata Usaha'
+                  : 'SIMSIT'}
+              </Text>
+              <Text numberOfLines={1} style={[styles.stickyBrandSub, (teacher || musyrif || principal || divisi) && { color: '#0D9488' }]}>
+                {teacher && (!isDualRole || dualRoleMode === 'teacher')
+                  ? teacherUnit
+                  : musyrif
+                  ? 'Pondok Pesantren Terpadu'
+                  : principal
+                  ? (teacherUnit || (user as any)?.education_unit?.name || 'Unit Sekolah')
+                  : divisi
+                  ? ((user as any)?.education_unit?.name || (user as any)?.employee?.education_unit?.name || 'Yayasan Dar El-Iman')
+                  : (mobileConfig.branding?.school_name || 'Yayasan Dar El-Iman')}
               </Text>
             </View>
           </View>
@@ -2564,10 +2693,20 @@ export default function HomeScreen({ navigation, route }: any) {
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => navigation.navigate('Notifikasi')}
-              style={styles.stickySquircleActionBtn}
+              style={[
+                styles.stickySquircleActionBtn,
+                (teacher || musyrif || principal || divisi) && {
+                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                  borderColor: '#CCFBF1',
+                },
+              ]}
               accessibilityLabel="Notifikasi"
             >
-              <MaterialCommunityIcons name="bell-outline" size={18} color="#FFFFFF" />
+              <MaterialCommunityIcons
+                name="bell-outline"
+                size={18}
+                color={(teacher || musyrif || principal || divisi) ? '#064E3B' : '#FFFFFF'}
+              />
               {unreadNotificationCount > 0 && <View style={styles.stickyBellBadgeDot} />}
             </TouchableOpacity>
 
@@ -2580,7 +2719,10 @@ export default function HomeScreen({ navigation, route }: any) {
                   navigation.navigate('Profil');
                 }
               }}
-              style={styles.stickyAvatarSquircleBtn}
+              style={[
+                styles.stickyAvatarSquircleBtn,
+                (teacher || principal || divisi) && { borderColor: '#A7F3D0', borderWidth: 2 },
+              ]}
               accessibilityLabel="Profil"
             >
               <Image source={stickyParentAvatarSource} style={styles.stickyTopAvatarImg} resizeMode="cover" />
@@ -2589,234 +2731,359 @@ export default function HomeScreen({ navigation, route }: any) {
         </View>
 
         {/* ── RICH CARD: ukuran kompak ala sticky halaman Jadwal ── */}
-        {(parent || student || teacher || tu || principal) && (
-          <View style={{ marginHorizontal: 12, marginTop: 6, marginBottom: 10 }}>
-            <LinearGradient
-              colors={['#0D6B42', '#18A165', '#2BD988']}
-              locations={[0, 0.55, 1]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[styles.studentMainCard, { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderRadius: 18 }]}
-            >
-              <View style={styles.cardDecorCircle} />
-
-              <View style={styles.studentCardTopRow}>
-                <TouchableOpacity
-                  activeOpacity={0.82}
-                  onPress={() => {
-                    if (parent && activeStudent) setSelectedIdCardStudent(activeStudent);
-                    else navigation.navigate('Profil');
-                  }}
-                  style={styles.stickyRichAvatarWrap}
-                >
-                  {(teacher || tu || principal) ? (
+        {(parent || student || teacher || tu) && !principal && !divisi && (
+          <View style={{ marginHorizontal: 12, marginTop: teacher ? 4 : 6, marginBottom: 10 }}>
+            {teacher ? (
+              <View
+                style={[
+                  styles.studentMainCard,
+                  {
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#A7F3D0',
+                    paddingHorizontal: 14,
+                    paddingTop: 10,
+                    paddingBottom: 10,
+                    borderRadius: 18,
+                    shadowColor: '#064E3B',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.06,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  },
+                ]}
+              >
+                <View style={styles.studentCardTopRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    onPress={() => navigation.navigate('Profil')}
+                    style={[styles.stickyRichAvatarWrap, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}
+                  >
                     <Image
                       source={stickyParentAvatarSource}
                       style={styles.stickyRichAvatarImg}
                       resizeMode="cover"
                     />
-                  ) : activeChildPhoto ? (
-                    <Image
-                      source={{ uri: activeChildPhoto }}
-                      style={styles.stickyRichAvatarImg}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <Image
-                      source={defaultStudentAvatar}
-                      style={styles.stickyRichAvatarImg}
-                      resizeMode="cover"
-                    />
-                  )}
-                </TouchableOpacity>
+                  </TouchableOpacity>
 
-                <View style={styles.stickyRichInfoCol}>
-                  <Text numberOfLines={1} style={styles.stickyRichStudentName}>
-                    {(teacher || tu || principal) ? (
-                      (() => {
-                        if (principal) return user?.name || (user as any)?.nama_lengkap || 'Kepala Sekolah';
-                        const td = dashboard?.teacher || dashboard?.data?.teacher || dashboard?.employee || {};
-                        return td?.jabatan || td?.position || roleLabel(roles, tu ? 'Tata Usaha' : 'Guru Pengajar');
-                      })()
-                    ) : (activeChildName || (student ? name : 'Siswa Terpilih'))}
-                  </Text>
-
-                  <Text numberOfLines={1} style={styles.stickyRichNisText}>
-                    {(teacher || tu || principal) ? `ID/NIP: ${teacherNip}` : `NIS: ${stickyActiveStudentNis} ${stickyStudentNisn !== '-' ? '· NISN: ' + stickyStudentNisn : ''}`}
-                  </Text>
-
-                  <View style={styles.stickyRichUnitBadge}>
-                    <MaterialCommunityIcons name="school" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
-                    <Text numberOfLines={1} style={styles.stickyRichUnitText}>
-                      {(teacher || tu || principal) ? teacherUnit : stickyBodyUnit}
+                  <View style={styles.stickyRichInfoCol}>
+                    <Text numberOfLines={1} style={[styles.stickyRichStudentName, { color: '#064E3B' }]}>
+                      {user?.name || (user as any)?.nama_lengkap || 'Guru Pengajar'}
                     </Text>
-                  </View>
-                  {(teacher || tu || principal) ? (
+
+                    <Text numberOfLines={1} style={[styles.stickyRichNisText, { color: '#047857' }]}>
+                      {`ID/NIP: ${teacherNip}`}
+                    </Text>
+
+                    <View style={[styles.stickyRichUnitBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', borderWidth: 1 }]}>
+                      <MaterialCommunityIcons name="school" size={10} color="#047857" style={{ marginRight: 3 }} />
+                      <Text numberOfLines={1} style={[styles.stickyRichUnitText, { color: '#065F46', fontWeight: '700' }]}>
+                        {teacherUnit}
+                      </Text>
+                    </View>
+
                     <View style={styles.stickyRichMetaRow}>
-                      <Text numberOfLines={1} style={styles.stickyRichMetaText}>
+                      <Text numberOfLines={1} style={[styles.stickyRichMetaText, { color: '#0D9488' }]}>
                         {(() => {
-                          if (principal) return 'Kepala Sekolah';
                           const td = dashboard?.teacher || dashboard?.data?.teacher || dashboard?.employee || {};
-                          return td?.jabatan || td?.position || roleLabel(roles, tu ? 'Tata Usaha' : 'Guru Pengajar');
+                          return td?.jabatan || td?.position || (user?.employee as any)?.position?.name || 'Guru Pengajar';
                         })()}
                       </Text>
-                      <Text style={styles.stickyRichMetaSep}> • </Text>
+                      <Text style={[styles.stickyRichMetaSep, { color: '#99F6E4' }]}> • </Text>
                       <View style={[styles.stickyRichPresensiDot, { backgroundColor: '#10B981', marginRight: 3 }]} />
-                      <Text numberOfLines={1} style={[styles.stickyRichMetaText, { color: '#A7F3D0', fontSize: 9 }]}>
+                      <Text numberOfLines={1} style={[styles.stickyRichMetaText, { color: '#059669', fontSize: 9, fontWeight: '700' }]}>
                         Aktif
                       </Text>
                     </View>
-                  ) : (stickyStudentKelas || stickyStudentJenjang) ? (
-                    <View style={styles.stickyRichMetaRow}>
-                      {stickyStudentKelas ? (
-                        <Text numberOfLines={1} style={styles.stickyRichMetaText}>
-                          {stickyStudentKelas}
-                        </Text>
-                      ) : null}
-                      {stickyStudentKelas && stickyStudentJenjang ? (
-                        <Text style={styles.stickyRichMetaSep}> • </Text>
-                      ) : null}
-                      {stickyStudentJenjang ? (
-                        <Text numberOfLines={1} style={styles.stickyRichMetaText}>
-                          {stickyStudentJenjang}
-                        </Text>
-                      ) : null}
-                      <Text style={styles.stickyRichMetaSep}> • </Text>
-                      <Text numberOfLines={1} style={styles.stickyRichMetaText}>
-                        {stickyRawPresensi}
-                      </Text>
-                      <View style={[styles.stickyRichPresensiDot, { backgroundColor: stickyPresensiDotColor }]} />
-                    </View>
-                  ) : null}
+                  </View>
+
+                  <View style={styles.stickyRichMiniActions}>
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => navigation.navigate('Notifikasi')}
+                      style={[styles.stickyMiniBtn, { backgroundColor: '#F0FDF4', borderColor: '#CCFBF1', borderWidth: 1 }]}
+                      accessibilityLabel="Notifikasi"
+                    >
+                      <MaterialCommunityIcons name="bell-ring-outline" size={16} color="#047857" />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => navigation.navigate('Jadwal')}
+                      style={[styles.stickyMiniBtn, { backgroundColor: '#F0FDF4', borderColor: '#CCFBF1', borderWidth: 1 }]}
+                      accessibilityLabel="Jadwal KBM"
+                    >
+                      <MaterialCommunityIcons name="calendar-clock" size={16} color="#047857" />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => navigation.navigate('QR Code')}
+                      style={[styles.stickyMiniBtn, { backgroundColor: '#F0FDF4', borderColor: '#CCFBF1', borderWidth: 1 }]}
+                      accessibilityLabel="Scan / Tampilkan QR"
+                    >
+                      <MaterialCommunityIcons name="qrcode-scan" size={16} color="#047857" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
-              <View style={styles.stickyRichMiniActions}>
-                <TouchableOpacity
-                  activeOpacity={0.75}
-                  onPress={() => {
-                    if (teacher || tu || principal) {
-                      navigation.navigate('Notifikasi');
-                    } else if (activeStudent) {
-                      void handleOpenStudentNotifications(activeStudent);
-                    }
-                  }}
-                  style={styles.stickyMiniBtn}
-                  accessibilityLabel={(teacher || tu || principal) ? 'Notifikasi' : 'Pengingat & Notifikasi Siswa'}
-                >
-                  <MaterialCommunityIcons name="bell-ring-outline" size={16} color="#059669" />
-                </TouchableOpacity>
+                <View style={styles.stickyQuickChipRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => navigation.navigate('Jadwal')}
+                    style={[styles.stickyQuickChip, { backgroundColor: '#F0FDF4', borderColor: '#A7F3D0', borderWidth: 1 }]}
+                  >
+                    <MaterialCommunityIcons name="calendar-month" size={11} color="#047857" />
+                    <Text style={[styles.stickyQuickChipText, { color: '#065F46', fontWeight: '700' }]}>Jadwal</Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  activeOpacity={0.75}
-                  onPress={() => {
-                    if (principal) {
-                      navigation.navigate('PrincipalDashboard');
-                    } else if (tu) {
-                      navigation.navigate('Data');
-                    } else if (teacher) {
-                      navigation.navigate('Jadwal');
-                    } else if (activeStudent) {
-                      void handleOpenWeeklyReport(activeStudent);
-                    }
-                  }}
-                  style={styles.stickyMiniBtn}
-                  accessibilityLabel={principal ? 'Dashboard Kepala Sekolah' : tu ? 'Pusat Data' : teacher ? 'Jadwal KBM' : 'Laporan Perkembangan Pekanan Siswa'}
-                >
-                  <MaterialCommunityIcons
-                    name={principal ? 'view-dashboard-outline' : tu ? 'database-outline' : teacher ? 'calendar-clock' : 'clipboard-text-outline'}
-                    size={16}
-                    color="#059669"
-                  />
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => navigation.navigate('Absensi')}
+                    style={[styles.stickyQuickChipSecondary, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', borderWidth: 1 }]}
+                  >
+                    <MaterialCommunityIcons name="clipboard-check" size={11} color="#2563EB" />
+                    <Text style={[styles.stickyQuickChipSecondaryText, { color: '#1D4ED8', fontWeight: '700' }]}>Presensi</Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  activeOpacity={0.75}
-                  onPress={() => {
-                    if (teacher || tu || principal) {
-                      navigation.navigate('QR Code');
-                    } else if (activeStudent) {
-                      setSelectedQrStudent(activeStudent);
-                    }
-                  }}
-                  style={styles.stickyMiniBtn}
-                  accessibilityLabel={(teacher || tu || principal) ? 'Scan / Tampilkan QR' : 'Tampilkan QR Code Siswa'}
-                >
-                  <MaterialCommunityIcons name="qrcode-scan" size={16} color="#059669" />
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => setShowAllMenusModal(true)}
+                    style={[styles.stickyQuickChipPrimary, { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF', borderWidth: 1 }]}
+                  >
+                    <MaterialCommunityIcons name="view-grid" size={11} color="#7C3AED" />
+                    <Text style={[styles.stickyQuickChipPrimaryText, { color: '#6D28D9', fontWeight: '700' }]}>Menu</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
+            ) : (
+              <LinearGradient
+                colors={['#0D6B42', '#18A165', '#2BD988']}
+                locations={[0, 0.55, 1]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.studentMainCard, { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderRadius: 18 }]}
+              >
+                <View style={styles.cardDecorCircle} />
 
-              <View style={styles.stickyQuickChipRow}>
-                <TouchableOpacity
-                  activeOpacity={0.78}
-                  onPress={() => {
-                    if (principal) {
-                      navigation.navigate('PrincipalDashboard');
-                    } else if (teacher || tu) {
-                      navigation.navigate('Jadwal');
-                    } else {
-                      if (!activeStudent) return;
-                      setIdCardSide('front');
-                      setSelectedIdCardStudent(activeStudent);
-                    }
-                  }}
-                  style={styles.stickyQuickChip}
-                >
-                  <MaterialCommunityIcons
-                    name={principal ? 'view-dashboard' : (teacher || tu) ? 'calendar-month' : 'card-account-details'}
-                    size={11}
-                    color="#059669"
-                  />
-                  <Text style={styles.stickyQuickChipText}>
-                    {principal ? 'Dashboard KS' : (teacher || tu) ? 'Jadwal' : 'Kartu Siswa'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.78}
-                  onPress={() => {
-                    if (principal) {
-                      navigation.navigate('RekapPresensiSiswa');
-                    } else if (teacher || tu) {
-                      navigation.navigate('Absensi');
-                    } else {
-                      if (!activeStudent) return;
-                      const sid = String(activeStudent.id || activeStudent.student_id);
-                      navigation.navigate('Kalender', { child_id: sid, student_id: sid });
-                    }
-                  }}
-                  style={styles.stickyQuickChipSecondary}
-                >
-                  <MaterialCommunityIcons
-                    name={(teacher || tu || principal) ? 'clipboard-check' : 'calendar-month'}
-                    size={11}
-                    color="#2563EB"
-                  />
-                  <Text style={styles.stickyQuickChipSecondaryText}>
-                    {principal ? 'Rekap Absen' : (teacher || tu) ? 'Presensi' : 'Kalender'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.78}
-                  onPress={() => {
-                    if (teacher || tu || principal) {
-                      setShowAllMenusModal(true);
-                    } else {
-                      if (!activeStudent) return;
-                      setSelectedPortalChild(activeStudent);
-                      const sid = activeStudent?.id || activeStudent?.student_id;
-                      if (sid) {
-                        useActiveChildStore.getState().setActiveChildId(sid);
+                <View style={styles.studentCardTopRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    onPress={() => {
+                      if (parent && activeStudent) setSelectedIdCardStudent(activeStudent);
+                      else navigation.navigate('Profil');
+                    }}
+                    style={styles.stickyRichAvatarWrap}
+                  >
+                    {(teacher || tu || principal) ? (
+                      <Image
+                        source={stickyParentAvatarSource}
+                        style={styles.stickyRichAvatarImg}
+                        resizeMode="cover"
+                      />
+                    ) : activeChildPhoto ? (
+                      <Image
+                        source={{ uri: activeChildPhoto }}
+                        style={styles.stickyRichAvatarImg}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <Image
+                        source={defaultStudentAvatar}
+                        style={styles.stickyRichAvatarImg}
+                        resizeMode="cover"
+                      />
+                    )}
+                  </TouchableOpacity>
+
+                  <View style={styles.stickyRichInfoCol}>
+                    <Text numberOfLines={1} style={styles.stickyRichStudentName}>
+                      {(teacher || tu || principal) ? (
+                        (() => {
+                          if (principal) return user?.name || (user as any)?.nama_lengkap || 'Kepala Sekolah';
+                          const td = dashboard?.teacher || dashboard?.data?.teacher || dashboard?.employee || {};
+                          return td?.jabatan || td?.position || roleLabel(roles, tu ? 'Tata Usaha' : 'Guru Pengajar');
+                        })()
+                      ) : (activeChildName || (student ? name : 'Siswa Terpilih'))}
+                    </Text>
+
+                    <Text numberOfLines={1} style={styles.stickyRichNisText}>
+                      {(teacher || tu || principal) ? `ID/NIP: ${teacherNip}` : `NIS: ${stickyActiveStudentNis} ${stickyStudentNisn !== '-' ? '· NISN: ' + stickyStudentNisn : ''}`}
+                    </Text>
+
+                    <View style={styles.stickyRichUnitBadge}>
+                      <MaterialCommunityIcons name="school" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
+                      <Text numberOfLines={1} style={styles.stickyRichUnitText}>
+                        {(teacher || tu || principal) ? teacherUnit : stickyBodyUnit}
+                      </Text>
+                    </View>
+                    {(teacher || tu || principal) ? (
+                      <View style={styles.stickyRichMetaRow}>
+                        <Text numberOfLines={1} style={styles.stickyRichMetaText}>
+                          {(() => {
+                            if (principal) return 'Kepala Sekolah';
+                            const td = dashboard?.teacher || dashboard?.data?.teacher || dashboard?.employee || {};
+                            return td?.jabatan || td?.position || roleLabel(roles, tu ? 'Tata Usaha' : 'Guru Pengajar');
+                          })()}
+                        </Text>
+                        <Text style={styles.stickyRichMetaSep}> • </Text>
+                        <View style={[styles.stickyRichPresensiDot, { backgroundColor: '#10B981', marginRight: 3 }]} />
+                        <Text numberOfLines={1} style={[styles.stickyRichMetaText, { color: '#A7F3D0', fontSize: 9 }]}>
+                          Aktif
+                        </Text>
+                      </View>
+                    ) : (stickyStudentKelas || stickyStudentJenjang) ? (
+                      <View style={styles.stickyRichMetaRow}>
+                        {stickyStudentKelas ? (
+                          <Text numberOfLines={1} style={styles.stickyRichMetaText}>
+                            {stickyStudentKelas}
+                          </Text>
+                        ) : null}
+                        {stickyStudentKelas && stickyStudentJenjang ? (
+                          <Text style={styles.stickyRichMetaSep}> • </Text>
+                        ) : null}
+                        {stickyStudentJenjang ? (
+                          <Text numberOfLines={1} style={styles.stickyRichMetaText}>
+                            {stickyStudentJenjang}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.stickyRichMetaSep}> • </Text>
+                        <Text numberOfLines={1} style={styles.stickyRichMetaText}>
+                          {stickyRawPresensi}
+                        </Text>
+                        <View style={[styles.stickyRichPresensiDot, { backgroundColor: stickyPresensiDotColor }]} />
+                      </View>
+                    ) : null}
+                  </View>
+
+                <View style={styles.stickyRichMiniActions}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      if (teacher || tu || principal) {
+                        navigation.navigate('Notifikasi');
+                      } else if (activeStudent) {
+                        void handleOpenStudentNotifications(activeStudent);
                       }
-                      setShowChildPortalModal(true);
-                    }
-                  }}
-                  style={styles.stickyQuickChipPrimary}
-                >
-                  <MaterialCommunityIcons name="view-grid" size={11} color="#7C3AED" />
-                  <Text style={styles.stickyQuickChipPrimaryText}>Menu</Text>
-                </TouchableOpacity>
+                    }}
+                    style={styles.stickyMiniBtn}
+                    accessibilityLabel={(teacher || tu || principal) ? 'Notifikasi' : 'Pengingat & Notifikasi Siswa'}
+                  >
+                    <MaterialCommunityIcons name="bell-ring-outline" size={16} color="#059669" />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      if (principal) {
+                        navigation.navigate('PrincipalDashboard');
+                      } else if (tu) {
+                        navigation.navigate('Data');
+                      } else if (teacher) {
+                        navigation.navigate('Jadwal');
+                      } else if (activeStudent) {
+                        void handleOpenWeeklyReport(activeStudent);
+                      }
+                    }}
+                    style={styles.stickyMiniBtn}
+                    accessibilityLabel={principal ? 'Dashboard Kepala Sekolah' : tu ? 'Pusat Data' : teacher ? 'Jadwal KBM' : 'Laporan Perkembangan Pekanan Siswa'}
+                  >
+                    <MaterialCommunityIcons
+                      name={principal ? 'view-dashboard-outline' : tu ? 'database-outline' : teacher ? 'calendar-clock' : 'clipboard-text-outline'}
+                      size={16}
+                      color="#059669"
+                    />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      if (teacher || tu || principal) {
+                        navigation.navigate('QR Code');
+                      } else if (activeStudent) {
+                        setSelectedQrStudent(activeStudent);
+                      }
+                    }}
+                    style={styles.stickyMiniBtn}
+                    accessibilityLabel={(teacher || tu || principal) ? 'Scan / Tampilkan QR' : 'Tampilkan QR Code Siswa'}
+                  >
+                    <MaterialCommunityIcons name="qrcode-scan" size={16} color="#059669" />
+                  </TouchableOpacity>
+                </View>
               </View>
-            </LinearGradient>
+
+                <View style={styles.stickyQuickChipRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => {
+                      if (principal) {
+                        navigation.navigate('PrincipalDashboard');
+                      } else if (teacher || tu) {
+                        navigation.navigate('Jadwal');
+                      } else {
+                        if (!activeStudent) return;
+                        setIdCardSide('front');
+                        setSelectedIdCardStudent(activeStudent);
+                      }
+                    }}
+                    style={styles.stickyQuickChip}
+                  >
+                    <MaterialCommunityIcons
+                      name={principal ? 'view-dashboard' : (teacher || tu) ? 'calendar-month' : 'card-account-details'}
+                      size={11}
+                      color="#059669"
+                    />
+                    <Text style={styles.stickyQuickChipText}>
+                      {principal ? 'Dashboard KS' : (teacher || tu) ? 'Jadwal' : 'Kartu Siswa'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => {
+                      if (principal) {
+                        navigation.navigate('RekapPresensiSiswa');
+                      } else if (teacher || tu) {
+                        navigation.navigate('Absensi');
+                      } else {
+                        if (!activeStudent) return;
+                        const sid = String(activeStudent.id || activeStudent.student_id);
+                        navigation.navigate('Kalender', { child_id: sid, student_id: sid });
+                      }
+                    }}
+                    style={styles.stickyQuickChipSecondary}
+                  >
+                    <MaterialCommunityIcons
+                      name={(teacher || tu || principal) ? 'clipboard-check' : 'calendar-month'}
+                      size={11}
+                      color="#2563EB"
+                    />
+                    <Text style={styles.stickyQuickChipSecondaryText}>
+                      {principal ? 'Rekap Absen' : (teacher || tu) ? 'Presensi' : 'Kalender'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => {
+                      if (teacher || tu || principal) {
+                        setShowAllMenusModal(true);
+                      } else {
+                        if (!activeStudent) return;
+                        setSelectedPortalChild(activeStudent);
+                        const sid = activeStudent?.id || activeStudent?.student_id;
+                        if (sid) {
+                          useActiveChildStore.getState().setActiveChildId(sid);
+                        }
+                        setShowChildPortalModal(true);
+                      }
+                    }}
+                    style={styles.stickyQuickChipPrimary}
+                  >
+                    <MaterialCommunityIcons name="view-grid" size={11} color="#7C3AED" />
+                    <Text style={styles.stickyQuickChipPrimaryText}>Menu</Text>
+                  </TouchableOpacity>
+                </View>
+              </LinearGradient>
+            )}
           </View>
         )}
 
@@ -2826,8 +3093,8 @@ export default function HomeScreen({ navigation, route }: any) {
       {/* 2. MAIN SCROLLABLE DASHBOARD BODY */}
       <Animated.ScrollView
         ref={mainScrollViewRef}
-        style={[styles.screen, (parent || isTuOnly) && { backgroundColor: '#F0FDF4' }]}
-        contentContainerStyle={[styles.mainScrollContent, (parent || isTuOnly) && { backgroundColor: '#F0FDF4' }]}
+        style={[styles.screen, (parent || isTuOnly || teacher || principal || divisi) && { backgroundColor: '#F0FDF4' }]}
+        contentContainerStyle={[styles.mainScrollContent, (parent || isTuOnly || teacher || principal || divisi) && { backgroundColor: '#F0FDF4', paddingBottom: bottomInset + 130 }]}
         onScroll={mainScrollHandler}
         scrollEventThrottle={16}
         nestedScrollEnabled={true}
@@ -3878,6 +4145,86 @@ export default function HomeScreen({ navigation, route }: any) {
             topInset={topInset}
             unreadNotificationCount={unreadNotificationCount}
           />
+        ) : principal ? (
+          /* ============================================================ */
+          /* HALAMAN UTAMA ROLE KEPALA SEKOLAH (EXECUTIVE DASHBOARD)      */
+          /* Top bar, Greeting, KPI Sekolah, Monitoring Presensi & Guru   */
+          /* ============================================================ */
+          <PrincipalHomeScreenView
+            user={user}
+            dashboard={dashboard}
+            navigation={navigation}
+            announcements={announcements}
+            topInset={topInset}
+            unreadNotificationCount={unreadNotificationCount}
+            onOpenAllMenus={() => setShowAllMenusModal(true)}
+          />
+        ) : divisi ? (
+          /* ============================================================ */
+          /* HALAMAN UTAMA ROLE DIVISI PENDIDIKAN (KONSOLIDASI & SUPERVISI)*/
+          /* Style 100% Selaras Kepala Sekolah, Isi Asli Divisi Pendidikan */
+          /* ============================================================ */
+          <DivisiHomeScreenView
+            user={user}
+            dashboard={dashboard}
+            navigation={navigation}
+            announcements={announcements}
+            topInset={topInset}
+            unreadNotificationCount={unreadNotificationCount}
+            onOpenAllMenus={() => setShowAllMenusModal(true)}
+          />
+        ) : (isDualRole && !isDualRoleWorkspaceActive) ? (
+          /* ============================================================ */
+          /* GERBANG PEMILIHAN RUANG KERJA DUAL-ROLE GURU & MUSYRIF       */
+          /* Tiru 100% UI/UX Halaman Awal Orang Tua (Model A) Tanpa Hardcode */
+          /* ============================================================ */
+          <DualRoleLandingGate
+            user={user}
+            dashboard={dashboard}
+            mobileConfig={mobileConfig}
+            navigation={navigation}
+            topInset={topInset}
+            unreadNotificationCount={unreadNotificationCount}
+            onOpenNotifications={() => {
+              setUnreadNotificationCount(0);
+              setShowNotificationModal(true);
+            }}
+            announcements={unitFilteredAnnouncements}
+            onSelectRole={(role) => {
+              setDualRoleMode(role);
+              setIsDualRoleWorkspaceActive(true);
+            }}
+          />
+        ) : (teacher && (!isDualRole || dualRoleMode === 'teacher') && !principal) ? (
+          /* ============================================================ */
+          /* HALAMAN UTAMA ROLE GURU & AKADEMIK (SELARAS 100% DENGAN TU)  */
+          /* Top bar, Greeting, Date Pill, Background Masjid Light Mode   */
+          /* ============================================================ */
+          <TeacherDashboardView
+            dashboard={dashboard}
+            navigation={navigation}
+            announcements={announcements}
+            onOpenAllMenus={() => setShowAllMenusModal(true)}
+            topInset={topInset}
+            unreadNotificationCount={unreadNotificationCount}
+            isDualRole={isDualRole}
+            onSwitchDualRole={() => setIsDualRoleWorkspaceActive(false)}
+          />
+        ) : (isMusyrifActive && !principal) ? (
+          /* ============================================================ */
+          /* HALAMAN UTAMA ROLE MUSYRIF ASRAMA (SELARAS 100% TU & GURU)   */
+          /* Top bar, Greeting, Date Pill, Background Masjid Light Mode   */
+          /* ============================================================ */
+          <MusyrifHomeScreenView
+            user={user}
+            dashboard={dashboard}
+            navigation={navigation}
+            announcements={announcements}
+            topInset={topInset}
+            unreadNotificationCount={unreadNotificationCount}
+            isDualRole={isDualRole}
+            onSwitchDualRole={() => setIsDualRoleWorkspaceActive(false)}
+          />
         ) : (
           <View style={[styles.extendedHeaderGradient, { paddingTop: topInset + 8 }]}>
             {/* Latar Belakang Gambar Gedung Sekolah & Kubah Masjid (Splash Screen 2) */}
@@ -4089,15 +4436,47 @@ export default function HomeScreen({ navigation, route }: any) {
               </Animated.View>
             )}
 
-            {/* SECTION: Kartu Identitas Pegawai / Guru / Pimpinan (Di dalam Header Hijau Penuh) */}
+            {/* SECTION: Kartu Identitas Pegawai / Guru / Musyrif / Pimpinan */}
             {(!parent && !student && !alumni) && (
-              <EmployeeHeaderCard
-                user={user}
-                dashboard={dashboard}
-                roles={roles}
-                navigation={navigation}
-                onOpenAllMenus={() => setShowAllMenusModal(true)}
-              />
+              <>
+                {/* Tombol Kembali / Ganti Ruang Kerja (Khusus Akun Dual-Role Aktif) */}
+                {isDualRole && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setIsDualRoleWorkspaceActive(false)}
+                    style={{
+                      marginHorizontal: 16,
+                      marginTop: 2,
+                      marginBottom: 10,
+                      backgroundColor: 'rgba(0, 0, 0, 0.24)',
+                      borderRadius: 14,
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.3)',
+                      gap: 8,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="arrow-left" size={18} color="#FFFFFF" />
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF', flex: 1 }}>
+                      Ruang Aktif: {dualRoleMode === 'teacher' ? 'Guru & Akademik' : 'Musyrif Asrama'}
+                    </Text>
+                    <View style={{ backgroundColor: '#FFFFFF', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 8 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#059669' }}>Ganti Ruang</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                <EmployeeHeaderCard
+                  user={user}
+                  dashboard={dashboard}
+                  roles={roles}
+                  navigation={navigation}
+                  onOpenAllMenus={() => setShowAllMenusModal(true)}
+                />
+              </>
             )}
           </View>
         )}
@@ -4106,22 +4485,10 @@ export default function HomeScreen({ navigation, route }: any) {
         {/* SHEET PUTIH/SLATE: Melengkung Dimulai Tepat di Bawah Anak    */}
         {/* Body otomatis bergeser ke bawah saat sticky header aktif      */}
         {/* ============================================================ */}
-        {(!parent && !isTuOnly) && (
+        {(!parent && !isTuOnly && !teacher && !principal && !divisi && !(isDualRole && !isDualRoleWorkspaceActive)) && (
           <Animated.View style={styles.curvedSheetBody}>
 
-
-        {teacher && !principal ? (
-          /* ============================================================ */
-          /* DASHBOARD PENDIDIK / GURU TERPADU SESUAI MOCKUP GAMBAR       */
-          /* 4 KPI Cards, Timeline Jadwal Hari Ini, 12 Menu Utama, Notif  */
-          /* ============================================================ */
-          <TeacherDashboardView
-            dashboard={dashboard}
-            navigation={navigation}
-            announcements={announcements}
-            onOpenAllMenus={() => setShowAllMenusModal(true)}
-          />
-        ) : tu && !principal && !foundation && !superAdmin && !divisi ? (
+        {tu && !principal && !foundation && !superAdmin && !divisi ? (
           /* ============================================================ */
           /* DASHBOARD TATA USAHA TERPADU (Satu Pintu Menu & KPI Lengkap) */
           /* ============================================================ */
@@ -4199,6 +4566,97 @@ export default function HomeScreen({ navigation, route }: any) {
                 <MaterialCommunityIcons name="chevron-right" size={22} color="#059669" />
               </TouchableOpacity>
             )}
+
+            {/* CARD PUSAT ASRAMA & KEPULANGAN (KHUSUS MODE MUSYRIF) */}
+            {musyrif && (!isDualRole || dualRoleMode === 'musyrif') && (
+              <TouchableOpacity
+                activeOpacity={0.88}
+                onPress={() => navigation.navigate('Absensi', { tab: 'boarding' })}
+                style={{
+                  marginHorizontal: 16,
+                  marginTop: 4,
+                  marginBottom: 12,
+                  borderRadius: 20,
+                  overflow: 'hidden',
+                  borderWidth: 1.5,
+                  borderColor: '#A7F3D0',
+                  shadowColor: '#059669',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.12,
+                  shadowRadius: 10,
+                  elevation: 3,
+                }}
+              >
+                <LinearGradient
+                  colors={['#ECFDF5', '#F0FDF4']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={{
+                    padding: 15,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                  }}
+                >
+                  <LinearGradient
+                    colors={['#059669', '#0D9488']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{
+                      width: 46,
+                      height: 46,
+                      borderRadius: 15,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: 13,
+                      shadowColor: '#059669',
+                      shadowOffset: { width: 0, height: 3 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 5,
+                      elevation: 3,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="home-account" size={26} color="#FFFFFF" />
+                  </LinearGradient>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <Text style={{ fontSize: 14.5, fontWeight: '800', color: '#064E3B', letterSpacing: -0.2 }}>
+                        Pusat Asrama & Kepulangan
+                      </Text>
+                      <View
+                        style={{
+                          backgroundColor: '#059669',
+                          paddingHorizontal: 7,
+                          paddingVertical: 1.5,
+                          borderRadius: 7,
+                        }}
+                      >
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: '#FFFFFF' }}>
+                          PESANTREN
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 11.5, color: '#047857', fontWeight: '500', lineHeight: 15 }}>
+                      Presensi sholat 5 waktu, izin kepulangan santri & check-in
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                      <View style={{ backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 9.5, fontWeight: '700', color: '#065F46' }}>Absensi Sholat</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#E0F2FE', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 9.5, fontWeight: '700', color: '#0369A1' }}>Izin Santri</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 9.5, fontWeight: '700', color: '#92400E' }}>Kamar Binaan</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: 'rgba(5, 150, 105, 0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                    <MaterialCommunityIcons name="chevron-right" size={20} color="#059669" />
+                  </View>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+
             {!parent && (
             <View style={styles.menuCardContainer}>
             {/* Baris Utama (Tepat 4 Ikon per Baris) */}
@@ -5119,7 +5577,7 @@ export default function HomeScreen({ navigation, route }: any) {
         {/* ============================================================ */}
         {(!parent && !student && !alumni) && (
           <>
-            {(foundation || superAdmin || divisi) && (
+            {(foundation || superAdmin) && (
               <FoundationDashboardView dashboard={dashboard} navigation={navigation} />
             )}
             {/* Staff generik (Operator, dll) */}
@@ -5130,7 +5588,7 @@ export default function HomeScreen({ navigation, route }: any) {
         )}
 
         {/* SECTION: Berita & Informasi (Harmonized Emerald Card Container & List Content) */}
-        {!parent && !teacher && !principal && (
+        {!parent && !teacher && !principal && !divisi && (
           <View style={[styles.homeWidgetCardContainer, styles.homeWidgetCardContainerEmerald]}>
             {/* Header Card: Background Pastel Banner, Solid Emerald Squircle Icon, White Icon, Subtitle, Action Badge */}
             <View style={[styles.homeWidgetCardHeaderRow, styles.homeWidgetCardHeaderRowEmerald]}>
@@ -9292,15 +9750,14 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 999,
     overflow: 'hidden',
-    // Tepi bawah LURUS (radius dihapus): peran kurva dikembalikan seperti bodi —
-    // header hijau lurus, sheet putih yang melengkung. Radius bawah di sini
-    // justru membalik susunan itu (terlihat terbalik).
-    // Bayangan DIHAPUS total sesuai permintaan (opacity 0 + elevation 0).
+    borderBottomLeftRadius: 22,
+    borderBottomRightRadius: 22,
+    backgroundColor: '#F0FDF4',
     shadowColor: '#003822',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    elevation: 0,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 6,
   },
   stickyDecorCircle1: {
     position: 'absolute',
@@ -10024,7 +10481,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(13, 107, 66, 0.3)',
   },
   curvedSheetBody: {
-    backgroundColor: '#F8FAF9',
+    backgroundColor: '#ECFDF5',
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     marginTop: 0,

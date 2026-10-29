@@ -95,6 +95,22 @@ export type MobileOnboardingConfig = {
   slides: OnboardingSlide[];
 };
 
+export type MobileMenuItem = {
+  id: string;
+  label: string;
+  label_web?: string;
+  icon: string;
+  icon_web?: string;
+  color: string;
+  bg: string;
+  route: string;
+  tab?: string;
+  badge?: string;
+  order: number;
+  enabled: boolean;
+  is_active?: boolean;
+};
+
 export type MobileAppConfig = {
   platform: 'android';
   version: number;
@@ -117,6 +133,7 @@ export type MobileAppConfig = {
       sections: MobileLayoutSection[];
     }
   >;
+  role_menus?: Record<string, MobileMenuItem[]>;
   features: MobileFeatureFlags;
   system: MobileSystemConfig;
   onboarding: MobileOnboardingConfig;
@@ -126,6 +143,7 @@ export type MobileAppConfig = {
 export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
   platform: 'android',
   version: 1,
+  mapbox_token: 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A',
   theme: {
     primary_color: '#0E5C44',
     secondary_color: '#10B981',
@@ -216,7 +234,7 @@ export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
       'Sistem sedang dalam pemeliharaan rutin. Silakan coba beberapa saat lagi.',
     force_update: false,
     update_url: 'https://play.google.com/store/apps/details?id=id.sch.dareliman.simsit',
-    mapbox_token: undefined,
+    mapbox_token: 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A',
   },
   onboarding: {
     enabled: true,
@@ -283,6 +301,7 @@ export const mergeConfig = (value?: Partial<MobileAppConfig>): MobileAppConfig =
       ...DEFAULT_MOBILE_CONFIG.role_home_layouts,
       ...(value?.role_home_layouts || {}),
     },
+    role_menus: value?.role_menus ?? DEFAULT_MOBILE_CONFIG.role_menus,
     features: { ...DEFAULT_MOBILE_CONFIG.features, ...(value?.features || {}) },
     onboarding: {
       enabled: value?.onboarding?.enabled ?? DEFAULT_MOBILE_CONFIG.onboarding.enabled,

@@ -104,6 +104,12 @@ export const mobileApiService = {
   getPrincipalDashboard: async (params: ListParams = {}) => (
     await api.get('/dashboard/kepala-sekolah', { params })
   ).data,
+  getDivisiPendidikanDashboard: async (params: ListParams = {}) => (
+    await api.get('/dashboard/divisi-pendidikan', { params })
+  ).data,
+  getDivisiPendidikanKpiDetail: async (type: string, params: ListParams = {}) => (
+    await api.get(`/dashboard/divisi-pendidikan/kpi/${type}`, { params })
+  ).data,
   submitPrincipalMonthlyReport: async (payload: Record<string, unknown>) => (
     await api.post('/dashboard-pemantauan/laporan-bulanan', payload)
   ).data,
@@ -554,6 +560,55 @@ export const mobileApiService = {
   requestDormitoryExtension: async (permitId: string, payload: { requested_return_at: string; reason: string }) => (
     await api.post(`/portal/dormitory-permits/${permitId}/request-extension`, payload)
   ).data,
+  dropoffDormitoryReturn: async (payload: {
+    child_id: string;
+    latitude?: number;
+    longitude?: number;
+    location?: string;
+    notes?: string;
+    guardian_name?: string;
+  }) => (
+    await api.post('/portal/dormitory-permits/return-dropoff', payload)
+  ).data,
+
+  // ── Musyrif & Boarding Management API Endpoints ──
+  getMusyrifPermits: async (params?: { status?: string; search?: string }) => (
+    await api.get('/musyrif/permits', { params })
+  ).data,
+  batchScheduleDormitory: async (payload: {
+    unit_pendidikan_id?: string;
+    rombel_id?: string;
+    permit_type: string;
+    scheduled_departure_at: string;
+    scheduled_return_at: string;
+    destination?: string;
+    notes?: string;
+  }) => (
+    await api.post('/musyrif/permits/batch-schedule', payload)
+  ).data,
+  emergencyExitDormitory: async (payload: {
+    student_id: string;
+    medical_complaint: string;
+    medical_destination: string;
+    medical_escort_name: string;
+    guardian_phone?: string;
+    estimated_hours?: number;
+  }) => (
+    await api.post('/musyrif/permits/emergency-exit', payload)
+  ).data,
+  checkoutDormitoryPermit: async (permitId: string) => (
+    await api.post(`/musyrif/permits/${permitId}/checkout`)
+  ).data,
+  checkinDormitoryPermit: async (permitId: string, payload?: { notes?: string }) => (
+    await api.post(`/musyrif/permits/${permitId}/return-checkin`, payload)
+  ).data,
+  reviewDormitoryExtension: async (permitId: string, payload: { action: 'approve' | 'reject'; new_scheduled_return_at?: string; admin_notes?: string }) => (
+    await api.post(`/musyrif/permits/${permitId}/review-extension`, payload)
+  ).data,
+  getMusyrifStudents: async () => (
+    await api.get('/musyrif/students')
+  ).data,
+
   getAcademicCalendar: async (params?: { range?: string; date?: string; child_id?: string }) => (
     await api.get('/portal/academic-calendar', {
       params,
@@ -766,6 +821,7 @@ export const mobileApiService = {
     date: string;
     meeting_number: number;
     topic: string;
+    meeting_notes?: string;
     method?: string;
     students: Array<{
       student_id: string | number;
@@ -1037,7 +1093,15 @@ export const mobileApiService = {
   ajukanTelaahLmsMateri: async (id: string | number, catatan?: string) => (
     await api.post(`/lms/materi/${id}/ajukan-telaah`, { catatan })
   ).data,
-  supervisiLmsMateri: async (id: string | number, payload: { status_supervisi: string; catatan_koreksi?: string }) => (
+  supervisiLmsMateri: async (
+    id: string | number,
+    payload: {
+      status?: string;
+      status_supervisi?: string;
+      catatan?: string;
+      catatan_koreksi?: string;
+    }
+  ) => (
     await api.post(`/lms/materi/${id}/supervisi`, payload)
   ).data,
   getLmsMateriSupervisiLogs: async (id: string | number) => (
@@ -1135,5 +1199,51 @@ export const mobileApiService = {
   // Site Settings & Portal FAQs
   getSiteSettings: async () => (
     await api.get('/site-settings')
+  ).data,
+
+  // LMS Penilaian (Master Rekap Nilai Akademik)
+  getLmsPenilaianList: async (params: ListParams = {}) => (
+    await api.get('/lms/penilaian', { params })
+  ).data,
+  getLmsPenilaianStats: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/penilaian/stats', { params })
+  ).data,
+  getLmsPenilaianOptions: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/penilaian/options', { params })
+  ).data,
+  calculateAutoLmsPenilaian: async (payload: Record<string, unknown>) => (
+    await api.post('/lms/penilaian/calculate-auto', payload)
+  ).data,
+  getLmsPenilaianDetail: async (id: string) => (
+    await api.get(`/lms/penilaian/${id}`)
+  ).data,
+  updateLmsPenilaian: async (id: string, payload: Record<string, unknown>) => (
+    await api.put(`/lms/penilaian/${id}`, payload)
+  ).data,
+  deleteLmsPenilaian: async (id: string) => (
+    await api.delete(`/lms/penilaian/${id}`)
+  ).data,
+
+  // LMS Rapor (Rapor Santri Digital)
+  getLmsRaporList: async (params: ListParams = {}) => (
+    await api.get('/lms/rapor', { params })
+  ).data,
+  getLmsRaporStats: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/rapor/stats', { params })
+  ).data,
+  getLmsRaporOptions: async (params: Record<string, unknown> = {}) => (
+    await api.get('/lms/rapor/options', { params })
+  ).data,
+  getLmsRaporDetail: async (id: string) => (
+    await api.get(`/lms/rapor/${id}`)
+  ).data,
+  generateClassLmsRapor: async (payload: { kelas_id: string; semester_id: string; tahun_ajaran_id?: string }) => (
+    await api.post('/lms/rapor/generate-class', payload)
+  ).data,
+  approveLmsRapor: async (id: string) => (
+    await api.post(`/lms/rapor/${id}/approve`)
+  ).data,
+  publishLmsRapor: async (id: string) => (
+    await api.post(`/lms/rapor/${id}/publish`)
   ).data,
 };

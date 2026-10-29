@@ -31,6 +31,8 @@ import InAppEmbedModal from '../InAppEmbedModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
+
 const getSubjectStyle = (name?: string) => {
   const norm = (name || '').toLowerCase();
   if (norm.includes('matematik') || norm.includes('math') || norm.includes('hitung')) {
@@ -105,7 +107,8 @@ export default function TeacherAssignmentWorkspace({
   // ── Role & Scoping Tata Usaha (TU) vs Guru Pengampu ──
   const isTu = isTuRole(user?.roles || []);
   const isTeacher = isTeacherRole(user?.roles || []);
-  const isStaff = isTu || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
+  const isPrincipal = isPrincipalRole(user?.roles || []);
+  const isStaff = isTu || isPrincipal || isSuperAdminRole(user?.roles || []);
 
   const currentUserUnitId = useMemo(() => {
     return (
@@ -1688,6 +1691,24 @@ export default function TeacherAssignmentWorkspace({
 
   return (
     <View style={styles.container}>
+      {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH (IDENTIK HALAMAN BAHAN AJAR & JADWAL, JERNIH & CRISP) ── */}
+      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.topFoliageBgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={[
+            'rgba(240, 253, 244, 0)',
+            'rgba(240, 253, 244, 0.50)',
+            '#F0FDF4',
+          ]}
+          locations={[0.45, 0.78, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
       {/* ── 1. STICKY HEADER (Muncul hanya saat di-scroll) ── */}
       <Animated.View
         pointerEvents={isStickyActive ? 'auto' : 'none'}
@@ -1743,7 +1764,7 @@ export default function TeacherAssignmentWorkspace({
                 <MaterialCommunityIcons name="printer-outline" size={15} color="#047857" />
               </TouchableOpacity>
             )}
-            {activeTab === 'assignments' && (
+            {activeTab === 'assignments' && (!isPrincipal || isTeacher) && (
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={handleOpenCreateAssignment}
@@ -1816,7 +1837,7 @@ export default function TeacherAssignmentWorkspace({
         style={styles.screen}
         contentContainerStyle={[
           styles.mainScrollContent,
-          { paddingBottom: Math.max(insets.bottom + 80, 100) },
+          { paddingBottom: Math.max(insets.bottom + 120, 140) },
         ]}
         onScroll={handleMainScroll}
         scrollEventThrottle={16}
@@ -1852,7 +1873,7 @@ export default function TeacherAssignmentWorkspace({
                   <View style={styles.tuRolePill}>
                     <MaterialCommunityIcons name="shield-account" size={11} color="#047857" style={{ marginRight: 4 }} />
                     <Text numberOfLines={1} style={styles.tuRolePillText}>
-                      TATA USAHA · {currentUserUnitName.toUpperCase()}
+                      {isPrincipal ? 'KEPALA SEKOLAH' : 'TATA USAHA'} · {currentUserUnitName.toUpperCase()}
                     </Text>
                   </View>
                   <Text numberOfLines={1} style={styles.staticSubtitle}>
@@ -1961,14 +1982,14 @@ export default function TeacherAssignmentWorkspace({
           ) : (
             <View style={styles.metricsCardWrapper}>
               <LinearGradient
-                colors={['#047857', '#059669', '#10B981']}
+                colors={['rgba(255, 255, 255, 0.94)', 'rgba(236, 253, 245, 0.88)']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.metricsGradient}
               >
                 <View style={styles.metricCol}>
                   <View style={styles.metricTopRow}>
-                    <MaterialCommunityIcons name="clipboard-text-outline" size={16} color="#FFFFFF" />
+                    <MaterialCommunityIcons name="clipboard-text-outline" size={16} color="#059669" />
                     <Text style={styles.metricValWhite}>{assignments.length}</Text>
                   </View>
                   <Text style={styles.metricLblWhite}>Tugas Aktif</Text>
@@ -1978,7 +1999,7 @@ export default function TeacherAssignmentWorkspace({
 
                 <View style={styles.metricCol}>
                   <View style={styles.metricTopRow}>
-                    <MaterialCommunityIcons name="account-check-outline" size={16} color="#FFFFFF" />
+                    <MaterialCommunityIcons name="account-check-outline" size={16} color="#059669" />
                     <Text style={styles.metricValWhite}>{submissions.length}</Text>
                   </View>
                   <Text style={styles.metricLblWhite}>Kiriman Santri</Text>
@@ -1988,7 +2009,7 @@ export default function TeacherAssignmentWorkspace({
 
                 <View style={styles.metricCol}>
                   <View style={styles.metricTopRow}>
-                    <MaterialCommunityIcons name="google-classroom" size={16} color="#FFFFFF" />
+                    <MaterialCommunityIcons name="google-classroom" size={16} color="#059669" />
                     <Text style={styles.metricValWhite}>{schedules.length}</Text>
                   </View>
                   <Text style={styles.metricLblWhite}>Rombel Aktif</Text>
@@ -2069,7 +2090,7 @@ export default function TeacherAssignmentWorkspace({
                 ) : null}
               </View>
 
-              {activeTab === 'assignments' && (
+              {activeTab === 'assignments' && (!isPrincipal || isTeacher) && (
                 <TouchableOpacity
                   activeOpacity={0.85}
                   onPress={handleOpenCreateAssignment}
@@ -2440,23 +2461,27 @@ export default function TeacherAssignmentWorkspace({
                       </View>
 
                       <View style={styles.footerActionGroup}>
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => handleOpenEditAssignment(item)}
-                          style={styles.editIconButton}
-                          accessibilityLabel="Ubah Tugas"
-                        >
-                          <MaterialCommunityIcons name="pencil-outline" size={15} color="#0284C7" />
-                        </TouchableOpacity>
+                        {(!isPrincipal || isTeacher) && (
+                          <>
+                            <TouchableOpacity
+                              activeOpacity={0.75}
+                              onPress={() => handleOpenEditAssignment(item)}
+                              style={styles.editIconButton}
+                              accessibilityLabel="Ubah Tugas"
+                            >
+                              <MaterialCommunityIcons name="pencil-outline" size={15} color="#0284C7" />
+                            </TouchableOpacity>
 
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => handleDeleteAssignment(item)}
-                          style={styles.deleteIconButton}
-                          accessibilityLabel="Hapus Tugas"
-                        >
-                          <MaterialCommunityIcons name="trash-can-outline" size={15} color="#E11D48" />
-                        </TouchableOpacity>
+                            <TouchableOpacity
+                              activeOpacity={0.75}
+                              onPress={() => handleDeleteAssignment(item)}
+                              style={styles.deleteIconButton}
+                              accessibilityLabel="Hapus Tugas"
+                            >
+                              <MaterialCommunityIcons name="trash-can-outline" size={15} color="#E11D48" />
+                            </TouchableOpacity>
+                          </>
+                        )}
 
                         <TouchableOpacity
                           activeOpacity={0.8}
@@ -2583,21 +2608,30 @@ export default function TeacherAssignmentWorkspace({
                         <Text numberOfLines={1} style={styles.submittedTimeText}>Dikirim: {submittedAt}</Text>
                       </View>
 
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => {
-                          setSelectedSubmission(sub);
-                          setGradeScore(String(sub.nilai_guru ?? sub.nilai ?? ''));
-                          setGradeNotes(String(sub.catatan_guru ?? ''));
-                          setGradeModalVisible(true);
-                        }}
-                        style={[styles.gradeActionBtn, isGraded && { backgroundColor: '#059669' }]}
-                      >
-                        <MaterialCommunityIcons name={isGraded ? "pencil-box-outline" : "star-outline"} size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text numberOfLines={1} style={styles.gradeActionBtnText}>
-                          {isGraded ? 'Ubah Nilai' : 'Beri Nilai'}
-                        </Text>
-                      </TouchableOpacity>
+                      {isPrincipal && !isTeacher ? (
+                        <View style={[styles.gradeActionBtn, isGraded ? { backgroundColor: '#059669' } : { backgroundColor: '#F59E0B' }]}>
+                          <MaterialCommunityIcons name={isGraded ? "check-circle" : "clock-outline"} size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text numberOfLines={1} style={styles.gradeActionBtnText}>
+                            {isGraded ? `Nilai: ${sub.nilai_guru ?? sub.nilai}` : 'Belum Dinilai'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            setSelectedSubmission(sub);
+                            setGradeScore(String(sub.nilai_guru ?? sub.nilai ?? ''));
+                            setGradeNotes(String(sub.catatan_guru ?? ''));
+                            setGradeModalVisible(true);
+                          }}
+                          style={[styles.gradeActionBtn, isGraded && { backgroundColor: '#059669' }]}
+                        >
+                          <MaterialCommunityIcons name={isGraded ? "pencil-box-outline" : "star-outline"} size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text numberOfLines={1} style={styles.gradeActionBtnText}>
+                            {isGraded ? 'Ubah Nilai' : 'Beri Nilai'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                 );
@@ -4696,6 +4730,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F0FDF4',
   },
+  topFoliageWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  topFoliageBgImage: {
+    ...(StyleSheet.absoluteFill as any),
+    opacity: 1,
+  },
   // ── Sticky Header Styles ──
   stickyHeaderContainer: {
     position: 'absolute',
@@ -4905,11 +4951,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1.5,
     borderColor: '#A7F3D0',
-    elevation: 3,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
+    elevation: 2,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
   },
   metricsGradient: {
     flexDirection: 'row',
@@ -4930,12 +4976,12 @@ const styles = StyleSheet.create({
   metricValWhite: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
   },
   metricLblWhite: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#D1FAE5',
+    color: '#059669',
     marginTop: 2,
     textTransform: 'uppercase',
     letterSpacing: 0.3,
@@ -4943,7 +4989,7 @@ const styles = StyleSheet.create({
   metricDivider: {
     width: 1,
     height: 26,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: '#A7F3D0',
   },
   // ── Body Tab Bar Switcher ──
   bodyTabBarContainer: {

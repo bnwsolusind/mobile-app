@@ -419,36 +419,20 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
     const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 58), 420);
     const mapHeight = 165;
 
-    if (token) {
-      if (userLocation && userLocation.latitude && userLocation.longitude) {
-        // Mapbox Static dengan 2 pin: Pin Unit Sekolah Hijau (#059669) & Pin User Biru (#2563EB)
-        const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
-        const pUser = `pin-s-circle+2563eb(${userLocation.longitude.toFixed(6)},${userLocation.latitude.toFixed(6)})`;
-        const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${token}`;
-        return { url, isMapbox: true };
-      } else {
-        // Mapbox Static dengan pin unit
-        const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
-        const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit}/${uLng.toFixed(6)},${uLat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${token}`;
-        return { url, isMapbox: true };
-      }
-    }
+    const activeToken = token || 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A';
 
-    // Fallback OpenStreetMap standard tile jika offline / token belum siap (bebas watermark & tanpa API key)
-    const centerLat = userLocation ? (userLocation.latitude + uLat) / 2 : uLat;
-    const centerLng = userLocation ? (userLocation.longitude + uLng) / 2 : uLng;
-    const zoom = 16;
-    const lon2tile = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-    const lat2tile = (lat: number, z: number) => {
-      const rad = (lat * Math.PI) / 180;
-      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, z));
-    };
-    const tileX = lon2tile(centerLng, zoom);
-    const tileY = lat2tile(centerLat, zoom);
-    return {
-      url: `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`,
-      isMapbox: false,
-    };
+    if (userLocation && userLocation.latitude && userLocation.longitude) {
+      // Mapbox Static dengan 2 pin: Pin Unit Sekolah Hijau (#059669) & Pin User Biru (#2563EB)
+      const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
+      const pUser = `pin-s-circle+2563eb(${userLocation.longitude.toFixed(6)},${userLocation.latitude.toFixed(6)})`;
+      const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${activeToken}`;
+      return { url, isMapbox: true };
+    } else {
+      // Mapbox Static dengan pin unit sekolah
+      const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;
+      const url = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pUnit}/${uLng.toFixed(6)},${uLat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${activeToken}`;
+      return { url, isMapbox: true };
+    }
   }, [mapboxToken, unitLocation, userLocation]);
 
   // Request & Update User GPS Location

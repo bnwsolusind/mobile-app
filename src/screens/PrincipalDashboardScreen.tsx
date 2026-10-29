@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { isDivisiRole } from '../utils/roles';
 import { offlineCache } from '../utils/offlineCache';
 import PrincipalDashboardView from '../components/dashboard/PrincipalDashboardView';
 
@@ -24,6 +25,8 @@ export default function PrincipalDashboardScreen({ navigation }: any) {
   const localNav = useNavigation<any>();
   const nav = navigation || localNav;
   const user = useAuthStore((state) => state.user);
+  const roles = useAuthStore((state) => state.roles);
+  const isDivisi = isDivisiRole(roles);
 
   const [dashboard, setDashboard] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -123,10 +126,12 @@ export default function PrincipalDashboardScreen({ navigation }: any) {
           <View style={styles.headerTitleWrap}>
             <View style={styles.titleBadgeRow}>
               <MaterialCommunityIcons name="shield-check" size={12} color="#A7F3D0" />
-              <Text style={styles.headerSubtitleText}>PIMPINAN MADRASAH</Text>
+              <Text style={styles.headerSubtitleText}>
+                {isDivisi ? 'DIVISI PENDIDIKAN' : 'PIMPINAN MADRASAH'}
+              </Text>
             </View>
             <Text style={styles.headerMainTitle} numberOfLines={1}>
-              Dashboard Kepala Sekolah
+              {isDivisi ? 'Dashboard Divisi Pendidikan' : 'Dashboard Kepala Sekolah'}
             </Text>
           </View>
 

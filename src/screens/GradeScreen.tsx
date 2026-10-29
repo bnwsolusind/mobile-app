@@ -21,8 +21,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole, isDivisiRole } from '../utils/roles';
 import TeacherGradeWorkspace from '../components/teacher/TeacherGradeWorkspace';
+import StaffLmsGradeWorkspace from '../components/staff/StaffLmsGradeWorkspace';
 import { offlineCache } from '../utils/offlineCache';
 import {
   getDynamicAcademicYear,
@@ -1624,12 +1625,33 @@ export default function GradeScreen({ route }: any) {
   }, [mutabaahAverage, getPredicate]);
 
   const isTeacher = isTeacherRole(user?.roles || []);
-  const isStaff = isTuRole(user?.roles || []) || isPrincipalRole(user?.roles || []) || isSuperAdminRole(user?.roles || []);
-  const isTeacherOrStaff = isTeacher || isStaff;
+  const isDivisi = isDivisiRole(user?.roles || []);
+  const isStaff = isTuRole(user?.roles || []) || isPrincipalRole(user?.roles || []) || isDivisi || isSuperAdminRole(user?.roles || []);
 
-  if (isTeacherOrStaff) {
+  if (isStaff) {
+    return (
+      <StaffLmsGradeWorkspace
+        onBack={() => {
+          const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
+          if (handled) return;
+          const navState = navigation?.getState?.();
+          const canPop = navState && typeof navState.index === 'number' && navState.index > 0;
+          if (canPop && navigation?.canGoBack?.()) {
+            try {
+              navigation.goBack();
+              return;
+            } catch {}
+          }
+          navigation?.navigate('Beranda' as any);
+        }}
+      />
+    );
+  }
+
+  if (isTeacher) {
     return (
       <TeacherGradeWorkspace
+        navigation={navigation}
         onBack={() => {
           const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation, route?.params);
           if (handled) return;

@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { getProfileImageUrl, DEFAULT_STUDENT_BOY_AVATAR, DEFAULT_STUDENT_GIRL_AVATAR, isGirlStudent } from '../utils/profile';
 import { useActiveChildStore } from '../stores/activeChildStore';
 import { useAuthStore } from '../stores/authStore';
+import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { isParentRole } from '../utils/roles';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -45,6 +46,7 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
   if (!student) return null;
 
   const user = useAuthStore((state) => state.user);
+  const mobileConfig = useMobileConfigStore((state) => state.config);
   const isParent = isParentRole(user?.roles || []);
 
   const sName = student.full_name || student.nama_lengkap || student.name || 'Ananda';
@@ -69,6 +71,23 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
   const avatarUri = getProfileImageUrl(student);
 
   const menuItems: StudentMenuItem[] = useMemo(() => {
+    const roleKey = isParent || (user as any)?.roles?.includes('Parent') ? 'parent' : 'student';
+    const dynamicMenus = mobileConfig?.role_menus?.[roleKey];
+    if (dynamicMenus && Array.isArray(dynamicMenus) && dynamicMenus.length > 0) {
+      const active = dynamicMenus.filter((item) => item.is_active !== false);
+      if (active.length > 0) {
+        return active.map((item) => ({
+          label: item.label,
+          icon: item.icon || 'circle-outline',
+          color: item.color || '#059669',
+          bg: item.bg || '#ECFDF5',
+          route: item.route || 'HomeScreen',
+          tab: item.tab,
+          badge: item.badge,
+        }));
+      }
+    }
+
     const list: StudentMenuItem[] = [
       { label: 'Jadwal Pelajaran', icon: 'calendar-clock', color: '#0D9488', bg: '#ECFDF5', route: 'Jadwal' },
       { label: 'Tugas LMS', icon: 'clipboard-text-outline', color: '#10B981', bg: '#ECFDF5', route: 'Tugas' },
@@ -104,7 +123,7 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
     );
 
     return list;
-  }, [isParent, user]);
+  }, [isParent, user, mobileConfig?.role_menus]);
 
   const handleMenuPress = (item: StudentMenuItem) => {
     onClose();

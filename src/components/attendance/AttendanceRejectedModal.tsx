@@ -107,11 +107,9 @@ export function AttendanceRejectedModal({
     const tileX = lon2tile(centerLng, zoom);
     const tileY = lat2tile(centerLat, zoom);
 
-    // 1. Prioritas: Mapbox Static Images API (High Resolution Retina 2x)
-    const tileUrl =
-      mapboxToken && mapboxToken.trim()
-        ? `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${centerLng.toFixed(6)},${centerLat.toFixed(6)},${zoom},0/600x320@2x?access_token=${mapboxToken.trim()}`
-        : `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`;
+    // 1. Mapbox Static Images API (High Resolution Retina 2x)
+    const activeToken = mapboxToken && mapboxToken.trim() ? mapboxToken.trim() : 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A';
+    const tileUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${centerLng.toFixed(6)},${centerLat.toFixed(6)},${zoom},0/600x320@2x?access_token=${activeToken}`;
 
     // Calculate compass bearing to position markers dynamically in visual map container
     const dLat = Number(userLat) - Number(unitLat);

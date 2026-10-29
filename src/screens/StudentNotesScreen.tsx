@@ -831,39 +831,25 @@ export default function StudentNotesScreen({ route }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* ── LATAR GAMBAR & GRADASI IDENTIK DATA SISWA & ABSENSI GERBANG ── */}
-      {isTu ? (
-        <View style={styles.bgBackdrop} pointerEvents="none">
-          <Image
-            source={PARENT_HOME_BG}
-            style={styles.bgImage}
-            resizeMode="cover"
-          />
-          <LinearGradient
-            colors={[
-              'rgba(24, 161, 101, 0.18)',
-              'rgba(24, 161, 101, 0.40)',
-              'rgba(240, 253, 244, 0.95)',
-              '#F0FDF4',
-            ]}
-            locations={[0, 0.28, 0.65, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-        </View>
-      ) : (
-        <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
-          <Image
-            source={PARENT_HOME_BG}
-            style={styles.topFoliageBgImage}
-            resizeMode="cover"
-          />
-          <LinearGradient
-            colors={['rgba(240, 253, 244, 0)', 'rgba(240, 253, 244, 0.45)', '#F0FDF4']}
-            locations={[0, 0.45, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-        </View>
-      )}
+      {/* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Halaman Utama */}
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
 
       {/* ── TOP HEADER IDENTIK HALAMAN UTAMA / DATA SISWA ── */}
       {isTu ? (

@@ -19,7 +19,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isTeacherRole, isTuRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isTuRole, isPrincipalRole, isSuperAdminRole } from '../utils/roles';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
@@ -310,15 +310,24 @@ export default function ScheduleScreen({ route, navigation }: any) {
   const isParent = isParentRole(user?.roles || []);
   const isTeacher = isTeacherRole(user?.roles || []);
   const isTu = isTuRole(user?.roles || []);
+  const isPrincipal = isPrincipalRole(user?.roles || []);
+  const isSuperAdmin = isSuperAdminRole(user?.roles || []);
 
-  // Akses penuh untuk Tata Usaha: Tampilkan workspace monitoring & manajemen jadwal unit selaras web-dashboard
-  if (isTu && !isParent && !isTeacher) {
+  // Akses penuh untuk Tata Usaha & Kepala Sekolah: Tampilkan workspace monitoring jadwal unit selaras web-dashboard
+  if (route?.params?.role === 'tu' || ((isTu || isPrincipal || isSuperAdmin) && !isParent && !isTeacher)) {
     return <TuScheduleWorkspace navigation={navigation} user={user} />;
   }
 
   // Akses penuh untuk Guru/Pendidik: Tampilkan TeacherScheduleWorkspace modern, lega, bebas berhimpitan dan tanpa hardcode
-  if (isTeacher && !isParent) {
-    return <TeacherScheduleWorkspace navigation={navigation} user={user} route={route} />;
+  if (
+    route?.params?.role === 'teacher' ||
+    Boolean(route?.params?.kelas_id) ||
+    Boolean(route?.params?.fromTeacher) ||
+    (isTeacher && !route?.params?.child_id && !route?.params?.student_id && !isParent)
+  ) {
+    if (isTeacher) {
+      return <TeacherScheduleWorkspace navigation={navigation} user={user} route={route} />;
+    }
   }
 
   const [children, setChildren] = useState<Child[]>(() => {
@@ -1157,8 +1166,13 @@ export default function ScheduleScreen({ route, navigation }: any) {
           resizeMode="cover"
         />
         <LinearGradient
-          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
-          locations={[0.5, 0.82, 1]}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
       </View>
@@ -3701,7 +3715,7 @@ const styles = StyleSheet.create({
   },
   rootContainer: {
     flex: 1,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F0FDF4',
   },
   sheetContainer: {
     flex: 1,

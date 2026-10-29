@@ -28,6 +28,7 @@ import {
   isSuperAdminRole,
   isFoundationRole,
   isPrincipalRole,
+  isDivisiRole,
   isTuRole,
 } from '../utils/roles';
 import { canAccessScreen, canAccessBilling } from '../utils/accessControl';
@@ -47,7 +48,7 @@ interface ServiceItem {
   route: string;
   category: 'kbm' | 'ujian' | 'keagamaan' | 'info' | 'akun';
   params?: Record<string, any>;
-  allowedRoles?: ('teacher' | 'parent' | 'student' | 'admin' | 'tu' | 'staff')[];
+  allowedRoles?: ('teacher' | 'parent' | 'student' | 'admin' | 'tu' | 'staff' | 'principal' | 'divisi')[];
 }
 
 interface CategoryConfig {
@@ -174,7 +175,9 @@ export default function MoreScreen({ navigation }: any) {
   const isParent = isParentRole(roles);
   const isStudent = isStudentRole(roles);
   const isSuperAdmin = isSuperAdminRole(roles);
-  const isLeader = isFoundationRole(roles) || isPrincipalRole(roles) || isSuperAdmin;
+  const isPrincipal = isPrincipalRole(roles);
+  const isDivisi = isDivisiRole(roles);
+  const isLeader = isFoundationRole(roles) || isPrincipal || isSuperAdmin || isDivisi;
   const isTu = isTuRole(roles);
 
   const canData = canAccessScreen('data', user, mobileConfig).allowed;
@@ -190,7 +193,7 @@ export default function MoreScreen({ navigation }: any) {
 
     // --- KBM & PEMBELAJARAN (Akses Guru, Pimpinan, dan TU) ---
     if (canTeacher || isTeacher || isLeader || isTu) {
-      if (canTeacher || isTeacher || isLeader) {
+      if ((canTeacher || isTeacher) && !isPrincipal) {
         list.push({
           id: 'guru_workspace',
           label: 'Ruang Kerja Guru',
@@ -204,18 +207,20 @@ export default function MoreScreen({ navigation }: any) {
           allowedRoles: ['teacher', 'admin'],
         });
       }
-      list.push({
-        id: 'presensi_kbm',
-        label: 'Presensi KBM & Kelas',
-        desc: 'Presensi tatap muka jadwal KBM, checklist siswa, dan scanner kelas',
-        tag: 'Presensi KBM',
-        icon: 'calendar-check-outline',
-        color: '#059669',
-        bg: '#ECFDF5',
-        route: 'QR Code',
-        category: 'kbm',
-        allowedRoles: ['teacher', 'tu', 'admin'],
-      });
+      if (isTeacher || isTu) {
+        list.push({
+          id: 'presensi_kbm',
+          label: 'Presensi KBM & Kelas',
+          desc: 'Presensi tatap muka jadwal KBM, checklist siswa, dan scanner kelas',
+          tag: 'Presensi KBM',
+          icon: 'calendar-check-outline',
+          color: '#059669',
+          bg: '#ECFDF5',
+          route: 'QR Code',
+          category: 'kbm',
+          allowedRoles: ['teacher', 'tu', 'admin'],
+        });
+      }
       list.push({
         id: 'jadwal_kbm',
         label: 'Jadwal Pelajaran KBM',
@@ -230,9 +235,9 @@ export default function MoreScreen({ navigation }: any) {
       });
       list.push({
         id: 'bahan_ajar',
-        label: 'Bahan & Modul Ajar',
-        desc: 'Modul ajar, silabus, dan bahan referensi kurikulum',
-        tag: 'Modul',
+        label: (isPrincipal || isDivisi) ? 'Supervisi Bahan & Modul Ajar' : 'Bahan & Modul Ajar',
+        desc: (isPrincipal || isDivisi) ? 'Tinjau, evaluasi, dan validasi modul ajar guru' : 'Modul ajar, silabus, dan bahan referensi kurikulum',
+        tag: (isPrincipal || isDivisi) ? 'Supervisi' : 'Modul',
         icon: 'book-multiple',
         color: '#0D9488',
         bg: '#E6FFFA',
@@ -242,9 +247,9 @@ export default function MoreScreen({ navigation }: any) {
       });
       list.push({
         id: 'tugas_lms',
-        label: 'Tugas & LMS',
-        desc: 'Distribusi tugas, pemantauan pengumpulan, dan penilaian PR',
-        tag: 'Tugas',
+        label: (isPrincipal || isDivisi) ? 'Monitoring Tugas Siswa' : 'Tugas & LMS',
+        desc: (isPrincipal || isDivisi) ? 'Pantau distribusi dan pengumpulan tugas belajar santri' : 'Distribusi tugas, pemantauan pengumpulan, dan penilaian PR',
+        tag: (isPrincipal || isDivisi) ? 'Monitoring' : 'Tugas',
         icon: 'clipboard-text',
         color: '#F59E0B',
         bg: '#FEF9EC',
@@ -252,7 +257,7 @@ export default function MoreScreen({ navigation }: any) {
         category: 'kbm',
         allowedRoles: ['teacher', 'student', 'tu', 'admin'],
       });
-      if (isTeacher || isLeader || isTu) {
+      if (isTeacher || isTu) {
         list.push({
           id: 'input_nilai',
           label: 'Input Nilai Siswa',
@@ -266,10 +271,23 @@ export default function MoreScreen({ navigation }: any) {
           allowedRoles: ['teacher', 'tu', 'admin'],
         });
       }
+      if (isPrincipal || isDivisi || isFoundationRole(roles)) {
+        list.push({
+          id: 'nilai_rapor_evaluasi',
+          label: 'Evaluasi & Rapor Siswa',
+          desc: 'Tinjau capaian nilai santri, pengesahan dan catatan rapor unit',
+          tag: 'Rapor',
+          icon: 'card-account-details-star-outline',
+          color: '#10B981',
+          bg: '#E8FAF2',
+          route: 'Nilai',
+          category: 'kbm',
+        });
+      }
     }
 
-    // --- UJIAN & ASESMEN (Akses Guru, Pimpinan, dan TU sesuai hak akses web) ---
-    if (canTeacher || isTeacher || isLeader || isTu) {
+    // --- UJIAN & ASESMEN (Akses Guru, Tim Kurikulum, Kepala Sekolah & Divisi Pendidikan) ---
+    if (canTeacher || isTeacher || isTu || isPrincipal || isDivisi) {
       list.push({
         id: 'ujian_cbt',
         label: 'Ujian CBT Online',
@@ -280,7 +298,7 @@ export default function MoreScreen({ navigation }: any) {
         bg: '#EFF6FF',
         route: 'CbtExams',
         category: 'ujian',
-        allowedRoles: ['teacher', 'student', 'tu', 'admin'],
+        allowedRoles: ['teacher', 'student', 'tu', 'admin', 'principal', 'divisi'],
       });
       list.push({
         id: 'bank_soal',
@@ -292,7 +310,7 @@ export default function MoreScreen({ navigation }: any) {
         bg: '#E6FFFA',
         route: 'BankSoal',
         category: 'ujian',
-        allowedRoles: ['teacher', 'tu', 'admin'],
+        allowedRoles: ['teacher', 'tu', 'admin', 'principal', 'divisi'],
       });
       list.push({
         id: 'kisi_kisi',
@@ -304,7 +322,7 @@ export default function MoreScreen({ navigation }: any) {
         bg: '#FEF2F2',
         route: 'KisiKisi',
         category: 'ujian',
-        allowedRoles: ['teacher', 'tu', 'admin'],
+        allowedRoles: ['teacher', 'tu', 'admin', 'principal', 'divisi'],
       });
     }
 
@@ -337,18 +355,21 @@ export default function MoreScreen({ navigation }: any) {
       category: 'keagamaan',
     });
 
-    // Tahfizh Al-Qur'an
-    list.push({
-      id: 'tahfizh_quran',
-      label: 'Setoran Tahfizh Qur’an',
-      desc: 'Pencatatan ziyadah, muraja’ah hafalan santri, serta capaian juz',
-      tag: 'Tahfizh',
-      icon: 'book-open-page-variant',
-      color: '#0D9488',
-      bg: '#E6FFFA',
-      route: 'Tahfizh',
-      category: 'keagamaan',
-    });
+    // Tahfizh Al-Qur'an (Khusus Guru Pengampu, Musyrif, Pimpinan, Wali Santri, dan Santri)
+    if (isTeacher || isLeader || isParent || isStudent || canTeacher) {
+      list.push({
+        id: 'tahfizh_quran',
+        label: 'Setoran Tahfizh Qur’an',
+        desc: 'Pencatatan ziyadah, muraja’ah hafalan santri, serta capaian juz',
+        tag: 'Tahfizh',
+        icon: 'book-open-page-variant',
+        color: '#0D9488',
+        bg: '#E6FFFA',
+        route: 'Tahfizh',
+        category: 'keagamaan',
+        allowedRoles: ['teacher', 'parent', 'student', 'admin'],
+      });
+    }
 
     // Mushaf Al-Qur'an Digital
     list.push({

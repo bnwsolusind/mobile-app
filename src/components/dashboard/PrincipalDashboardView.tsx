@@ -567,8 +567,8 @@ export default function PrincipalDashboardView({
                   </View>
                   <Text style={[styles.kpiCount, { color: '#047857' }]}>{totalSiswa}</Text>
                 </View>
-                <Text style={styles.kpiLabel}>Total Siswa Aktif</Text>
-                <Text style={styles.kpiSub}>Terdaftar aktif di unit sekolah</Text>
+                <Text numberOfLines={1} style={styles.kpiLabel}>Siswa Aktif</Text>
+                <Text numberOfLines={1} style={styles.kpiSub}>Santri terdaftar</Text>
               </LinearGradient>
             </TouchableOpacity>
 
@@ -586,8 +586,8 @@ export default function PrincipalDashboardView({
                   </View>
                   <Text style={[styles.kpiCount, { color: '#0369A1' }]}>{totalGuru}</Text>
                 </View>
-                <Text style={styles.kpiLabel}>Total Guru Pengajar</Text>
-                <Text style={styles.kpiSub}>Tenaga pendidik aktif</Text>
+                <Text numberOfLines={1} style={styles.kpiLabel}>Guru Pengajar</Text>
+                <Text numberOfLines={1} style={styles.kpiSub}>Tenaga pendidik</Text>
               </LinearGradient>
             </TouchableOpacity>
 
@@ -605,8 +605,8 @@ export default function PrincipalDashboardView({
                   </View>
                   <Text style={[styles.kpiCount, { color: '#6D28D9' }]}>{totalTendik}</Text>
                 </View>
-                <Text style={styles.kpiLabel}>Total Tendik / Staf</Text>
-                <Text style={styles.kpiSub}>Administrasi & teknis (Total SDM: {totalPegawai})</Text>
+                <Text numberOfLines={1} style={styles.kpiLabel}>Tendik & Staf</Text>
+                <Text numberOfLines={1} style={styles.kpiSub}>SDM: {totalPegawai} staf</Text>
               </LinearGradient>
             </TouchableOpacity>
 
@@ -624,8 +624,8 @@ export default function PrincipalDashboardView({
                   </View>
                   <Text style={[styles.kpiCount, { color: '#B45309' }]}>{totalRombel}</Text>
                 </View>
-                <Text style={styles.kpiLabel}>Total Rombel / Kelas</Text>
-                <Text style={styles.kpiSub}>Rombongan belajar aktif</Text>
+                <Text numberOfLines={1} style={styles.kpiLabel}>Rombel / Kelas</Text>
+                <Text numberOfLines={1} style={styles.kpiSub}>Rombongan belajar</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -781,11 +781,9 @@ export default function PrincipalDashboardView({
             <View style={styles.qBtnGrid}>
               <QBtn icon="account-check-outline"  iconBg="#059669" label="Presensi Guru"  onPress={() => safeNavigate('RekapPresensiGuru', { defaultSubject: 'pegawai', lockedSubject: 'pegawai' })} />
               <QBtn icon="account-group"          iconBg="#0284C7" label="Presensi Siswa" onPress={() => safeNavigate('RekapPresensiSiswa', { defaultSubject: 'siswa', lockedSubject: 'siswa' })} />
-              <QBtn icon="door-open"              iconBg="#0D9488" label="Absensi Gerbang" onPress={() => safeNavigate('AbsensiGerbangTerminal')} />
-              <QBtn icon="calendar-check-outline" iconBg="#059669" label="Presensi KBM"     onPress={() => safeNavigate('PresensiKbmPengganti')} />
+              <QBtn icon="calendar-check-outline" iconBg="#10B981" label="Presensi Mandiri" onPress={() => safeNavigate('PresensiMandiriStaff')} />
               <QBtn icon="file-document-edit"     iconBg="#D97706" label="Izin & Cuti"     onPress={() => safeNavigate('Perizinan', { tab: 'permissions' })} />
               <QBtn icon="door-closed"            iconBg="#E11D48" label="Izin Asrama"     onPress={() => safeNavigate('Perizinan', { tab: 'boarding' })} />
-              <QBtn icon="calendar-check-outline" iconBg="#10B981" label="Presensi Mandiri" onPress={() => safeNavigate('PresensiMandiriStaff')} />
             </View>
           </View>
 
@@ -796,19 +794,16 @@ export default function PrincipalDashboardView({
                 <MaterialCommunityIcons name="school-outline" size={16} color="#2563EB" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.sectionTitle}>Akademik & LMS</Text>
-                <Text style={styles.sectionSubtitle}>Jadwal, materi, tugas, CBT & penilaian</Text>
+                <Text style={styles.sectionTitle}>Akademik & Supervisi LMS</Text>
+                <Text style={styles.sectionSubtitle}>Jadwal unit, supervisi materi, tugas & rapor</Text>
               </View>
             </View>
             <View style={styles.qBtnGrid}>
               <QBtn icon="calendar-clock"   iconBg="#7C3AED" label="Jadwal Pelajaran" onPress={() => safeNavigate('Jadwal')} />
-              <QBtn icon="book-open-page-variant" iconBg="#0D9488" label="Materi Belajar" onPress={() => safeNavigate('Materi')} />
-              <QBtn icon="clipboard-text"   iconBg="#F59E0B" label="Tugas Siswa"    onPress={() => safeNavigate('Tugas')} />
-              <QBtn icon="calendar-month"   iconBg="#2563EB" label="Kalender Akademik" onPress={() => safeNavigate('Kalender')} />
-              <QBtn icon="laptop"           iconBg="#2563EB" label="CBT Ujian Online" onPress={() => safeNavigate('CbtExams')} />
-              <QBtn icon="database-outline" iconBg="#059669" label="Bank Soal"      onPress={() => safeNavigate('BankSoal')} />
-              <QBtn icon="file-question"    iconBg="#EF4444" label="Kisi-kisi Ujian" onPress={() => safeNavigate('KisiKisi')} />
+              <QBtn icon="book-open-page-variant" iconBg="#0D9488" label="Supervisi Materi" onPress={() => safeNavigate('Materi')} />
+              <QBtn icon="clipboard-text"   iconBg="#F59E0B" label="Monitoring Tugas"    onPress={() => safeNavigate('Tugas')} />
               <QBtn icon="card-account-details-star-outline" iconBg="#10B981" label="Penilaian & Rapor" onPress={() => safeNavigate('Nilai')} />
+              <QBtn icon="calendar-month"   iconBg="#2563EB" label="Kalender Akademik" onPress={() => safeNavigate('Kalender')} />
             </View>
           </View>
 
@@ -884,7 +879,7 @@ export default function PrincipalDashboardView({
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => setOnlineFilter('offline')}
-                    style={[styles.onlineFilterChip, onlineFilter === 'offline' && { backgroundColor: '#64748B' }]}
+                    style={[styles.onlineFilterChip, onlineFilter === 'offline' && { backgroundColor: '#EF4444', borderColor: '#DC2626' }]}
                   >
                     <Text style={[styles.onlineFilterChipText, onlineFilter === 'offline' && styles.onlineFilterChipTextActive]}>
                       Offline ({onlineUsers.filter((u: any) => !u.is_online).length})
@@ -910,21 +905,39 @@ export default function PrincipalDashboardView({
                         key={user.id}
                         activeOpacity={0.8}
                         onPress={() => setActiveChatUser(user)}
-                        style={styles.onlineUserTile}
+                        style={[
+                          styles.onlineUserTile,
+                          user.is_online ? styles.onlineUserTileOnline : styles.onlineUserTileOffline,
+                        ]}
                       >
-                        <View style={styles.onlineAvatarBox}>
-                          <Text style={styles.onlineAvatarLetters}>
+                        <View style={[
+                          styles.onlineAvatarBox,
+                          !user.is_online && { backgroundColor: '#FEE2E2' }
+                        ]}>
+                          <Text style={[
+                            styles.onlineAvatarLetters,
+                            !user.is_online && { color: '#DC2626' }
+                          ]}>
                             {String(user.nama || user.name || 'PG').substring(0, 2).toUpperCase()}
                           </Text>
                           <View
                             style={[
                               styles.onlineStatusDot,
-                              { backgroundColor: user.is_online ? '#10B981' : '#94A3B8' },
+                              { backgroundColor: user.is_online ? '#10B981' : '#EF4444' },
                             ]}
                           />
                         </View>
                         <Text style={styles.onlineUserName} numberOfLines={1}>{user.nama}</Text>
                         <Text style={styles.onlineUserRole} numberOfLines={1}>{user.role}</Text>
+                        <View style={[
+                          styles.onlineStatusMiniTag,
+                          { backgroundColor: user.is_online ? '#ECFDF5' : '#FEF2F2' }
+                        ]}>
+                          <View style={[styles.miniDot, { backgroundColor: user.is_online ? '#10B981' : '#EF4444' }]} />
+                          <Text style={[styles.miniDotText, { color: user.is_online ? '#065F46' : '#991B1B' }]}>
+                            {user.is_online ? 'Online' : 'Offline'}
+                          </Text>
+                        </View>
                         <View style={styles.onlineChatPill}>
                           <MaterialCommunityIcons name="chat-outline" size={11} color="#059669" />
                           <Text style={styles.onlineChatPillText}>Chat</Text>
@@ -2656,13 +2669,21 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   onlineUserTile: {
-    width: 98,
+    width: 104,
     alignItems: 'center',
     backgroundColor: '#F8FAFC',
     borderRadius: 16,
     padding: 10,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
+  },
+  onlineUserTileOnline: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  onlineUserTileOffline: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF5F5',
   },
   onlineAvatarBox: {
     width: 44,
@@ -2683,9 +2704,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -2,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },
@@ -2702,6 +2723,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 1,
   },
+  onlineStatusMiniTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3.5,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  miniDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  miniDotText: {
+    fontSize: 8.5,
+    fontWeight: '800',
+  },
   onlineChatPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2710,7 +2749,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3.5,
     borderRadius: 8,
-    marginTop: 8,
+    marginTop: 6,
   },
   onlineChatPillText: {
     fontSize: 9.5,

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -22,6 +23,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { isPrincipalRole } from '../../utils/roles';
 import AppFeedbackModal, { FeedbackType } from '../AppFeedbackModal';
 import { WeeklyEvaluationReportPaperModal } from '../WeeklyEvaluationReportPaperModal';
+
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -68,47 +71,8 @@ export default function TeacherTahfizhWorkspace({
   const user = useAuthStore((state) => state.user);
   const isPrincipal = isPrincipalRole(user?.roles || []);
   const insets = useSafeAreaInsets();
-
-  // Scroll & Sticky Header Animation (Matching Workspace Tugas LMS)
-  const scrollY = useRef(new Animated.Value(0)).current;
-  const handleMainScroll = useMemo(
-    () =>
-      Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
-        useNativeDriver: true,
-      }),
-    [scrollY]
-  );
-
-  const [isStickyActive, setIsStickyActive] = useState<boolean>(false);
-
-  useEffect(() => {
-    const id = scrollY.addListener(({ value }) => {
-      if (value > 65 && !isStickyActive) {
-        setIsStickyActive(true);
-      } else if (value <= 65 && isStickyActive) {
-        setIsStickyActive(false);
-      }
-    });
-    return () => {
-      scrollY.removeListener(id);
-    };
-  }, [scrollY, isStickyActive]);
-
-  const stickyOpacity = useMemo(() => {
-    return scrollY.interpolate({
-      inputRange: [50, 95],
-      outputRange: [0, 1],
-      extrapolate: 'clamp',
-    });
-  }, [scrollY]);
-
-  const stickyTranslateY = useMemo(() => {
-    return scrollY.interpolate({
-      inputRange: [50, 95],
-      outputRange: [-15, 0],
-      extrapolate: 'clamp',
-    });
-  }, [scrollY]);
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 12);
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 16);
 
   // Sub-tabs: 'input' | 'logs' | 'leaderboard' | 'report' (Kepala Sekolah hanya untuk monitor & rekap)
   const defaultTab = isPrincipal && initialTab === 'input' ? 'logs' : initialTab;
@@ -1190,420 +1154,210 @@ export default function TeacherTahfizhWorkspace({
   }, [printReportStudent, reportLogs, tahfizhLogs, selectedClass]);
 
   return (
-    <View style={styles.container}>
-      {/* ── 1. STICKY HEADER (Muncul hanya saat di-scroll) ── */}
-      <Animated.View
-        pointerEvents={isStickyActive ? 'auto' : 'none'}
-        style={[
-          styles.stickyHeaderContainer,
-          {
-            paddingTop: insets.top + 6,
-            opacity: stickyOpacity,
-            transform: [{ translateY: stickyTranslateY }],
-          },
-        ]}
-      >
+    <View style={styles.rootContainer}>
+      {/* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Jadwal Pelajaran & Halaman Utama */}
         <LinearGradient
-          colors={['#0D6B42', '#18A165', '#2BD988']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={styles.stickyDecorCircle1} />
-        <View style={styles.stickyDecorCircle2} />
+      </View>
 
-        {/* Baris Atas Sticky: Tombol Back, Judul & Mini Counter, Tombol Simpan */}
-        <View style={styles.stickyTopRow}>
-          <View style={styles.stickyTitleGroup}>
-            {onBack && (
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={onBack}
-                style={styles.stickySquircleBtn}
-                accessibilityLabel="Kembali"
-              >
-                <MaterialCommunityIcons name="arrow-left" size={18} color="#059669" />
-              </TouchableOpacity>
-            )}
-            <View style={styles.stickyTitleTextCol}>
-              <Text numberOfLines={1} style={styles.stickyTitle}>
-                Jurnal & Setoran Tahfizh
-              </Text>
-              <Text numberOfLines={1} style={styles.stickySubtitle}>
-                {selectedClass ? selectedClass.name : 'Semua Rombel'} · {tahfizhLogs.length} Setoran
-              </Text>
-            </View>
-          </View>
-
-          {activeTab === 'input' && (
+      {/* ── TOP HEADER IDENTIK HALAMAN JADWAL PELAJARAN TU (TuScheduleWorkspace) ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
+        <View style={styles.headerTopRow}>
+          {onBack ? (
             <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleSubmit}
-              disabled={submitting || !selectedStudentId}
-              style={[styles.stickyCreateBtn, (submitting || !selectedStudentId) && { opacity: 0.7 }]}
-              accessibilityLabel="Simpan Setoran"
+              activeOpacity={0.75}
+              onPress={onBack}
+              style={styles.backButton}
+              accessibilityRole="button"
+              accessibilityLabel="Kembali"
             >
-              {submitting ? (
-                <ActivityIndicator size="small" color="#047857" />
-              ) : (
-                <>
-                  <MaterialCommunityIcons name="content-save" size={16} color="#047857" />
-                  <Text style={styles.stickyCreateBtnText}>Simpan</Text>
-                </>
-              )}
+              <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
             </TouchableOpacity>
+          ) : (
+            <View style={{ width: 42 }} />
           )}
-        </View>
 
-        {/* Tab Switcher Sticky */}
-        <View style={styles.stickyTabBarContainer}>
-          {(isPrincipal
-            ? [
-                { id: 'logs', label: `Monitoring (${tahfizhLogs.length})`, icon: 'history' },
-                { id: 'report', label: 'Rekap & Laporan', icon: 'file-chart-outline' },
-                { id: 'leaderboard', label: 'Top 5', icon: 'trophy-outline' },
-              ]
-            : [
-                { id: 'input', label: 'Input', icon: 'plus-circle-outline' },
-                { id: 'logs', label: `Riwayat (${tahfizhLogs.length})`, icon: 'history' },
-                { id: 'leaderboard', label: 'Top 5', icon: 'trophy-outline' },
-                { id: 'report', label: 'Laporan', icon: 'file-chart-outline' },
-              ]
-          ).map((item) => {
-            const isActive = activeTab === item.id;
-            return (
+          <View style={styles.headerTitleWrap}>
+            <View style={styles.headerBadge}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                {isPrincipal ? 'KEPALA SEKOLAH • MONITORING TAHFIZH' : 'GURU HALAQAH • JURNAL & TAHFIZH'}
+              </Text>
+            </View>
+            <Text style={styles.headerMainTitle} numberOfLines={1}>
+              {isPrincipal ? 'Monitoring & Rekap Tahfizh' : 'Jurnal & Setoran Halaqah'}
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              {selectedClass ? selectedClass.name : 'Semua Rombel Halaqah'} · {tahfizhLogs.length} Setoran
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {activeTab === 'input' && !isPrincipal && (
               <TouchableOpacity
-                key={item.id}
-                activeOpacity={0.85}
-                onPress={() => setActiveTab(item.id as any)}
-                style={[styles.stickyTabButton, isActive && styles.stickyTabButtonActive]}
-              >
-                <MaterialCommunityIcons
-                  name={item.icon as never}
-                  size={13}
-                  color={isActive ? '#047857' : '#D1FAE5'}
-                  style={{ marginRight: 4 }}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={[styles.stickyTabButtonText, isActive && styles.stickyTabButtonTextActive]}
-                >
-                  {item.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </Animated.View>
-
-      {/* ── 2. SCROLLVIEW UTAMA ── */}
-      <Animated.ScrollView
-        style={styles.screen}
-        contentContainerStyle={[
-          styles.mainScrollContent,
-          { paddingBottom: Math.max(insets.bottom + 80, 100) },
-        ]}
-        onScroll={handleMainScroll}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              void loadData();
-            }}
-            colors={['#059669']}
-          />
-        }
-      >
-        {/* 2a. Header Statis Workspace (di paling atas saat belum scroll) — TANPA TAB */}
-        <View style={[styles.staticTopBarWrapper, { paddingTop: insets.top + 8 }]}>
-          <LinearGradient
-            colors={['#047857', '#059669', '#10B981']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={styles.staticDecorCircle1} />
-          <View style={styles.staticDecorCircle2} />
-
-          <View style={styles.staticTopBarRow}>
-            {onBack && (
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={onBack}
-                style={styles.staticSquircleBackBtn}
+                activeOpacity={0.75}
+                onPress={handleSubmit}
+                disabled={submitting || !selectedStudentId}
+                style={[
+                  styles.refreshButton,
+                  { backgroundColor: '#ECFDF5', borderColor: '#059669' },
+                  (submitting || !selectedStudentId) && { opacity: 0.6 },
+                ]}
                 accessibilityRole="button"
-                accessibilityLabel="Kembali"
+                accessibilityLabel="Simpan Setoran"
               >
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#FFFFFF" />
+                {submitting ? (
+                  <ActivityIndicator size="small" color="#047857" />
+                ) : (
+                  <MaterialCommunityIcons name="content-save" size={20} color="#047857" />
+                )}
               </TouchableOpacity>
             )}
-            <View style={styles.staticTitleCol}>
-              <Text numberOfLines={1} style={styles.staticTitle}>
-                {isPrincipal ? 'Monitoring & Rekap Tahfizh' : 'Jurnal & Setoran Halaqah'}
-              </Text>
-              <Text numberOfLines={1} style={styles.staticSubtitle}>
-                {isPrincipal
-                  ? 'Supervisi setoran hafalan & rekap capaian santri unit (Kepala Sekolah)'
-                  : 'Simak setoran santri langsung dengan hitung baris otomatis Mushaf Madinah'}
-              </Text>
-            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => {
+                setRefreshing(true);
+                void loadData();
+              }}
+              style={styles.refreshButton}
+              accessibilityRole="button"
+              accessibilityLabel="Muat Ulang"
+            >
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* 2b. Badan Halaman Konten (Body) */}
-        <View style={styles.bodyContentWrapper}>
-          {/* Card Ringkasan Metrik (Total Setoran · Total Baris · Santri Halaqah) */}
-          <View style={styles.metricsCardWrapper}>
-            <LinearGradient
-              colors={['#047857', '#059669', '#10B981']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.metricsGradient}
-            >
-              <View style={styles.metricCol}>
-                <View style={styles.metricTopRow}>
-                  <MaterialCommunityIcons name="book-open-page-variant" size={16} color="#FFFFFF" />
-                  <Text style={styles.metricValWhite}>{tahfizhLogs.length}</Text>
-                </View>
-                <Text style={styles.metricLblWhite}>Total Setoran</Text>
-              </View>
-
-              <View style={styles.metricDivider} />
-
-              <View style={styles.metricCol}>
-                <View style={styles.metricTopRow}>
-                  <MaterialCommunityIcons name="format-line-spacing" size={16} color="#FFFFFF" />
-                  <Text style={styles.metricValWhite}>{totalLinesHafalan}</Text>
-                </View>
-                <Text style={styles.metricLblWhite}>Baris Mushaf</Text>
-              </View>
-
-              <View style={styles.metricDivider} />
-
-              <View style={styles.metricCol}>
-                <View style={styles.metricTopRow}>
-                  <MaterialCommunityIcons name="account-group" size={16} color="#FFFFFF" />
-                  <Text style={styles.metricValWhite}>{studentsInSelectedClass.length}</Text>
-                </View>
-                <Text style={styles.metricLblWhite}>Santri Binaan</Text>
-              </View>
-            </LinearGradient>
-          </View>
-
-          {/* Card Menu Tab Switcher Penuh Warna */}
-          <View style={styles.menuCardContainer}>
-            {(() => {
-              const currentMeta = {
-                input: {
-                  title: 'Mode Input Setoran',
-                  color: '#059669',
-                  bg: '#ECFDF5',
-                  border: '#A7F3D0',
-                },
-                logs: {
-                  title: 'Mode Riwayat Jurnal',
-                  color: '#0284C7',
-                  bg: '#F0F9FF',
-                  border: '#BAE6FD',
-                },
-                leaderboard: {
-                  title: 'Mode Top 5 Peringkat',
-                  color: '#D97706',
-                  bg: '#FFFBEB',
-                  border: '#FDE68A',
-                },
-                report: {
-                  title: 'Mode Laporan & Rekap',
-                  color: '#7C3AED',
-                  bg: '#F5F3FF',
-                  border: '#DDD6FE',
-                },
-              }[activeTab];
-
+        {/* ── TAB SWITCHER TETAP MUNCUL DI HEADER (TIDAK IKUT SCROLL HALAMAN BODI) ── */}
+        <View style={styles.tahfizhTabsWrapper}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tahfizhTabsScroll}
+          >
+            {(isPrincipal
+              ? [
+                  { id: 'logs', label: `Monitoring (${tahfizhLogs.length})`, icon: 'history' },
+                  { id: 'report', label: 'Rekap & Laporan', icon: 'file-chart-outline' },
+                  { id: 'leaderboard', label: 'Top 5', icon: 'trophy-outline' },
+                ]
+              : [
+                  { id: 'input', label: 'Input Setoran', icon: 'plus-circle-outline' },
+                  { id: 'logs', label: `Riwayat (${tahfizhLogs.length})`, icon: 'history' },
+                  { id: 'leaderboard', label: 'Top 5', icon: 'trophy-outline' },
+                  { id: 'report', label: 'Laporan', icon: 'file-chart-outline' },
+                ]
+            ).map((item) => {
+              const isActive = activeTab === item.id;
               return (
-                <View style={styles.menuSectionHeaderRow}>
-                  <View style={styles.menuTitleRow}>
-                    <View style={[styles.menuHeaderIndicator, { backgroundColor: currentMeta.color }]} />
-                    <Text style={styles.menuHeaderTitle}>Pilih Menu Halaqah</Text>
-                  </View>
-                  <View
+                <TouchableOpacity
+                  key={item.id}
+                  activeOpacity={0.85}
+                  style={[styles.tahfizhTabPill, isActive && styles.tahfizhTabPillActive]}
+                  onPress={() => setActiveTab(item.id as any)}
+                >
+                  <MaterialCommunityIcons
+                    name={item.icon as any}
+                    size={16}
+                    color={isActive ? '#FFFFFF' : '#047857'}
+                  />
+                  <Text
                     style={[
-                      styles.menuHeaderBadge,
-                      { backgroundColor: currentMeta.bg, borderColor: currentMeta.border },
+                      styles.tahfizhTabPillText,
+                      isActive && styles.tahfizhTabPillTextActive,
                     ]}
                   >
-                    <Text style={[styles.menuHeaderBadgeText, { color: currentMeta.color }]}>
-                      {currentMeta.title}
-                    </Text>
-                  </View>
-                </View>
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
               );
-            })()}
+            })}
+          </ScrollView>
+        </View>
+      </View>
 
-            <View style={styles.menuCardGrid}>
-              {(isPrincipal
-                ? [
-                    {
-                      id: 'logs',
-                      label: 'Monitoring',
-                      subtitle: `${tahfizhLogs.length} Setoran`,
-                      icon: 'history',
-                      color: '#0284C7',
-                      bgPastel: '#F0F9FF',
-                      borderColor: '#BAE6FD',
-                      activeBg: '#E0F2FE',
-                      titleColor: '#0369A1',
-                    },
-                    {
-                      id: 'report',
-                      label: 'Rekap & Rapor',
-                      subtitle: 'Laporan Capaian',
-                      icon: 'file-chart-outline',
-                      color: '#7C3AED',
-                      bgPastel: '#F5F3FF',
-                      borderColor: '#DDD6FE',
-                      activeBg: '#EDE9FE',
-                      titleColor: '#6D28D9',
-                    },
-                    {
-                      id: 'leaderboard',
-                      label: 'Top 5',
-                      subtitle: 'Peringkat',
-                      icon: 'trophy-award',
-                      color: '#D97706',
-                      bgPastel: '#FFFBEB',
-                      borderColor: '#FDE68A',
-                      activeBg: '#FEF3C7',
-                      titleColor: '#B45309',
-                    },
-                  ]
-                : [
-                    {
-                      id: 'input',
-                      label: 'Input Setoran',
-                      subtitle: 'Simak Baru',
-                      icon: 'book-plus-outline',
-                      color: '#059669',
-                      bgPastel: '#ECFDF5',
-                      borderColor: '#A7F3D0',
-                      activeBg: '#D1FAE5',
-                      titleColor: '#065F46',
-                    },
-                    {
-                      id: 'logs',
-                      label: 'Riwayat',
-                      subtitle: `${tahfizhLogs.length} Jurnal`,
-                      icon: 'history',
-                      color: '#0284C7',
-                      bgPastel: '#F0F9FF',
-                      borderColor: '#BAE6FD',
-                      activeBg: '#E0F2FE',
-                      titleColor: '#0369A1',
-                    },
-                    {
-                      id: 'leaderboard',
-                      label: 'Top 5',
-                      subtitle: 'Peringkat',
-                      icon: 'trophy-award',
-                      color: '#D97706',
-                      bgPastel: '#FFFBEB',
-                      borderColor: '#FDE68A',
-                      activeBg: '#FEF3C7',
-                      titleColor: '#B45309',
-                    },
-                    {
-                      id: 'report',
-                      label: 'Laporan',
-                      subtitle: 'Rekap Rapor',
-                      icon: 'file-chart-outline',
-                      color: '#7C3AED',
-                      bgPastel: '#F5F3FF',
-                      borderColor: '#DDD6FE',
-                      activeBg: '#EDE9FE',
-                      titleColor: '#6D28D9',
-                    },
-                  ]
-              ).map((item) => {
-                const isActive = activeTab === item.id;
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    activeOpacity={0.8}
-                    onPress={() => setActiveTab(item.id as any)}
-                    style={[
-                      styles.menuCardTile,
-                      {
-                        backgroundColor: isActive ? item.activeBg : item.bgPastel,
-                        borderColor: isActive ? item.color : item.borderColor,
-                        borderWidth: isActive ? 2 : 1,
-                        shadowColor: item.color,
-                        shadowOpacity: isActive ? 0.22 : 0.08,
-                        shadowRadius: isActive ? 6 : 3,
-                        elevation: isActive ? 4 : 1.5,
-                      },
-                    ]}
-                  >
-                    {isActive && (
-                      <View style={[styles.activePillIndicator, { backgroundColor: item.color }]} />
-                    )}
-
-                    <View
-                      style={[
-                        styles.menuIconCircleHalo,
-                        {
-                          backgroundColor: '#FFFFFF',
-                          borderColor: isActive ? item.color : item.borderColor,
-                          shadowColor: item.color,
-                          shadowOpacity: 0.1,
-                          shadowRadius: 3,
-                          elevation: 2,
-                        },
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={item.icon as never}
-                        size={22}
-                        color={item.color}
-                      />
+      {/* ── MAIN SHEET CONTAINER ── */}
+      <View style={styles.sheetContainer}>
+        <ScrollView
+          style={styles.screen}
+          contentContainerStyle={[
+            styles.cleanMainScrollContent,
+            { paddingBottom: Math.max(bottomInset + 80, 100) },
+          ]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                void loadData();
+              }}
+              tintColor="#0E5C44"
+              colors={['#059669', '#10B981']}
+            />
+          }
+        >
+          <View style={styles.bodyContentWrapper}>
+            {/* ── 3 KPI STATS CARDS: STANDAR EMAS KISI-KISI UJIAN & JADWAL ── */}
+            <View style={styles.kpiCardsRow}>
+              {/* Card 1: Total Setoran (Emerald) */}
+              <View style={[styles.kpiCardItem, { borderColor: '#A7F3D0' }]}>
+                <LinearGradient colors={['#FFFFFF', '#ECFDF5']} style={styles.kpiCardGradient}>
+                  <View style={styles.kpiCardTopRow}>
+                    <View style={[styles.kpiIconSquare, { backgroundColor: '#059669' }]}>
+                      <MaterialCommunityIcons name="book-open-page-variant" size={15} color="#FFFFFF" />
                     </View>
+                    <Text style={[styles.kpiCardValue, { color: '#064E3B' }]}>{tahfizhLogs.length}</Text>
+                  </View>
+                  <Text style={[styles.kpiCardLabel, { color: '#047857' }]} numberOfLines={1}>Total Setoran</Text>
+                  <Text style={styles.kpiCardSub} numberOfLines={1}>Jurnal Tercatat</Text>
+                </LinearGradient>
+              </View>
 
-                    <Text
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.75}
-                      style={[
-                        styles.menuTileTitle,
-                        {
-                          color: isActive ? item.color : item.titleColor,
-                          fontWeight: isActive ? '900' : '800',
-                        },
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
+              {/* Card 2: Baris Mushaf (Sky) */}
+              <View style={[styles.kpiCardItem, { borderColor: '#BAE6FD' }]}>
+                <LinearGradient colors={['#FFFFFF', '#F0F9FF']} style={styles.kpiCardGradient}>
+                  <View style={styles.kpiCardTopRow}>
+                    <View style={[styles.kpiIconSquare, { backgroundColor: '#0284C7' }]}>
+                      <MaterialCommunityIcons name="format-line-spacing" size={15} color="#FFFFFF" />
+                    </View>
+                    <Text style={[styles.kpiCardValue, { color: '#075985' }]}>{totalLinesHafalan}</Text>
+                  </View>
+                  <Text style={[styles.kpiCardLabel, { color: '#0284C7' }]} numberOfLines={1}>Baris Mushaf</Text>
+                  <Text style={styles.kpiCardSub} numberOfLines={1}>Mushaf Madinah</Text>
+                </LinearGradient>
+              </View>
 
-                    <Text
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.75}
-                      style={[
-                        styles.menuTileSubtitle,
-                        {
-                          color: item.color,
-                          fontWeight: isActive ? '800' : '600',
-                        },
-                      ]}
-                    >
-                      {item.subtitle}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {/* Card 3: Santri Binaan (Amber) */}
+              <View style={[styles.kpiCardItem, { borderColor: '#FDE68A' }]}>
+                <LinearGradient colors={['#FFFFFF', '#FFFBEB']} style={styles.kpiCardGradient}>
+                  <View style={styles.kpiCardTopRow}>
+                    <View style={[styles.kpiIconSquare, { backgroundColor: '#D97706' }]}>
+                      <MaterialCommunityIcons name="account-group" size={15} color="#FFFFFF" />
+                    </View>
+                    <Text style={[styles.kpiCardValue, { color: '#78350F' }]}>{studentsInSelectedClass.length}</Text>
+                  </View>
+                  <Text style={[styles.kpiCardLabel, { color: '#B45309' }]} numberOfLines={1}>Santri Binaan</Text>
+                  <Text style={styles.kpiCardSub} numberOfLines={1}>{selectedClass ? selectedClass.name : 'Semua Rombel'}</Text>
+                </LinearGradient>
+              </View>
             </View>
-          </View>
 
           {/* Dynamic Academic Year & Semester Pill */}
           <View style={styles.academicInfoPill}>
@@ -2971,7 +2725,8 @@ export default function TeacherTahfizhWorkspace({
           </View>
         )}
         </View>
-      </Animated.ScrollView>
+      </ScrollView>
+    </View>
 
       {/* POPUP MODAL PILIH ROMBEL / KELAS */}
       <Modal
@@ -3840,362 +3595,223 @@ export default function TeacherTahfizhWorkspace({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
   },
-  // ── Sticky Header Styles ──
-  stickyHeaderContainer: {
+  rootContainer: {
+    flex: 1,
+    backgroundColor: '#F0FDF4',
+  },
+
+  /* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */
+  bgBackdrop: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 99,
+    height: 480,
+    width: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
+  },
+
+  // ── Top Header Identik Jadwal Pelajaran & LMS Nilai/Rapor ──
+  headerContainer: {
+    zIndex: 10,
+    paddingHorizontal: 16,
     paddingBottom: 10,
-    paddingHorizontal: 14,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 8,
+    backgroundColor: 'transparent',
   },
-  stickyDecorCircle1: {
-    position: 'absolute',
-    top: -20,
-    right: -20,
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  stickyDecorCircle2: {
-    position: 'absolute',
-    bottom: -15,
-    left: 40,
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.07)',
-  },
-  stickyTopRow: {
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: 10,
   },
-  stickyTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 10,
-  },
-  stickySquircleBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
     elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
-    shadowRadius: 2,
   },
-  stickyTitleTextCol: {
+  headerTitleWrap: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  stickyTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  stickySubtitle: {
-    fontSize: 10.5,
-    fontWeight: '600',
-    color: '#A7F3D0',
-    marginTop: 1,
-  },
-  stickyCreateBtn: {
+  headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    gap: 4,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  stickyCreateBtnText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  stickyTabBarContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0, 0, 0, 0.16)',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
     borderRadius: 12,
-    padding: 3,
-    gap: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 5,
+    marginBottom: 2,
   },
-  stickyTabButton: {
-    flex: 1,
-    flexDirection: 'row',
+  pulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+  },
+  headerBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+    letterSpacing: 0.4,
+  },
+  headerMainTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#064E3B',
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#059669',
+    marginTop: 1,
+    textAlign: 'center',
+  },
+  refreshButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 4,
-    borderRadius: 9,
-  },
-  stickyTabButtonActive: {
-    backgroundColor: '#FFFFFF',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
     elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  stickyTabButtonText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#D1FAE5',
-  },
-  stickyTabButtonTextActive: {
-    color: '#047857',
-    fontWeight: '900',
   },
 
-  // ── Main Scroll & Static Top Bar ──
+  // ── Tab Switcher Sticky di Header (Tidak Ikut Scroll Bodi) ──
+  tahfizhTabsWrapper: {
+    marginTop: 10,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 14,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  tahfizhTabsScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 2,
+  },
+  tahfizhTabPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    gap: 6,
+  },
+  tahfizhTabPillActive: {
+    backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  tahfizhTabPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  tahfizhTabPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  // ── Main Sheet Container ──
+  sheetContainer: {
+    flex: 1,
+  },
   screen: {
     flex: 1,
+  },
+  cleanMainScrollContent: {
+    flexGrow: 1,
   },
   mainScrollContent: {
     flexGrow: 1,
   },
-  staticTopBarWrapper: {
-    paddingBottom: 18,
-    paddingHorizontal: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
-    elevation: 4,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-  },
-  staticDecorCircle1: {
-    position: 'absolute',
-    top: -25,
-    right: -25,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  staticDecorCircle2: {
-    position: 'absolute',
-    bottom: -35,
-    left: 20,
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  staticTopBarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  staticSquircleBackBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  staticTitleCol: {
-    flex: 1,
-  },
-  staticTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  staticSubtitle: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#D1FAE5',
-    marginTop: 2,
-  },
-
-  // ── Body Content Wrapper ──
   bodyContentWrapper: {
     paddingHorizontal: 14,
-    paddingTop: 12,
+    paddingTop: 8,
   },
 
-  // ── Metrics Card (Total Setoran · Total Baris · Santri Binaan) ──
-  metricsCardWrapper: {
-    borderRadius: 18,
-    overflow: 'hidden',
-    marginBottom: 12,
-    elevation: 3,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-  },
-  metricsGradient: {
+  // ── 3 KPI Cards Standar Emas Kisi-kisi Ujian & Jadwal Pelajaran ──
+  kpiCardsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
+    gap: 8,
+    marginBottom: 12,
   },
-  metricCol: {
-    alignItems: 'center',
+  kpiCardItem: {
     flex: 1,
-  },
-  metricTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  metricValWhite: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  metricLblWhite: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#D1FAE5',
-    marginTop: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-  },
-  metricDivider: {
-    width: 1,
-    height: 26,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-
-  // ── Card Menu Tab Switcher ──
-  menuCardContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingTop: 12,
-    paddingBottom: 10,
-    marginBottom: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
+    overflow: 'hidden',
+    shadowColor: '#064E3B',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
     elevation: 2,
   },
-  menuSectionHeaderRow: {
+  kpiCardGradient: {
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  kpiCardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
-    paddingHorizontal: 4,
+    marginBottom: 6,
   },
-  menuTitleRow: {
-    flexDirection: 'row',
+  kpiIconSquare: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
   },
-  menuHeaderIndicator: {
-    width: 3.5,
-    height: 14,
-    borderRadius: 2,
-    backgroundColor: '#059669',
+  kpiCardValue: {
+    fontSize: 16,
+    fontWeight: '900',
   },
-  menuHeaderTitle: {
-    fontSize: 12,
+  kpiCardLabel: {
+    fontSize: 11,
     fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.2,
+    letterSpacing: -0.1,
   },
-  menuHeaderBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  menuHeaderBadgeText: {
+  kpiCardSub: {
     fontSize: 9.5,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  menuCardGrid: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: 6,
-  },
-  menuCardTile: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    position: 'relative',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  menuCardTileActive: {
-    elevation: 3,
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-  },
-  activePillIndicator: {
-    position: 'absolute',
-    top: 4,
-    width: 14,
-    height: 3,
-    borderRadius: 2,
-  },
-  menuIconCircleHalo: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    marginBottom: 5,
-    marginTop: 2,
-  },
-  menuTileTitle: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: '#1E293B',
-    textAlign: 'center',
-    letterSpacing: -0.2,
-  },
-  menuTileSubtitle: {
-    fontSize: 8.5,
-    fontWeight: '500',
     color: '#64748B',
-    textAlign: 'center',
-    marginTop: 1.5,
+    fontWeight: '600',
+    marginTop: 1,
   },
 
   // ── Body Tab Bar Switcher (Legacy/Compat) ──

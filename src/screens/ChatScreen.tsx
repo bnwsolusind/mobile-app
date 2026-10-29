@@ -1200,11 +1200,16 @@ function ParentChatScreen({ navigation, route }: any) {
   return (
     <View style={styles.rootContainer} onLayout={handleRootLayout}>
       {/* ── LATAR GAMBAR ILUSTRASI SEKOLAH DENGAN GRADASI EMERALD BERSIH ── */}
-      <View style={[styles.topFoliageWrapper, { height: 380 }]} pointerEvents="none">
-        <Image source={PARENT_HOME_BG} style={styles.topFoliageBgImage} resizeMode="cover" />
+      <View style={[styles.topFoliageWrapper, { height: 480 }]} pointerEvents="none">
+        <Image source={PARENT_HOME_BG} style={[styles.topFoliageBgImage, { opacity: 0.45 }]} resizeMode="cover" />
         <LinearGradient
-          colors={['rgba(236, 253, 245, 0)', 'rgba(236, 253, 245, 0.45)', '#ECFDF5']}
-          locations={[0, 0.45, 1]}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
       </View>

@@ -35,6 +35,7 @@ import EmptyStateCard from '../EmptyStateCard';
 import { isTuRole, isPrincipalRole } from '../../utils/roles';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 export interface TeacherConversation {
   id: string;
@@ -883,29 +884,41 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
   // ================= VIEW: CHAT ROOM DETAIL =================
   if (selectedConv) {
     return (
-      <View style={styles.container} onLayout={handleRootLayout}>
+      <View style={styles.rootContainer} onLayout={handleRootLayout}>
+        {/* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */}
+        <View style={styles.bgBackdrop} pointerEvents="none">
+          <Image
+            source={PARENT_HOME_BG}
+            style={styles.bgImage}
+            resizeMode="cover"
+          />
+          <LinearGradient
+            colors={[
+              'rgba(24, 161, 101, 0.18)',
+              'rgba(24, 161, 101, 0.40)',
+              'rgba(240, 253, 244, 0.95)',
+              '#F0FDF4',
+            ]}
+            locations={[0, 0.28, 0.65, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </View>
+
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? topInset : 0}
         >
-        {/* Chat Room Top Bar (Style Mutaba'ah) */}
-        <View style={[styles.chatRoomHeader, { paddingTop: topInset + 8 }]}>
-          <LinearGradient
-            colors={['#047857', '#059669', '#10B981']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={styles.heroDecorCircle1} />
-          <View style={styles.heroDecorCircle2} />
-
+        {/* Chat Room Top Bar */}
+        <View style={[styles.chatRoomHeader, { paddingTop: topInset + 6 }]}>
           <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.heroSquircleBtn}
+            activeOpacity={0.75}
+            style={styles.backButton}
             onPress={() => setSelectedConv(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
 
           <View style={styles.headerAvatarSquircle}>
@@ -922,7 +935,7 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
               <MaterialCommunityIcons
                 name={selectedConv.student_id ? 'school' : 'briefcase-outline'}
                 size={12}
-                color="#A7F3D0"
+                color="#059669"
                 style={{ marginRight: 3 }}
               />
               <Text numberOfLines={1} style={styles.chatRoomSubtitle}>
@@ -1183,22 +1196,33 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
 
   // ================= VIEW: CONVERSATIONS LIST =================
   return (
-    <View style={styles.container}>
-      {/* Top Header Card — Mutaba'ah Emerald Gradient Style */}
-      <View style={[styles.topHeader, { paddingTop: topInset + 8 }]}>
+    <View style={styles.rootContainer}>
+      {/* ── Background Mosque & School (Identik Halaman Utama & Jadwal Pelajaran) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien berbasis warna #18A165 identik dengan Jadwal Pelajaran & Halaman Utama */}
         <LinearGradient
-          colors={['#047857', '#059669', '#10B981']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={styles.heroDecorCircle1} />
-        <View style={styles.heroDecorCircle2} />
+      </View>
 
-        <View style={styles.topHeaderRow}>
+      {/* ── TOP HEADER IDENTIK HALAMAN JADWAL PELAJARAN TU & KISI-KISI UJIAN ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
+        <View style={styles.headerTopRow}>
           <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.headerBackBtn}
+            activeOpacity={0.75}
+            style={styles.backButton}
             onPress={() => {
               if (navigation?.canGoBack?.()) {
                 navigation.goBack();
@@ -1209,50 +1233,59 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
             accessibilityRole="button"
             accessibilityLabel="Kembali"
           >
-            <MaterialCommunityIcons name="arrow-left" size={20} color="#059669" />
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
           </TouchableOpacity>
 
-          <View style={{ flex: 1, paddingRight: 6 }}>
-            <View style={styles.badgeRow}>
-              <View style={styles.heroPill}>
-                <MaterialCommunityIcons name="shield-check" size={12} color="#A7F3D0" style={{ marginRight: 3 }} />
-                <Text style={styles.heroPillText}>
-                  {isPrincipal
-                    ? 'Ruang Komunikasi Kepala Sekolah'
-                    : isTu
-                    ? 'Ruang Komunikasi Staf TU'
-                    : 'Ruang Konsultasi Guru'}
-                </Text>
-              </View>
-              {totalUnreadCount > 0 && (
-                <View style={styles.unreadPill}>
-                  <Text style={styles.unreadPillText}>{totalUnreadCount} Pesan Baru</Text>
-                </View>
-              )}
+          <View style={styles.headerTitleWrap}>
+            <View style={styles.headerBadge}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                {isPrincipal
+                  ? 'KEPALA SEKOLAH • KOMUNIKASI TENDIK'
+                  : isTu
+                  ? 'TATA USAHA • LAYANAN ADMINISTRASI'
+                  : 'GURU PENGAMPU • RUANG KONSULTASI'}
+              </Text>
             </View>
-            <Text style={styles.headerTitle} numberOfLines={1}>
+            <Text style={styles.headerMainTitle} numberOfLines={1}>
               {isPrincipal ? 'Pusat Komunikasi & Tendik' : isTu ? 'Layanan Administrasi & Staf' : 'Komunikasi Orang Tua'}
             </Text>
             <Text style={styles.headerSubtitle} numberOfLines={1}>
               {isPrincipal
-                ? 'Layanan koordinasi guru, tenaga kependidikan (tendik), dan wali santri'
+                ? 'Koordinasi Tendik & Wali Santri'
                 : isTu
-                ? 'Layanan informasi administrasi sekolah & komunikasi wali santri'
-                : 'Layanan konsultasi wali santri & perkembangan belajar anak'}
+                ? 'Layanan Administrasi & Koordinasi Staf'
+                : 'Konsultasi Belajar Santri'}
             </Text>
           </View>
 
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={styles.newChatHeaderBtn}
-            onPress={() => {
-              setShowNewChatModal(true);
-              void loadDirectory();
-            }}
-          >
-            <MaterialCommunityIcons name="chat-plus" size={15} color="#059669" style={{ marginRight: 4 }} />
-            <Text style={styles.newChatHeaderBtnText}>+ Chat Baru</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              style={styles.newChatHeaderBtn}
+              onPress={() => {
+                setShowNewChatModal(true);
+                void loadDirectory();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Chat Baru"
+            >
+              <MaterialCommunityIcons name="chat-plus" size={16} color="#059669" style={{ marginRight: 4 }} />
+              <Text style={styles.newChatHeaderBtnText}>+ Chat</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.75}
+              style={styles.refreshButton}
+              onPress={() => {
+                void loadConversations();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Muat Ulang"
+            >
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Search Bar */}
@@ -1299,7 +1332,7 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
               <MaterialCommunityIcons
                 name="badge-account-outline"
                 size={13}
-                color={tabFilter === 'employees' ? '#047857' : '#FFFFFF'}
+                color={tabFilter === 'employees' ? '#FFFFFF' : '#047857'}
                 style={{ marginRight: 4 }}
               />
               <Text style={[styles.tabBtnText, tabFilter === 'employees' && styles.tabBtnTextActive]}>
@@ -1316,7 +1349,7 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
               <MaterialCommunityIcons
                 name="school-outline"
                 size={13}
-                color={tabFilter === 'parents' ? '#047857' : '#FFFFFF'}
+                color={tabFilter === 'parents' ? '#FFFFFF' : '#047857'}
                 style={{ marginRight: 4 }}
               />
               <Text style={[styles.tabBtnText, tabFilter === 'parents' && styles.tabBtnTextActive]}>
@@ -1404,7 +1437,7 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
         <View style={styles.infoBanner}>
           <MaterialCommunityIcons name="information-outline" size={15} color="#047857" style={{ marginRight: 6 }} />
           <Text style={styles.infoBannerText}>
-            Ketuk nama wali santri untuk membuka obrolan & mulai mengetik pesan.
+            Ketuk kontak untuk membuka obrolan & mulai koordinasi pesan.
           </Text>
         </View>
       </View>
@@ -1783,9 +1816,13 @@ export default function TeacherChatWorkspace({ navigation, route }: any) {
 }
 
 const styles = StyleSheet.create({
+  rootContainer: {
+    flex: 1,
+    backgroundColor: '#F0FDF4',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
   },
   centerContainer: {
     flex: 1,
@@ -1796,144 +1833,150 @@ const styles = StyleSheet.create({
   mutedLoadingText: {
     marginTop: 10,
     fontSize: 12,
-    color: '#64748B',
+    color: '#059669',
     fontWeight: '600',
   },
-  topHeader: {
+
+  /* ── Background Mosque & School (Identik Halaman Utama, Jadwal & Kisi-Kisi) ── */
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 480,
     width: '100%',
-    position: 'relative',
-    overflow: 'hidden',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.45,
+  },
+
+  // ── Top Header Identik Jadwal Pelajaran & LMS Nilai/Rapor ──
+  headerContainer: {
+    zIndex: 10,
     paddingHorizontal: 16,
-    paddingBottom: 14,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingBottom: 8,
+    backgroundColor: 'transparent',
   },
-  heroDecorCircle1: {
-    position: 'absolute',
-    top: -30,
-    right: -20,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  heroDecorCircle2: {
-    position: 'absolute',
-    bottom: -20,
-    left: 20,
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  topHeaderRow: {
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    width: '100%',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 8,
   },
-  headerBackBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 5,
+    shadowColor: '#064E3B',
     shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  badgeRow: {
+  headerTitleWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 3,
-  },
-  heroPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderColor: '#A7F3D0',
+    gap: 5,
+    marginBottom: 2,
   },
-  heroPillText: {
-    fontSize: 10,
+  pulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+  },
+  headerBadgeText: {
+    fontSize: 9.5,
     fontWeight: '800',
-    color: '#A7F3D0',
+    color: '#047857',
     letterSpacing: 0.3,
   },
-  unreadPill: {
-    backgroundColor: '#EF4444',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  unreadPillText: {
-    fontSize: 10,
+  headerMainTitle: {
+    fontSize: 16,
     fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  headerTitle: {
-    fontSize: 16.5,
-    fontWeight: '700',
-    fontFamily: 'Poppins_700Bold',
-    color: '#FFFFFF',
-    letterSpacing: -0.2,
+    color: '#064E3B',
+    letterSpacing: -0.3,
+    textAlign: 'center',
   },
   headerSubtitle: {
     fontSize: 11,
-    fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '600',
+    color: '#059669',
     marginTop: 1,
+    textAlign: 'center',
   },
   newChatHeaderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    height: 42,
+    paddingHorizontal: 12,
+    borderRadius: 13,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 12,
-    shadowColor: '#000000',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
   newChatHeaderBtnText: {
     color: '#059669',
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '800',
+  },
+  refreshButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 12,
-    height: 40,
-    marginTop: 4,
-    shadowColor: '#000000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    height: 42,
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
     elevation: 2,
   },
   searchInput: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 12.5,
     color: '#0F172A',
     marginLeft: 6,
     paddingVertical: 0,
@@ -1941,22 +1984,22 @@ const styles = StyleSheet.create({
   tabsRow: {
     flexDirection: 'row',
     gap: 7,
-    marginTop: 10,
+    marginTop: 8,
     paddingBottom: 2,
   },
   tabBtn: {
     paddingHorizontal: 12,
-    paddingVertical: 6.5,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    paddingVertical: 7,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: '#A7F3D0',
   },
   tabBtnActive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#FFFFFF',
-    shadowColor: '#000000',
-    shadowOpacity: 0.1,
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
@@ -1964,14 +2007,14 @@ const styles = StyleSheet.create({
   tabBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#065F46',
   },
   tabBtnTextActive: {
-    color: '#047857',
+    color: '#FFFFFF',
     fontWeight: '800',
   },
   unitFilterContainer: {
-    marginTop: 8,
+    marginTop: 6,
   },
   unitFilterScroll: {
     flexDirection: 'row',
@@ -1983,22 +2026,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: '#A7F3D0',
   },
   unitChipActive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#FFFFFF',
+    backgroundColor: '#059669',
+    borderColor: '#047857',
   },
   unitChipText: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#065F46',
   },
   unitChipTextActive: {
-    color: '#047857',
+    color: '#FFFFFF',
     fontWeight: '800',
   },
   convListContent: {
@@ -2161,62 +2204,59 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '900',
   },
-  // Chat Room Detail Styles (Mutaba'ah Style)
+  // Chat Room Detail Styles
   chatRoomHeader: {
     width: '100%',
-    position: 'relative',
-    overflow: 'hidden',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.22)',
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    elevation: 4,
+    borderBottomColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 10,
   },
   heroSquircleBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
-    shadowOpacity: 0.12,
-    shadowRadius: 5,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    elevation: 2,
     marginRight: 8,
   },
-  backButton: {
-    padding: 6,
-    marginRight: 4,
-  },
   headerAvatarSquircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerAvatarText: {
-    color: '#FFFFFF',
+    color: '#047857',
     fontWeight: '900',
-    fontSize: 16,
+    fontSize: 17,
   },
   chatRoomTitle: {
-    fontSize: 14.5,
-    fontWeight: '800',
-    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#064E3B',
+    letterSpacing: -0.2,
   },
   chatRoomSubtitle: {
     fontSize: 11,
@@ -2224,15 +2264,17 @@ const styles = StyleSheet.create({
     color: '#059669',
   },
   roleTagPill: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   roleTagText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#475569',
+    color: '#047857',
   },
   messagesList: {
     paddingHorizontal: 14,

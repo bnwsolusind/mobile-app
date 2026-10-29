@@ -3,6 +3,7 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Image,
   Modal,
   ScrollView,
   StyleSheet,
@@ -16,9 +17,15 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTeacherClassStore, TeacherClass } from '../../stores/teacherClassStore';
 import { mobileApiService, unwrapCollection } from '../../services/mobileApiService';
 import { useAuthStore } from '../../stores/authStore';
+import { useMobileConfigStore } from '../../stores/mobileConfigStore';
 import { resolveUnitName } from '../../utils/employeeUtils';
+import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../../utils/profile';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Latar Belakang Splash Screen 2 & Logo SIMSIT (Identik dengan Tata Usaha & Parent)
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
+const SPLASH_LOGO = require('../../../assets/launcher_source.png');
 
 // ──────────────────────────────────────────────────────────────
 // KOMPONEN ANIMASI RADAR PULSE / RIPPLE WAVE DINAMIS
@@ -161,6 +168,10 @@ interface TeacherDashboardViewProps {
   navigation: any;
   onOpenAllMenus?: () => void;
   announcements?: any[];
+  topInset?: number;
+  unreadNotificationCount?: number;
+  isDualRole?: boolean;
+  onSwitchDualRole?: () => void;
 }
 
 export default function TeacherDashboardView({
@@ -168,9 +179,15 @@ export default function TeacherDashboardView({
   navigation,
   onOpenAllMenus,
   announcements,
+  topInset = 0,
+  unreadNotificationCount = 0,
+  isDualRole = false,
+  onSwitchDualRole,
 }: TeacherDashboardViewProps) {
+  const [avatarError, setAvatarError] = useState(false);
   // Konteks Guru & Unit Dinamis dari AuthStore dan Dashboard
   const user = useAuthStore((state) => state.user);
+  const mobileConfig = useMobileConfigStore((state) => state.config);
   const teacherData = dashboard?.teacher || dashboard?.data?.teacher || {};
   const teacherName =
     teacherData?.name ||
@@ -187,6 +204,35 @@ export default function TeacherDashboardView({
     resolveUnitName((user as any)?.education_unit) ||
     resolveUnitName((user?.metadata as any)?.unit_name) ||
     'Sekolah Islam Terpadu';
+
+  const teacherPosition = useMemo(() => {
+    return (
+      teacherData?.jabatan ||
+      teacherData?.position ||
+      (user?.employee as any)?.position?.name ||
+      (user as any)?.position ||
+      'Guru Mata Pelajaran'
+    );
+  }, [teacherData, user]);
+
+  const resolvedProfileImg = useMemo(() => {
+    if (avatarError) return null;
+    return getProfileImageUrl(user, dashboard);
+  }, [user, dashboard, avatarError]);
+
+  const currentDateFormatted = useMemo(() => {
+    try {
+      const now = new Date();
+      return now.toLocaleDateString('id-ID', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+    } catch {
+      return 'Hari ini';
+    }
+  }, []);
 
   // 1. Integrasi Store Kelas & Rombel Guru
   const classesFromStore = useTeacherClassStore((state) => state.classes) || [];
@@ -562,14 +608,53 @@ export default function TeacherDashboardView({
     return { ids, names };
   }, [dashboard, schedulesToday, displaySchedules, allClasses]);
 
-  // 5. 15 Menu Utama Guru (Grid 5 Kolom x 3 Baris Persis Sesuai Mockup)
+  // 5. 12 Menu Utama Guru (Grid 4 Kolom x 3 Baris Persis Sesuai Mockup & Unified Web Config)
   const primary15MenuItems = useMemo(() => {
     const isAll = !selectedClassId || selectedClassId === '__ALL__';
     const classId = isAll ? undefined : selectedClass?.id;
     const className = isAll ? undefined : selectedClassName;
 
+    const dynamicMenus = mobileConfig?.role_menus?.['teacher'];
+    if (dynamicMenus && Array.isArray(dynamicMenus) && dynamicMenus.length > 0) {
+      const active = dynamicMenus.filter((item) => item.is_active !== false);
+      if (active.length > 0) {
+        const top11 = active.slice(0, 11).map((item, index) => {
+          let params: any = undefined;
+          if (['Jadwal', 'QR Code', 'Absensi', 'Materi', 'Tugas', 'Nilai', 'Tahfizh', 'Mutabaah', 'Chat', 'KisiKisi', 'BankSoal', 'CbtExams'].includes(item.route)) {
+            params = { kelas_id: classId, class_name: className };
+            if (item.tab) {
+              params.tab = item.tab;
+            }
+          }
+          return {
+            id: item.id || `teacher-m-${index}`,
+            title: item.label.includes(' ') && item.label.length > 8 ? item.label.replace(' ', '\n') : item.label,
+            icon: item.icon || 'circle-outline',
+            color: item.color || '#059669',
+            bg: item.bg || '#ECFDF5',
+            route: item.route || 'HomeScreen',
+            tab: item.tab,
+            badge: item.badge,
+            params,
+          };
+        });
+
+        return [
+          ...top11,
+          {
+            id: 'lihat_semua',
+            title: 'Lihat\nSemua',
+            icon: 'view-grid-plus',
+            color: '#0284C7',
+            bg: '#E0F2FE',
+            route: '__OPEN_ALL__',
+          },
+        ];
+      }
+    }
+
     return [
-      // Baris 1
+      // Baris 1 (4 Kolom)
       {
         id: 'jadwal',
         title: 'Jadwal\nKBM',
@@ -607,6 +692,7 @@ export default function TeacherDashboardView({
         route: 'Tugas',
         params: { kelas_id: classId, class_name: className },
       },
+      // Baris 2 (4 Kolom)
       {
         id: 'nilai',
         title: 'Input\nNilai',
@@ -616,7 +702,6 @@ export default function TeacherDashboardView({
         route: 'Nilai',
         params: { kelas_id: classId, class_name: className },
       },
-      // Baris 2
       {
         id: 'tahfizh',
         title: 'Tahfizh',
@@ -645,6 +730,7 @@ export default function TeacherDashboardView({
         fallbackRoute: 'Chat Guru',
         params: { kelas_id: classId, class_name: className },
       },
+      // Baris 3 (4 Kolom)
       {
         id: 'kisi_kisi',
         title: 'Kisi-kisi',
@@ -663,7 +749,6 @@ export default function TeacherDashboardView({
         route: 'BankSoal',
         params: { kelas_id: classId, class_name: className },
       },
-      // Baris 3
       {
         id: 'ujian',
         title: 'Ujian\nCBT',
@@ -674,39 +759,15 @@ export default function TeacherDashboardView({
         params: { kelas_id: classId, class_name: className },
       },
       {
-        id: 'kalender',
-        title: 'Kalender',
-        icon: 'calendar-month',
+        id: 'lihat_semua',
+        title: 'Lihat\nSemua',
+        icon: 'view-grid-plus',
         color: '#0284C7',
-        bg: '#F0F9FF',
-        route: 'Kalender',
-      },
-      {
-        id: 'informasi',
-        title: 'Informasi',
-        icon: 'bullhorn',
-        color: '#E11D48',
-        bg: '#FFF1F2',
-        route: 'Informasi',
-      },
-      {
-        id: 'pengaturan',
-        title: 'Pengaturan',
-        icon: 'cog',
-        color: '#64748B',
-        bg: '#F1F5F9',
-        route: 'Profil',
-      },
-      {
-        id: 'lainnya',
-        title: 'Lainnya',
-        icon: 'dots-horizontal',
-        color: '#64748B',
-        bg: '#F1F5F9',
+        bg: '#E0F2FE',
         route: '__OPEN_ALL__',
       },
     ];
-  }, [selectedClass, selectedClassName]);
+  }, [selectedClass, selectedClassName, mobileConfig?.role_menus]);
 
   const handleMenuPress = (item: any) => {
     if (item.route === '__OPEN_ALL__') {
@@ -876,102 +937,226 @@ export default function TeacherDashboardView({
 
   return (
     <View style={styles.container}>
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* 1. CARD "SEDANG MENGAJAR" (WARNA LATAR STICKY HEADER)      */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <LinearGradient
-        colors={['#0D6B42', '#18A165', '#2BD988']}
-        locations={[0, 0.55, 1]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.liveKbmCard}
-      >
-        {/* Row Atas: Status Sedang Mengajar / KBM Berikutnya & Jam */}
-        <View style={styles.liveKbmTopRow}>
-          <View style={styles.liveKbmBadgeLeft}>
-            <RadarPulseDot color={activeTeachingSchedule.badgeColor || '#10B981'} size={7} />
-            <Text style={styles.liveKbmBadgeText}>
-              {activeTeachingSchedule.bannerLabel || 'Sedang Mengajar'}
+      {/* ── Background Image & Gradient Splash Screen 2 (Layer Belakang Selaras TU) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        {/* Overlay gradien transparan berbasis warna #18A165 identik dengan TU & Splash 2 */}
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── Top Header Bar (Selaras Tata Usaha) ── */}
+      <View style={[styles.topBar, { paddingTop: topInset + 6 }]}>
+        {/* Sisi Kiri: Logo SIMSIT + "Guru & Akademik" + Subtitle Unit */}
+        <View style={styles.topBarLeft}>
+          <View style={styles.logoBadgeOuter}>
+            <Image
+              source={SPLASH_LOGO}
+              style={styles.logoBadgeImg}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.titleCol}>
+            <Text style={styles.roleTitleText}>Guru & Akademik</Text>
+            <Text style={styles.unitSubtitleText} numberOfLines={1}>
+              {teacherUnit}
             </Text>
           </View>
-          <Text style={styles.liveKbmTimeText}>
-            {activeTeachingSchedule.timeStartStr === '--:--'
-              ? 'Tidak Ada Sesi'
-              : `${activeTeachingSchedule.timeStartStr} - ${activeTeachingSchedule.timeEndStr}`}
-          </Text>
         </View>
 
-        {/* Row Tengah: Icon Al-Qur'an / Rehal + Detail Mapel + Sisa Waktu & Arrow */}
-        <View style={styles.liveKbmMidRow}>
-          {/* Squircle Icon Al-Qur'an di atas Rehal */}
-          <View style={styles.liveKbmIconBox}>
-            <MaterialCommunityIcons name="book-open-page-variant" size={24} color="#FFFFFF" />
-          </View>
+        {/* Sisi Kanan: Lonceng Notifikasi ber-Badge + Avatar Pengguna */}
+        <View style={styles.topBarRight}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => navigation?.navigate('Notifikasi')}
+            style={styles.notificationBtn}
+            accessibilityLabel="Notifikasi"
+          >
+            <MaterialCommunityIcons name="bell" size={24} color="#064E3B" />
+            {unreadNotificationCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
 
-          {/* Info Mapel, Kelas, dan Ruangan */}
-          <View style={styles.liveKbmInfoCol}>
-            <Text numberOfLines={1} style={styles.liveKbmSubjectText}>
-              {activeTeachingSchedule.subjectName}
-            </Text>
-            <Text numberOfLines={1} style={styles.liveKbmClassText}>
-              {activeTeachingSchedule.className}
-            </Text>
-            <Text numberOfLines={1} style={styles.liveKbmRoomText}>
-              📍 {activeTeachingSchedule.room}
-            </Text>
-          </View>
+          {/* Avatar Profil: Dinamis dengan fallback */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => navigation?.navigate('Profil')}
+            style={styles.avatarBtn}
+            accessibilityLabel="Profil Guru"
+          >
+            {resolvedProfileImg ? (
+              <Image
+                source={{ uri: resolvedProfileImg }}
+                style={styles.avatarImg}
+                resizeMode="cover"
+                onError={() => setAvatarError(true)}
+              />
+            ) : (
+              <Image
+                source={DEFAULT_PARENT_AVATAR}
+                style={styles.avatarImg}
+                resizeMode="cover"
+              />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
 
-          {/* Kolom Kanan: Sisa Waktu & Tombol Arrow */}
-          <View style={styles.liveKbmRightCol}>
-            <View style={styles.liveKbmTimerPill}>
-              <MaterialCommunityIcons name="clock-outline" size={10} color="#B45309" style={{ marginRight: 2 }} />
-              <Text style={styles.liveKbmTimerText}>
-                {activeTeachingSchedule.remainingText}
+      {/* ── Tombol Ganti Ruang (Khusus Dual-Role Aktif) ── */}
+      {isDualRole && (
+        <View style={styles.dualRoleSwitchContainer}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={onSwitchDualRole}
+            style={styles.dualRoleSwitchBtn}
+          >
+            <MaterialCommunityIcons name="arrow-left" size={16} color="#065F46" />
+            <Text style={styles.dualRoleSwitchText}>
+              Ruang Aktif: <Text style={{ fontWeight: '800' }}>Guru & Akademik</Text>
+            </Text>
+            <View style={styles.dualRoleSwitchBadge}>
+              <Text style={styles.dualRoleSwitchBadgeText}>Ganti Ruang</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Greeting Banner (Selaras Tata Usaha) ── */}
+      <View style={styles.greetingSection}>
+        <Text style={styles.greetingLabel}>Selamat datang,</Text>
+        <Text style={styles.greetingUserName} numberOfLines={1}>
+          {teacherName}
+        </Text>
+        <Text style={styles.greetingUserRole} numberOfLines={1}>
+          {teacherPosition} • {teacherUnit}
+        </Text>
+
+        {/* Pill Tanggal Format Bahasa Indonesia Dinamis */}
+        <View style={styles.datePill}>
+          <MaterialCommunityIcons
+            name="calendar-month-outline"
+            size={16}
+            color="#064E3B"
+            style={{ marginRight: 6 }}
+          />
+          <Text style={styles.datePillText}>{currentDateFormatted}</Text>
+        </View>
+      </View>
+
+      {/* ── Konten Dashboard Guru ── */}
+      <View style={styles.bodyContent}>
+        {/* ────────────────────────────────────────────────────────── */}
+        {/* 1. CARD "SEDANG MENGAJAR" (WARNA LATAR STICKY HEADER)      */}
+        {/* ────────────────────────────────────────────────────────── */}
+        <LinearGradient
+          colors={['rgba(255, 255, 255, 0.94)', 'rgba(236, 253, 245, 0.88)']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.liveKbmCard}
+        >
+          {/* Row Atas: Status Sedang Mengajar / KBM Berikutnya & Jam */}
+          <View style={styles.liveKbmTopRow}>
+            <View style={styles.liveKbmBadgeLeft}>
+              <RadarPulseDot color={activeTeachingSchedule.badgeColor || '#10B981'} size={7} />
+              <Text style={styles.liveKbmBadgeText}>
+                {activeTeachingSchedule.bannerLabel || 'Sedang Mengajar'}
               </Text>
             </View>
+            <Text style={styles.liveKbmTimeText}>
+              {activeTeachingSchedule.timeStartStr === '--:--'
+                ? 'Tidak Ada Sesi'
+                : `${activeTeachingSchedule.timeStartStr} - ${activeTeachingSchedule.timeEndStr}`}
+            </Text>
+          </View>
+
+          {/* Row Tengah: Icon Al-Qur'an / Rehal + Detail Mapel + Sisa Waktu & Arrow */}
+          <View style={styles.liveKbmMidRow}>
+            {/* Squircle Icon Al-Qur'an di atas Rehal */}
+            <View style={styles.liveKbmIconBox}>
+              <MaterialCommunityIcons name="book-open-page-variant" size={24} color="#059669" />
+            </View>
+
+            {/* Info Mapel, Kelas, dan Ruangan */}
+            <View style={styles.liveKbmInfoCol}>
+              <Text numberOfLines={1} style={styles.liveKbmSubjectText}>
+                {activeTeachingSchedule.subjectName}
+              </Text>
+              <Text numberOfLines={1} style={styles.liveKbmClassText}>
+                {activeTeachingSchedule.className}
+              </Text>
+              <Text numberOfLines={1} style={styles.liveKbmRoomText}>
+                📍 {activeTeachingSchedule.room}
+              </Text>
+            </View>
+
+            {/* Kolom Kanan: Sisa Waktu & Tombol Arrow */}
+            <View style={styles.liveKbmRightCol}>
+              <View style={styles.liveKbmTimerPill}>
+                <MaterialCommunityIcons name="clock-outline" size={10} color="#B45309" style={{ marginRight: 2 }} />
+                <Text style={styles.liveKbmTimerText}>
+                  {activeTeachingSchedule.remainingText}
+                </Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => navigation?.navigate('Jadwal')}
+                style={styles.liveKbmArrowBtn}
+              >
+                <MaterialCommunityIcons name="chevron-right" size={16} color="#059669" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Row Bawah: 2 Tombol Aksi (Presensi Siswa & Lihat Materi) */}
+          <View style={styles.liveKbmActionRow}>
             <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => navigation?.navigate('Jadwal')}
-              style={styles.liveKbmArrowBtn}
+              activeOpacity={0.85}
+              onPress={() =>
+                navigation?.navigate('QR Code', {
+                  kelas_id: selectedClass?.id,
+                  class_name: activeTeachingSchedule.className,
+                  mode: 'manual',
+                })
+              }
+              style={styles.liveKbmBtnPrimary}
             >
-              <MaterialCommunityIcons name="chevron-right" size={16} color="#FFFFFF" />
+              <MaterialCommunityIcons name="clipboard-check" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
+              <Text style={styles.liveKbmBtnPrimaryText}>Presensi Siswa</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() =>
+                navigation?.navigate('Materi', {
+                  tab: 'materials',
+                  kelas_id: selectedClass?.id,
+                  class_name: activeTeachingSchedule.className,
+                })
+              }
+              style={styles.liveKbmBtnSecondary}
+            >
+              <MaterialCommunityIcons name="book-multiple" size={15} color="#059669" style={{ marginRight: 5 }} />
+              <Text style={styles.liveKbmBtnSecondaryText}>Lihat Materi</Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* Row Bawah: 2 Tombol Aksi (Presensi Siswa & Lihat Materi) */}
-        <View style={styles.liveKbmActionRow}>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() =>
-              navigation?.navigate('QR Code', {
-                kelas_id: selectedClass?.id,
-                class_name: activeTeachingSchedule.className,
-                mode: 'manual',
-              })
-            }
-            style={styles.liveKbmBtnPrimary}
-          >
-            <MaterialCommunityIcons name="account-group" size={15} color="#064E3B" style={{ marginRight: 5 }} />
-            <Text style={styles.liveKbmBtnPrimaryText}>Presensi Siswa</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() =>
-              navigation?.navigate('Materi', {
-                tab: 'materials',
-                kelas_id: selectedClass?.id,
-                class_name: activeTeachingSchedule.className,
-              })
-            }
-            style={styles.liveKbmBtnSecondary}
-          >
-            <MaterialCommunityIcons name="book-open-page-variant" size={15} color="#064E3B" style={{ marginRight: 5 }} />
-            <Text style={styles.liveKbmBtnSecondaryText}>Lihat Materi</Text>
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
+        </LinearGradient>
 
       {/* ────────────────────────────────────────────────────────── */}
       {/* 2. CARD "ROMBEL & KELAS AKTIF" (KOMPONEN KUNCI 1)          */}
@@ -1004,8 +1189,7 @@ export default function TeacherDashboardView({
             style={styles.activeClassBoxWrap}
           >
             <LinearGradient
-              colors={['#0D6B42', '#18A165', '#2BD988']}
-              locations={[0, 0.55, 1]}
+              colors={['rgba(240, 253, 244, 0.95)', 'rgba(209, 250, 229, 0.78)']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               pointerEvents="none"
@@ -1031,7 +1215,7 @@ export default function TeacherDashboardView({
               </View>
 
               <View style={styles.activeClassChevronBox}>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#FFFFFF" />
+                <MaterialCommunityIcons name="chevron-down" size={20} color="#059669" />
               </View>
             </LinearGradient>
           </TouchableOpacity>
@@ -1240,19 +1424,19 @@ export default function TeacherDashboardView({
           </TouchableOpacity>
         </View>
 
-        {/* Grid 5 Kolom Menu */}
-        <View style={styles.menuGrid5Col}>
+        {/* Grid 4 Kolom Menu (3 Baris x 4 Kolom = 12 Menu) */}
+        <View style={styles.menuGrid4Col}>
           {primary15MenuItems.map((menu) => (
             <TouchableOpacity
               key={menu.id}
               activeOpacity={0.75}
               onPress={() => handleMenuPress(menu)}
-              style={styles.menuItem5Col}
+              style={styles.menuItem4Col}
             >
               <View style={[styles.menuItemSquircle, { backgroundColor: menu.bg }]}>
                 <MaterialCommunityIcons
                   name={menu.icon as any}
-                  size={24}
+                  size={26}
                   color={menu.color}
                 />
               </View>
@@ -1314,8 +1498,7 @@ export default function TeacherDashboardView({
                   style={styles.infoHorizontalCardWrap}
                 >
                   <LinearGradient
-                    colors={['#0D6B42', '#18A165', '#2BD988']}
-                    locations={[0, 0.55, 1]}
+                    colors={['rgba(255, 255, 255, 0.95)', 'rgba(240, 253, 244, 0.88)']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={styles.infoHorizontalCard}
@@ -1345,7 +1528,7 @@ export default function TeacherDashboardView({
                       </Text>
                     </View>
                     <View style={styles.infoChevronBox}>
-                      <MaterialCommunityIcons name="chevron-right" size={16} color="#FFFFFF" />
+                      <MaterialCommunityIcons name="chevron-right" size={16} color="#059669" />
                     </View>
                   </LinearGradient>
                 </TouchableOpacity>
@@ -1365,6 +1548,7 @@ export default function TeacherDashboardView({
             </View>
           </View>
         )}
+      </View>
       </View>
 
       {/* ────────────────────────────────────────────────────────── */}
@@ -1759,10 +1943,215 @@ export default function TeacherDashboardView({
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    position: 'relative',
+    backgroundColor: 'transparent',
+    paddingBottom: 110,
+  },
+  bodyContent: {
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 48,
-    backgroundColor: '#F8FAFC',
+    paddingTop: 4,
+  },
+
+  /* Background Layer (Selaras Tata Usaha) */
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 440,
+    width: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+  },
+
+  /* Top Bar */
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  topBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  logoBadgeOuter: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginRight: 10,
+  },
+  logoBadgeImg: {
+    width: 32,
+    height: 32,
+  },
+  titleCol: {
+    flex: 1,
+  },
+  roleTitleText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: -0.2,
+  },
+  unitSubtitleText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#0D9488',
+    marginTop: 1,
+  },
+  topBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  notificationBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 78, 59, 0.12)',
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#E11D48',
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  notifBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  avatarBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  avatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+
+  /* Dual Role Switch */
+  dualRoleSwitchContainer: {
+    paddingHorizontal: 16,
+    marginTop: 6,
+  },
+  dualRoleSwitchBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 8,
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  dualRoleSwitchText: {
+    fontSize: 12,
+    color: '#065F46',
+    flex: 1,
+  },
+  dualRoleSwitchBadge: {
+    backgroundColor: '#059669',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  dualRoleSwitchBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  /* Greeting Section */
+  greetingSection: {
+    paddingHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 14,
+  },
+  greetingLabel: {
+    fontSize: 15.5,
+    fontWeight: '600',
+    color: '#065F46',
+  },
+  greetingUserName: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginTop: 2,
+    letterSpacing: -0.3,
+  },
+  greetingUserRole: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#0D9488',
+    marginTop: 2,
+  },
+  datePill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderColor: 'rgba(6, 78, 59, 0.15)',
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5.5,
+    marginTop: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  datePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#064E3B',
   },
 
   /* ────────────────────────────────────────────────────────── */
@@ -1774,11 +2163,13 @@ const styles = StyleSheet.create({
     paddingTop: 13,
     paddingBottom: 13,
     marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
     shadowColor: '#064E3B',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 3,
   },
   liveKbmTopRow: {
     flexDirection: 'row',
@@ -1798,13 +2189,13 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   liveKbmBadgeText: {
-    color: '#FBBF24',
+    color: '#047857',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.2,
   },
   liveKbmTimeText: {
-    color: '#FFFFFF',
+    color: '#064E3B',
     fontSize: 11.5,
     fontWeight: '700',
   },
@@ -1817,9 +2208,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: '#DEF7EC',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1830,20 +2221,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   liveKbmSubjectText: {
-    color: '#FFFFFF',
+    color: '#0F172A',
     fontSize: 14.5,
     fontWeight: '800',
     letterSpacing: -0.2,
     marginBottom: 2,
   },
   liveKbmClassText: {
-    color: '#D1FAE5',
+    color: '#059669',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     marginBottom: 1,
   },
   liveKbmRoomText: {
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: '#64748B',
     fontSize: 10.5,
     fontWeight: '500',
   },
@@ -1869,7 +2260,9 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1883,17 +2276,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
+    backgroundColor: '#059669',
+    paddingVertical: 8.5,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
     elevation: 2,
   },
   liveKbmBtnPrimaryText: {
-    color: '#064E3B',
+    color: '#FFFFFF',
     fontSize: 11.5,
     fontWeight: '800',
   },
@@ -1902,14 +2295,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    paddingVertical: 8.5,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
   liveKbmBtnSecondaryText: {
     color: '#064E3B',
@@ -1921,12 +2311,12 @@ const styles = StyleSheet.create({
   /* 2. WHITE SECTION CARDS UMUM                                */
   /* ────────────────────────────────────────────────────────── */
   whiteSectionCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     borderRadius: 22,
     padding: 16,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderWidth: 1.2,
+    borderColor: '#CCFBF1',
     shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
@@ -2045,32 +2435,29 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#064E3B',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.16,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 6,
-    elevation: 4,
+    elevation: 2,
   },
   activeClassGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
   },
   activeClassLeftIconBox: {
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
-    elevation: 2,
   },
   activeClassTextBox: {
     flex: 1,
@@ -2079,19 +2466,21 @@ const styles = StyleSheet.create({
   activeClassNameText: {
     fontSize: 14.5,
     fontWeight: '900',
-    color: '#FFFFFF',
+    color: '#064E3B',
     marginBottom: 2,
   },
   activeClassDetailText: {
     fontSize: 11.5,
     fontWeight: '600',
-    color: '#A7F3D0',
+    color: '#059669',
   },
   activeClassChevronBox: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 6,
@@ -2349,32 +2738,37 @@ const styles = StyleSheet.create({
   },
 
   /* ────────────────────────────────────────────────────────── */
-  /* 4. MENU UTAMA (GRID 5 KOLOM)                               */
+  /* 4. MENU UTAMA (GRID 4 KOLOM X 3 BARIS)                     */
   /* ────────────────────────────────────────────────────────── */
-  menuGrid5Col: {
+  menuGrid4Col: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     rowGap: 16,
   },
-  menuItem5Col: {
-    width: '18.5%',
+  menuItem4Col: {
+    width: '23%',
     alignItems: 'center',
   },
   menuItemSquircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+    width: 54,
+    height: 54,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
   menuItemLabel: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '600',
     color: '#334155',
     textAlign: 'center',
-    lineHeight: 13,
+    lineHeight: 14,
   },
 
   /* ────────────────────────────────────────────────────────── */
@@ -2389,10 +2783,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: 'hidden',
     shadowColor: '#064E3B',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.18,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 6,
-    elevation: 4,
+    elevation: 2,
   },
   infoHorizontalCard: {
     flexDirection: 'row',
@@ -2401,21 +2795,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     gap: 12,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
   },
   infoIconBox: {
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
-    elevation: 2,
   },
   infoTextBox: {
     flex: 1,
@@ -2430,7 +2821,7 @@ const styles = StyleSheet.create({
   infoCardTitle: {
     fontSize: 13.5,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#0F172A',
     flex: 1,
   },
   infoMetaTag: {
@@ -2438,37 +2829,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
     marginLeft: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
   },
   infoMetaText: {
     fontSize: 9.5,
-    color: '#FFFFFF',
+    color: '#059669',
     fontWeight: '700',
   },
   infoTimeDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#FEF08A',
+    backgroundColor: '#10B981',
   },
   infoTimeText: {
     fontSize: 9.5,
-    color: '#DEF7EC',
+    color: '#059669',
     fontWeight: '700',
   },
   infoCardSub: {
     fontSize: 11.5,
-    color: '#DEF7EC',
+    color: '#475569',
     lineHeight: 16,
   },
   infoChevronBox: {
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -24,8 +24,10 @@ import { getDynamicAcademicYear } from '../../utils/academicYear';
 import { resolveUnitName } from '../../utils/employeeUtils';
 import { offlineCache } from '../../utils/offlineCache';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
+import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
 
 const DAY_OPTIONS = [
   { id: 'all', name: 'Semua Hari', short: 'Semua', icon: 'calendar-sync' },
@@ -195,6 +197,7 @@ interface TeacherScheduleWorkspaceProps {
 
 export default function TeacherScheduleWorkspace({ navigation, user, route }: TeacherScheduleWorkspaceProps) {
   const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 12);
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 16);
 
   // ── 1. States Data ──
@@ -664,139 +667,157 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
 
   return (
     <View style={styles.rootContainer}>
-      <LinearGradient
-        colors={['#FFFFFF', '#F0FDF4', '#E6F4EA']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
+      {/* ── Background Mosque & School (Identik Halaman Utama & Tata Usaha) ── */}
+      <View style={styles.bgBackdrop} pointerEvents="none">
+        <Image
+          source={PARENT_HOME_BG}
+          style={styles.bgImage}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
+      {/* ── TOP HEADER IDENTIK BUKU PENGHUBUNG, DATA SISWA & TATA USAHA ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
+        <View style={styles.headerTopRow}>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => {
+              const handled = useNavigationHistoryStore.getState().goBackDynamic(navigation);
+              if (handled) return;
+              const navState = navigation?.getState?.();
+              const canPop = navState && typeof navState.index === 'number' && navState.index > 0;
+              if (canPop && navigation?.canGoBack?.()) {
+                try {
+                  navigation.goBack();
+                  return;
+                } catch {}
+              }
+              navigation?.navigate('Beranda' as any);
+            }}
+            style={styles.backButton}
+            accessibilityLabel="Kembali"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
+          </TouchableOpacity>
+
+          <View style={styles.headerTitleWrap}>
+            <View style={styles.headerBadge}>
+              <MaterialCommunityIcons name="calendar-check" size={12} color="#059669" />
+              <Text style={styles.headerBadgeText} numberOfLines={1}>
+                GURU & AKADEMIK • JADWAL MENGAJAR
+              </Text>
+            </View>
+            <Text style={styles.headerMainTitle} numberOfLines={1}>
+              {activeTab === 'kbm' ? 'Jadwal Mengajar & KBM' : 'Jadwal Pengawas Ujian'}
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              {teacherUnit} • T.A. {academicYear}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => {
+                setRefreshing(true);
+                void loadData(false);
+              }}
+              style={styles.refreshButton}
+              accessibilityLabel="Muat Ulang"
+            >
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Search Bar langsung di Header identik Tata Usaha & Buku Penghubung */}
+        <View style={styles.searchBar}>
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={
+              activeTab === 'kbm'
+                ? 'Cari mata pelajaran, kelas, atau ruang...'
+                : 'Cari ujian, mata pelajaran, atau pengawas...'
+            }
+            placeholderTextColor="#94A3B8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
 
       <ScrollView
         style={styles.screen}
-        contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 36 }]}
+        contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 140 }]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#059669']} tintColor="#059669" />
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* ── 1. MODERN HERO CARD GURU (AESTHETIC, DYNAMIC, ZERO HARDCODE) ── */}
-        <View style={styles.heroCardContainer}>
-          <LinearGradient
-            colors={['#064E3B', '#047857', '#059669']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.heroGradient}
-          >
-            {/* Ambient Background Glow Circles */}
-            <View style={styles.heroGlowCircleTop} />
-            <View style={styles.heroGlowCircleBottom} />
-
-            {/* Top Bar: Role Tag & Live Digital Clock */}
-            <View style={styles.heroTopBar}>
-              <View style={styles.roleTag}>
-                <RadarPulseDot color="#34D399" size={6} />
-                <Text style={styles.roleTagText}>PENDIDIK & GURU • JADWAL KBM</Text>
-              </View>
-
-              <View style={styles.clockBadge}>
-                <MaterialCommunityIcons name="clock-outline" size={12} color="#A7F3D0" />
-                <Text style={styles.clockBadgeText}>{currentTimeStr || 'WIB'}</Text>
-              </View>
+        {/* ── 1. RINGKASAN KPI JADWAL MENGAJAR (CARD MANDIRI RAPI) ── */}
+        <View style={styles.kpiCardsRow}>
+          <View style={styles.kpiTileToday}>
+            <View style={[styles.kpiIconWrap, { backgroundColor: '#D1FAE5' }]}>
+              <MaterialCommunityIcons name="calendar-clock" size={16} color="#059669" />
             </View>
-
-            {/* Middle Section: Teacher Avatar & Identity */}
-            <View style={styles.heroIdentityRow}>
-              <View style={styles.avatarBorderWrapper}>
-                {avatarUri ? (
-                  <Image source={{ uri: avatarUri }} style={styles.avatarImage} resizeMode="cover" />
-                ) : (
-                  <View style={styles.avatarFallback}>
-                    <Text style={styles.avatarFallbackText}>
-                      {teacherName.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.identityTextCol}>
-                <Text numberOfLines={1} style={styles.teacherNameText}>
-                  {teacherName}
-                </Text>
-                <Text numberOfLines={1} style={styles.teacherNipText}>
-                  NIP/ID: {teacherNip}
-                </Text>
-
-                <View style={styles.unitBadgeRow}>
-                  <MaterialCommunityIcons name="school-outline" size={12} color="#FFFFFF" />
-                  <Text numberOfLines={1} style={styles.unitBadgeText}>
-                    {teacherUnit}
-                  </Text>
-                </View>
-              </View>
+            <View style={styles.kpiTextWrap}>
+              <Text style={[styles.kpiValueText, { color: '#064E3B' }]}>{kpiStats.todayCount}</Text>
+              <Text style={[styles.kpiLabelText, { color: '#047857' }]}>Sesi Hari Ini</Text>
             </View>
+          </View>
 
-            {/* Dynamic Academic Context Pill */}
-            <View style={styles.academicContextBar}>
-              <View style={styles.academicContextItem}>
-                <MaterialCommunityIcons name="calendar-range" size={13} color="#A7F3D0" />
-                <Text style={styles.academicContextText}>T.A. {academicYear}</Text>
-              </View>
-              <View style={styles.academicContextDivider} />
-              <View style={styles.academicContextItem}>
-                <MaterialCommunityIcons name="calendar-today" size={13} color="#A7F3D0" />
-                <Text style={styles.academicContextText}>{formatIndonesianDate(new Date())}</Text>
-              </View>
+          <View style={styles.kpiTileWeek}>
+            <View style={[styles.kpiIconWrap, { backgroundColor: '#DBEAFE' }]}>
+              <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#2563EB" />
             </View>
-
-            {/* 4 Dynamic KPI Summary Tiles (Never Cramped, Spacious 2x2 Grid) */}
-            <View style={styles.kpiGrid}>
-              <View style={styles.kpiTile}>
-                <View style={[styles.kpiIconWrap, { backgroundColor: 'rgba(52, 211, 153, 0.2)' }]}>
-                  <MaterialCommunityIcons name="calendar-clock" size={16} color="#34D399" />
-                </View>
-                <View style={styles.kpiTextWrap}>
-                  <Text style={styles.kpiValueText}>{kpiStats.todayCount}</Text>
-                  <Text style={styles.kpiLabelText}>Sesi Hari Ini</Text>
-                </View>
-              </View>
-
-              <View style={styles.kpiTile}>
-                <View style={[styles.kpiIconWrap, { backgroundColor: 'rgba(96, 165, 250, 0.2)' }]}>
-                  <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#60A5FA" />
-                </View>
-                <View style={styles.kpiTextWrap}>
-                  <Text style={styles.kpiValueText}>{kpiStats.weeklyCount}</Text>
-                  <Text style={styles.kpiLabelText}>Total Pekanan</Text>
-                </View>
-              </View>
-
-              <View style={styles.kpiTile}>
-                <View style={[styles.kpiIconWrap, { backgroundColor: 'rgba(251, 191, 36, 0.2)' }]}>
-                  <MaterialCommunityIcons name="google-classroom" size={16} color="#FBBF24" />
-                </View>
-                <View style={styles.kpiTextWrap}>
-                  <Text style={styles.kpiValueText}>{kpiStats.totalClasses}</Text>
-                  <Text style={styles.kpiLabelText}>Rombel Diampu</Text>
-                </View>
-              </View>
-
-              <View style={styles.kpiTile}>
-                <View style={[styles.kpiIconWrap, { backgroundColor: kpiStats.isSessionRunning ? 'rgba(52, 211, 153, 0.25)' : 'rgba(148, 163, 184, 0.2)' }]}>
-                  <MaterialCommunityIcons
-                    name={kpiStats.isSessionRunning ? 'play-circle-outline' : 'pause-circle-outline'}
-                    size={16}
-                    color={kpiStats.isSessionRunning ? '#34D399' : '#CBD5E1'}
-                  />
-                </View>
-                <View style={styles.kpiTextWrap}>
-                  <Text numberOfLines={1} style={[styles.kpiValueText, { fontSize: 13 }]}>
-                    {kpiStats.isSessionRunning ? 'LIVE' : 'Standby'}
-                  </Text>
-                  <Text style={styles.kpiLabelText}>Status KBM</Text>
-                </View>
-              </View>
+            <View style={styles.kpiTextWrap}>
+              <Text style={[styles.kpiValueText, { color: '#1E3A8A' }]}>{kpiStats.weeklyCount}</Text>
+              <Text style={[styles.kpiLabelText, { color: '#1D4ED8' }]}>Total Pekanan</Text>
             </View>
-          </LinearGradient>
+          </View>
+
+          <View style={styles.kpiTileClasses}>
+            <View style={[styles.kpiIconWrap, { backgroundColor: '#FEF3C7' }]}>
+              <MaterialCommunityIcons name="google-classroom" size={16} color="#D97706" />
+            </View>
+            <View style={styles.kpiTextWrap}>
+              <Text style={[styles.kpiValueText, { color: '#78350F' }]}>{kpiStats.totalClasses}</Text>
+              <Text style={[styles.kpiLabelText, { color: '#92400E' }]}>Rombel Diampu</Text>
+            </View>
+          </View>
+
+          <View style={[styles.kpiTileStatus, { backgroundColor: kpiStats.isSessionRunning ? '#ECFDF5' : '#FFFFFF', borderColor: kpiStats.isSessionRunning ? '#A7F3D0' : '#E2E8F0' }]}>
+            <View style={[styles.kpiIconWrap, { backgroundColor: kpiStats.isSessionRunning ? '#D1FAE5' : '#F1F5F9' }]}>
+              <MaterialCommunityIcons
+                name={kpiStats.isSessionRunning ? 'play-circle-outline' : 'pause-circle-outline'}
+                size={16}
+                color={kpiStats.isSessionRunning ? '#059669' : '#64748B'}
+              />
+            </View>
+            <View style={styles.kpiTextWrap}>
+              <Text numberOfLines={1} style={[styles.kpiValueText, { fontSize: 13, color: kpiStats.isSessionRunning ? '#059669' : '#475569' }]}>
+                {kpiStats.isSessionRunning ? 'LIVE' : 'Standby'}
+              </Text>
+              <Text style={[styles.kpiLabelText, { color: '#64748B' }]}>Status KBM</Text>
+            </View>
+          </View>
         </View>
 
         {/* ── 2. WORKSPACE TAB SWITCHER (KBM & RUTINITAS vs JADWAL UJIAN) ── */}
@@ -806,11 +827,13 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
             onPress={() => setActiveTab('kbm')}
             style={[styles.workspaceTabItem, activeTab === 'kbm' && styles.workspaceTabItemActiveKbm]}
           >
-            <MaterialCommunityIcons
-              name="calendar-clock"
-              size={17}
-              color={activeTab === 'kbm' ? '#FFFFFF' : '#64748B'}
-            />
+            <View style={[styles.tabIconSquircle, activeTab === 'kbm' ? styles.tabIconSquircleActiveKbm : styles.tabIconSquircleInactiveKbm]}>
+              <MaterialCommunityIcons
+                name="calendar-clock"
+                size={16}
+                color={activeTab === 'kbm' ? '#FFFFFF' : '#059669'}
+              />
+            </View>
             <Text
               style={[
                 styles.workspaceTabText,
@@ -818,20 +841,20 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
               ]}
               numberOfLines={1}
             >
-              Jadwal KBM & Rutinitas
+              KBM & Rutinitas
             </Text>
             <View
               style={[
                 styles.workspaceTabBadge,
                 activeTab === 'kbm'
-                  ? { backgroundColor: 'rgba(255, 255, 255, 0.28)' }
-                  : { backgroundColor: '#E2E8F0' },
+                  ? styles.workspaceTabBadgeActiveKbm
+                  : styles.workspaceTabBadgeInactiveKbm,
               ]}
             >
               <Text
                 style={[
                   styles.workspaceTabBadgeText,
-                  activeTab === 'kbm' ? { color: '#FFFFFF' } : { color: '#475569' },
+                  activeTab === 'kbm' ? { color: '#FFFFFF' } : { color: '#047857' },
                 ]}
               >
                 {schedules.length}
@@ -844,11 +867,13 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
             onPress={() => setActiveTab('exam')}
             style={[styles.workspaceTabItem, activeTab === 'exam' && styles.workspaceTabItemActiveExam]}
           >
-            <MaterialCommunityIcons
-              name="file-document-edit-outline"
-              size={17}
-              color={activeTab === 'exam' ? '#FFFFFF' : '#64748B'}
-            />
+            <View style={[styles.tabIconSquircle, activeTab === 'exam' ? styles.tabIconSquircleActiveExam : styles.tabIconSquircleInactiveExam]}>
+              <MaterialCommunityIcons
+                name="file-document-edit-outline"
+                size={16}
+                color={activeTab === 'exam' ? '#FFFFFF' : '#2563EB'}
+              />
+            </View>
             <Text
               style={[
                 styles.workspaceTabText,
@@ -856,20 +881,20 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
               ]}
               numberOfLines={1}
             >
-              Jadwal Ujian (PTS/PAS)
+              Jadwal Ujian
             </Text>
             <View
               style={[
                 styles.workspaceTabBadge,
                 activeTab === 'exam'
-                  ? { backgroundColor: 'rgba(255, 255, 255, 0.28)' }
-                  : { backgroundColor: '#E2E8F0' },
+                  ? styles.workspaceTabBadgeActiveExam
+                  : styles.workspaceTabBadgeInactiveExam,
               ]}
             >
               <Text
                 style={[
                   styles.workspaceTabBadgeText,
-                  activeTab === 'exam' ? { color: '#FFFFFF' } : { color: '#475569' },
+                  activeTab === 'exam' ? { color: '#FFFFFF' } : { color: '#1D4ED8' },
                 ]}
               >
                 {examSchedules.length}
@@ -878,27 +903,6 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
           </TouchableOpacity>
         </View>
 
-        {/* ── 3. SEARCH INPUT BAR (LEGA & MUDAH DIGUNAKAN) ── */}
-        <View style={styles.searchBarContainer}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder={
-              activeTab === 'kbm'
-                ? 'Cari mata pelajaran, kelas, atau ruang...'
-                : 'Cari ujian, mata pelajaran, atau pengawas...'
-            }
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            clearButtonMode="while-editing"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-            </TouchableOpacity>
-          )}
-        </View>
 
         {activeTab === 'kbm' ? (
           <>
@@ -1033,12 +1037,24 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
             {/* ── 6. LIST SESI JADWAL KBM (SPACIOUS, NO OVERLAP, ACTION READY) ── */}
             <View style={styles.listSectionHeader}>
               <View style={styles.listSectionLeft}>
-                <MaterialCommunityIcons name="book-open-variant" size={18} color="#059669" />
-                <Text style={styles.listSectionTitle}>
-                  {selectedDay === 'all' ? 'Seluruh Sesi Mengajar' : `Jadwal Mengajar Hari ${DAY_OPTIONS.find((d) => d.id === selectedDay)?.name || ''}`}
-                </Text>
+                <View style={styles.listHeaderIconWrap}>
+                  <MaterialCommunityIcons name="book-open-page-variant" size={17} color="#059669" />
+                </View>
+                <View style={styles.listHeaderTitleCol}>
+                  <Text style={styles.listSectionTitle}>
+                    {selectedDay === 'all'
+                      ? 'Jadwal Mengajar Pekanan'
+                      : `Jadwal Mengajar Hari ${DAY_OPTIONS.find((d) => d.id === selectedDay)?.name || ''}`}
+                  </Text>
+                  <Text style={styles.listSectionSubtitle}>
+                    {selectedDay === 'all'
+                      ? 'Daftar seluruh alokasi jam KBM aktif'
+                      : `Sesi jam KBM aktif hari ${DAY_OPTIONS.find((d) => d.id === selectedDay)?.name || ''}`}
+                  </Text>
+                </View>
               </View>
               <View style={styles.sessionCountPill}>
+                <View style={styles.sessionCountDot} />
                 <Text style={styles.sessionCountPillText}>{filteredSchedules.length} Sesi</Text>
               </View>
             </View>
@@ -1162,24 +1178,25 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
                       </View>
 
                       {/* Baris 3: Tombol Aksi Nyata Guru (Presensi Siswa / Koreksi Presensi / Menunggu Jam) */}
-                      <View style={styles.cardActionsRow}>
+                      {/* Baris 3: Tombol Aksi Nyata Guru (Rapi, Tidak Berhimpitan) */}
+                      <View style={styles.cardActionsContainer}>
                         {isCurrent ? (
                           <TouchableOpacity
                             activeOpacity={0.8}
                             onPress={() => handleOpenAttendanceForClass(item, false)}
-                            style={[styles.actionBtn, styles.actionBtnPrimary]}
+                            style={[styles.actionBtnMain, styles.actionBtnPrimary]}
                           >
-                            <MaterialCommunityIcons name="clipboard-check-outline" size={15} color="#FFFFFF" />
-                            <Text style={styles.actionBtnPrimaryText}>Presensi Siswa</Text>
+                            <MaterialCommunityIcons name="clipboard-check-outline" size={16} color="#FFFFFF" />
+                            <Text style={styles.actionBtnPrimaryText}>Presensi Siswa Sekarang</Text>
                           </TouchableOpacity>
                         ) : isPast ? (
                           <TouchableOpacity
                             activeOpacity={0.8}
                             onPress={() => handleOpenAttendanceForClass(item, true)}
-                            style={[styles.actionBtn, styles.actionBtnCorrection]}
+                            style={[styles.actionBtnMain, styles.actionBtnCorrection]}
                           >
-                            <MaterialCommunityIcons name="clipboard-edit-outline" size={15} color="#B45309" />
-                            <Text style={styles.actionBtnCorrectionText}>Koreksi Presensi</Text>
+                            <MaterialCommunityIcons name="clipboard-edit-outline" size={16} color="#B45309" />
+                            <Text style={styles.actionBtnCorrectionText}>Koreksi / Riwayat Presensi</Text>
                           </TouchableOpacity>
                         ) : (
                           <TouchableOpacity
@@ -1192,39 +1209,43 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
                                 message: `Jam KBM (${item.time_display} WIB) belum dimulai. Presensi santri dapat diambil saat jam pelajaran sedang berlangsung.`,
                               });
                             }}
-                            style={[styles.actionBtn, styles.actionBtnDisabled]}
+                            style={[styles.actionBtnMain, styles.actionBtnDisabled]}
                           >
-                            <MaterialCommunityIcons name="clock-outline" size={15} color="#94A3B8" />
-                            <Text style={styles.actionBtnDisabledText}>Menunggu Jam</Text>
+                            <MaterialCommunityIcons name="clock-outline" size={16} color="#94A3B8" />
+                            <Text style={styles.actionBtnDisabledText}>
+                              Menunggu Jam Mengajar ({item.time_start ? item.time_start.slice(0, 5) : ''})
+                            </Text>
                           </TouchableOpacity>
                         )}
 
-                        <TouchableOpacity
-                          activeOpacity={0.8}
-                          onPress={handleOpenMaterials}
-                          style={[styles.actionBtn, styles.actionBtnSecondary]}
-                        >
-                          <MaterialCommunityIcons name="book-open-page-variant-outline" size={15} color="#059669" />
-                          <Text style={styles.actionBtnSecondaryText}>Bahan Ajar</Text>
-                        </TouchableOpacity>
+                        <View style={styles.cardActionsSecondaryRow}>
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={handleOpenMaterials}
+                            style={[styles.actionBtnSecondarySmall, styles.actionBtnSecondary]}
+                          >
+                            <MaterialCommunityIcons name="book-multiple" size={15} color="#059669" />
+                            <Text style={styles.actionBtnSecondaryText}>Bahan Ajar</Text>
+                          </TouchableOpacity>
 
-                        <TouchableOpacity
-                          activeOpacity={0.8}
-                          onPress={() => navigation?.navigate('Mutabaah', { kelas_id: item.kelas_id, class_name: item.class_name })}
-                          style={[styles.actionBtn, styles.actionBtnMutabaah]}
-                        >
-                          <MaterialCommunityIcons name="book-check-outline" size={15} color="#0D9488" />
-                          <Text style={styles.actionBtnMutabaahText}>Mutaba'ah</Text>
-                        </TouchableOpacity>
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => navigation?.navigate('Mutabaah', { kelas_id: item.kelas_id, class_name: item.class_name })}
+                            style={[styles.actionBtnSecondarySmall, styles.actionBtnMutabaah]}
+                          >
+                            <MaterialCommunityIcons name="clipboard-check" size={15} color="#0D9488" />
+                            <Text style={styles.actionBtnMutabaahText}>Mutaba'ah</Text>
+                          </TouchableOpacity>
 
-                        <TouchableOpacity
-                          activeOpacity={0.8}
-                          onPress={() => void handleOpenScheduleDetail(item)}
-                          style={[styles.actionBtnIcon]}
-                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                        >
-                          <MaterialCommunityIcons name="information-outline" size={18} color="#64748B" />
-                        </TouchableOpacity>
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => void handleOpenScheduleDetail(item)}
+                            style={[styles.actionBtnSecondarySmall, styles.actionBtnDetail]}
+                          >
+                            <MaterialCommunityIcons name="account-group" size={15} color="#475569" />
+                            <Text style={styles.actionBtnDetailText}>Santri</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
                   );
@@ -1266,12 +1287,20 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
 
             <View style={styles.listSectionHeader}>
               <View style={styles.listSectionLeft}>
-                <MaterialCommunityIcons name="file-document-edit-outline" size={18} color="#2563EB" />
-                <Text style={[styles.listSectionTitle, { color: '#1E40AF' }]}>
-                  Daftar Jadwal Ujian Semester
-                </Text>
+                <View style={[styles.listHeaderIconWrap, { backgroundColor: '#DBEAFE', borderColor: '#BFDBFE' }]}>
+                  <MaterialCommunityIcons name="file-document-edit-outline" size={17} color="#2563EB" />
+                </View>
+                <View style={styles.listHeaderTitleCol}>
+                  <Text style={[styles.listSectionTitle, { color: '#1E40AF' }]}>
+                    Daftar Jadwal Ujian Semester
+                  </Text>
+                  <Text style={[styles.listSectionSubtitle, { color: '#2563EB' }]}>
+                    Alokasi tugas pengawas evaluasi PTS / PAS / PAT
+                  </Text>
+                </View>
               </View>
               <View style={[styles.sessionCountPill, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                <View style={[styles.sessionCountDot, { backgroundColor: '#2563EB' }]} />
                 <Text style={[styles.sessionCountPillText, { color: '#2563EB' }]}>
                   {filteredExamSchedules.length} Ujian
                 </Text>
@@ -1617,22 +1646,36 @@ export default function TeacherScheduleWorkspace({ navigation, user, route }: Te
                       </TouchableOpacity>
                     )}
 
-                    {/* Tombol Akses Cepat Mutaba'ah Rombel */}
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => {
-                        const item = selectedScheduleDetail;
-                        setSelectedScheduleDetail(null);
-                        navigation?.navigate('Mutabaah', {
-                          kelas_id: item.kelas_id,
-                          class_name: item.class_name,
-                        });
-                      }}
-                      style={styles.modalActionMutabaahBtn}
-                    >
-                      <MaterialCommunityIcons name="book-check-outline" size={18} color="#0D9488" />
-                      <Text style={styles.modalActionMutabaahBtnText}>Buka Mutaba'ah Rombel Ini</Text>
-                    </TouchableOpacity>
+                    {/* Tombol Akses Cepat Bahan Ajar & Mutaba'ah Rombel */}
+                    <View style={styles.modalSecondaryButtonsRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setSelectedScheduleDetail(null);
+                          handleOpenMaterials();
+                        }}
+                        style={styles.modalActionMaterialsBtn}
+                      >
+                        <MaterialCommunityIcons name="book-multiple" size={17} color="#059669" />
+                        <Text style={styles.modalActionMaterialsBtnText}>Bahan Ajar</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          const item = selectedScheduleDetail;
+                          setSelectedScheduleDetail(null);
+                          navigation?.navigate('Mutabaah', {
+                            kelas_id: item.kelas_id,
+                            class_name: item.class_name,
+                          });
+                        }}
+                        style={styles.modalActionMutabaahBtn}
+                      >
+                        <MaterialCommunityIcons name="clipboard-check" size={17} color="#0D9488" />
+                        <Text style={styles.modalActionMutabaahBtnText}>Mutaba'ah</Text>
+                      </TouchableOpacity>
+                    </View>
 
                     <TouchableOpacity
                       activeOpacity={0.85}
@@ -1972,238 +2015,248 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingTop: Platform.OS === 'android' ? 16 : 12,
+    paddingTop: Platform.OS === 'android' ? 10 : 8,
+  },
+  bgBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 380,
+    overflow: 'hidden',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.95,
   },
 
-  // ── Hero Card Container ──
-  heroCardContainer: {
-    borderRadius: 24,
-    overflow: 'hidden',
-    marginBottom: 16,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 6,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+  // ── Top Header Styles ──
+  headerContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
   },
-  heroGradient: {
-    padding: 18,
-    position: 'relative',
-  },
-  heroGlowCircleTop: {
-    position: 'absolute',
-    top: -40,
-    right: -40,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(52, 211, 153, 0.16)',
-  },
-  heroGlowCircleBottom: {
-    position: 'absolute',
-    bottom: -50,
-    left: -30,
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  heroTopBar: {
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 10,
   },
-  roleTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(6, 78, 59, 0.55)',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
+  backButton: {
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    gap: 6,
-    borderWidth: 0.8,
-    borderColor: 'rgba(52, 211, 153, 0.4)',
-  },
-  roleTagText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#E6FFFA',
-    letterSpacing: 0.5,
-  },
-  clockBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.22)',
-    paddingHorizontal: 8,
-    paddingVertical: 3.5,
-    borderRadius: 10,
-    gap: 4,
-  },
-  clockBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#A7F3D0',
-    fontVariant: ['tabular-nums'],
-  },
-  heroIdentityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  avatarBorderWrapper: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
-    shadowColor: '#000000',
-    shadowOpacity: 0.15,
-    shadowRadius: 5,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  avatarImage: {
-    width: '100%',
-    height: '100%',
-  },
-  avatarFallback: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#059669',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarFallbackText: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  identityTextCol: {
+  headerTitleWrap: {
     flex: 1,
-    justifyContent: 'center',
+    marginHorizontal: 12,
   },
-  teacherNameText: {
-    fontSize: 16.5,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -0.3,
-  },
-  teacherNipText: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  unitBadgeRow: {
+  headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    alignSelf: 'flex-start',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
     paddingVertical: 2.5,
     borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-    gap: 4,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  unitBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    maxWidth: SCREEN_WIDTH - 180,
-  },
-  academicContextBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(4, 47, 30, 0.4)',
-    borderRadius: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    marginBottom: 12,
-    borderWidth: 0.8,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  academicContextItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginBottom: 2,
     gap: 5,
   },
-  academicContextText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#DEF7EC',
+  pulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
   },
-  academicContextDivider: {
-    width: 1,
-    height: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  headerBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#065F46',
+    letterSpacing: 0.4,
+  },
+  headerMainTitle: {
+    fontSize: 16.5,
+    fontWeight: '900',
+    color: '#064E3B',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#0D9488',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  refreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'android' ? 2 : 9,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#064E3B',
+    fontWeight: '600',
   },
 
-  // 4 KPI Grid (2x2 layout, spacious)
+  // ── 4 KPI Grid (Card Mandiri Bersih & Proporsional 2x2) ──
+  kpiCardsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
   kpiGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    marginBottom: 14,
   },
-  kpiTile: {
-    flex: 1,
-    minWidth: (SCREEN_WIDTH - 32 - 36 - 8) / 2,
+  kpiTileToday: {
+    width: (SCREEN_WIDTH - 32 - 8) / 2,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.14)',
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderWidth: 0.8,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiTileWeek: {
+    width: (SCREEN_WIDTH - 32 - 8) / 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1.2,
+    borderColor: '#BFDBFE',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiTileClasses: {
+    width: (SCREEN_WIDTH - 32 - 8) / 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1.2,
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiTileStatus: {
+    width: (SCREEN_WIDTH - 32 - 8) / 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   kpiIconWrap: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 8,
+    marginRight: 9,
   },
   kpiTextWrap: {
     flex: 1,
   },
   kpiValueText: {
-    fontSize: 14.5,
+    fontSize: 15,
     fontWeight: '900',
-    color: '#FFFFFF',
+    letterSpacing: -0.2,
   },
   kpiLabelText: {
-    fontSize: 9.5,
-    fontWeight: '600',
-    color: '#D1FAE5',
+    fontSize: 10,
+    fontWeight: '700',
     marginTop: 1,
   },
 
   // ── Workspace Tab Bar ──
   workspaceTabBar: {
     flexDirection: 'row',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 4,
     marginBottom: 14,
-    gap: 4,
+    gap: 6,
+    borderWidth: 1.2,
+    borderColor: '#CCFBF1',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   workspaceTabItem: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
+    paddingVertical: 9,
     paddingHorizontal: 8,
     borderRadius: 12,
     gap: 6,
@@ -2224,8 +2277,27 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  tabIconSquircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabIconSquircleActiveKbm: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+  },
+  tabIconSquircleInactiveKbm: {
+    backgroundColor: '#DEF7EC',
+  },
+  tabIconSquircleActiveExam: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+  },
+  tabIconSquircleInactiveExam: {
+    backgroundColor: '#EFF6FF',
+  },
   workspaceTabText: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '700',
     color: '#475569',
   },
@@ -2234,39 +2306,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   workspaceTabBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  workspaceTabBadgeActiveKbm: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  workspaceTabBadgeInactiveKbm: {
+    backgroundColor: '#DEF7EC',
+  },
+  workspaceTabBadgeActiveExam: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  workspaceTabBadgeInactiveExam: {
+    backgroundColor: '#EFF6FF',
   },
   workspaceTabBadgeText: {
-    fontSize: 9.5,
+    fontSize: 10,
     fontWeight: '800',
   },
 
-  // ── Search Input Bar ──
-  searchBarContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 10 : 6,
-    borderWidth: 1.2,
-    borderColor: '#E2E8F0',
-    marginBottom: 14,
-    shadowColor: '#000000',
-    shadowOpacity: 0.03,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 12.5,
-    color: '#0F172A',
-    marginLeft: 8,
-    fontWeight: '500',
-  },
 
   // ── Day Selector (Spacious Horizontal Scroll) ──
   daySelectorWrapper: {
@@ -2275,9 +2335,9 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 14,
     borderWidth: 1.2,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000000',
-    shadowOpacity: 0.03,
+    borderColor: '#CCFBF1',
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.04,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
@@ -2371,7 +2431,12 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 14,
     borderWidth: 1.2,
-    borderColor: '#E2E8F0',
+    borderColor: '#CCFBF1',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 2,
   },
   filterSection: {},
   filterSectionLabel: {
@@ -2410,31 +2475,61 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // ── List Header ──
+  // ── List Header (Rapi, Berikon & Berjudul Terstruktur) ──
   listSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 12,
     paddingHorizontal: 2,
   },
   listSectionLeft: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
+  },
+  listHeaderIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  listHeaderTitleCol: {
+    flex: 1,
   },
   listSectionTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '900',
     color: '#0F172A',
+    letterSpacing: -0.2,
+  },
+  listSectionSubtitle: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#059669',
+    marginTop: 1,
   },
   sessionCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#DEF7EC',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#BCF0DA',
+    gap: 5,
+  },
+  sessionCountDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
   },
   sessionCountPillText: {
     fontSize: 10.5,
@@ -2451,8 +2546,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 15,
     borderWidth: 1.2,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000000',
+    borderColor: '#CCFBF1',
+    shadowColor: '#064E3B',
     shadowOpacity: 0.04,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
@@ -2462,7 +2557,7 @@ const styles = StyleSheet.create({
     borderColor: '#34D399',
     borderLeftWidth: 4.5,
     borderLeftColor: '#059669',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#FFFFFF',
     shadowColor: '#059669',
     shadowOpacity: 0.12,
     shadowRadius: 10,
@@ -2625,7 +2720,63 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
 
-  // Card Actions
+  // Card Actions (Spacious Two-Tier Layout)
+  cardActionsContainer: {
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 11,
+    gap: 8,
+  },
+  actionBtnMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9.5,
+    borderRadius: 12,
+    gap: 6,
+  },
+  cardActionsSecondaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  actionBtnSecondarySmall: {
+    flex: 1,
+    height: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    borderWidth: 1.2,
+    gap: 5,
+  },
+  actionBtnSecondary: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  actionBtnSecondaryText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  actionBtnMutabaah: {
+    backgroundColor: '#F0FDFA',
+    borderColor: '#99F6E4',
+  },
+  actionBtnMutabaahText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0F766E',
+  },
+  actionBtnDetail: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  actionBtnDetailText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#334155',
+  },
   cardActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2647,7 +2798,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669',
   },
   actionBtnPrimaryText: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#FFFFFF',
   },
@@ -2657,7 +2808,7 @@ const styles = StyleSheet.create({
     borderColor: '#FDE68A',
   },
   actionBtnCorrectionText: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#B45309',
   },
@@ -2670,16 +2821,6 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '700',
     color: '#94A3B8',
-  },
-  actionBtnSecondary: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  actionBtnSecondaryText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#047857',
   },
   actionBtnIcon: {
     width: 34,
@@ -3051,29 +3192,43 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#64748B',
   },
-  actionBtnMutabaah: {
-    backgroundColor: '#F0FDFA',
-    borderColor: '#99F6E4',
+  modalSecondaryButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
   },
-  actionBtnMutabaahText: {
-    color: '#0D9488',
-    fontSize: 12,
-    fontWeight: '700',
+  modalActionMaterialsBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.2,
+    borderColor: '#A7F3D0',
+    paddingVertical: 11,
+    borderRadius: 14,
+    gap: 6,
+  },
+  modalActionMaterialsBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#065F46',
   },
   modalActionMutabaahBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F0FDFA',
-    borderWidth: 1.5,
+    borderWidth: 1.2,
     borderColor: '#99F6E4',
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderRadius: 14,
     gap: 6,
-    marginTop: 8,
   },
   modalActionMutabaahBtnText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '800',
     color: '#0F766E',
   },

@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { mobileApiService, unwrapApiData } from '../services/mobileApiService';
 import { useAuthStore } from '../stores/authStore';
-import { isParentRole, isTeacherRole, isStaffRole } from '../utils/roles';
+import { isParentRole, isTeacherRole, isStaffRole, isTuRole } from '../utils/roles';
 import {
   getProfileImageUrl,
   getStudentAvatarSource,
@@ -33,8 +33,6 @@ import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
-import { TeacherStickyHeader } from '../components/TeacherStickyHeader';
-import { TeacherHeroCard } from '../components/TeacherHeroCard';
 import { StudentIdCardModal } from '../components/StudentIdCardModal';
 import { StudentQrModal } from '../components/StudentQrModal';
 import { StudentMenuModal } from '../components/StudentMenuModal';
@@ -226,10 +224,13 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   const roles = useAuthStore((state) => state.roles);
   const userRoles = useMemo(() => (roles?.length ? roles : user?.roles || []), [roles, user?.roles]);
   const isParent = isParentRole(userRoles);
+  const isTu = isTuRole(userRoles);
   const isTeacher = isTeacherRole(userRoles) || isStaffRole(userRoles);
-  const isTeacherOnly = Boolean(
-    isTeacher && (!isParent || route?.params?.from_teacher_portal || !route?.params?.from_child_portal)
+  const isStaff = isStaffRole(userRoles) || isTu;
+  const isEmployee = Boolean(
+    (isTeacher || isStaff) && (!isParent || route?.params?.from_teacher_portal || !route?.params?.from_child_portal)
   );
+  const isTeacherOnly = isEmployee;
 
   // ── Sticky header bersama (StudentStickyHeader, sama dengan Tugas/Jadwal/Materi/Nilai) ──
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
@@ -385,6 +386,26 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     );
   }, [headerStudent]);
 
+  const employeeFullName = useMemo(() => {
+    return (
+      (user as any)?.nama_lengkap ||
+      (user as any)?.full_name ||
+      user?.name ||
+      (isTu ? 'Staf Tata Usaha' : 'Tenaga Pendidik')
+    );
+  }, [user, isTu]);
+
+  const employeeUnit = useMemo(() => {
+    return (
+      (user as any)?.employee?.educationUnit?.name ||
+      (user as any)?.employee?.unit_name ||
+      (user as any)?.unit_name ||
+      (user?.metadata as any)?.unit ||
+      summary?.unit?.name ||
+      'Unit Sekolah'
+    );
+  }, [user, summary?.unit?.name]);
+
   const studentUnit = useMemo(() => {
     return (
       headerStudent?.educationUnit?.name ||
@@ -417,33 +438,38 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     return getStudentAttendanceStatus(headerStudent);
   }, [headerStudent]);
 
-  // Informasi Unit Pendidikan Siswa Terpilih (100% Dinamis dari Database)
+  // Informasi Unit Pendidikan Siswa / Pegawai Terpilih (100% Dinamis dari Database)
   const unitInfo = useMemo(() => {
-    // 1. Prioritaskan unit dari siswa yang aktif dipilih (headerStudent)
+    // 1. Prioritaskan unit dari siswa yang aktif dipilih (headerStudent) atau pegawai
     const studentEdu =
       headerStudent?.educationUnit ||
       headerStudent?.education_unit ||
       headerStudent?.kelas?.unitPendidikan ||
+      (user as any)?.employee?.educationUnit ||
       null;
 
-    // 2. Cocokkan apakah summary.unit sesuai dengan unit siswa aktif
+    // 2. Cocokkan apakah summary.unit sesuai dengan unit siswa / pegawai aktif
     const isSummaryUnitMatch = Boolean(
       summary?.unit &&
       (String(summary.unit.id) === String(studentEdu?.id) ||
         !studentEdu ||
-        (studentUnit && String(summary.unit.name || '').toLowerCase().trim() === String(studentUnit).toLowerCase().trim()))
+        (studentUnit && String(summary.unit.name || '').toLowerCase().trim() === String(studentUnit).toLowerCase().trim()) ||
+        (employeeUnit && String(summary.unit.name || '').toLowerCase().trim() === String(employeeUnit).toLowerCase().trim()))
     );
 
-    const edu = studentEdu || (isSummaryUnitMatch ? summary?.unit : null);
+    const edu = studentEdu || (isSummaryUnitMatch ? summary?.unit : null) || summary?.unit || null;
     const meta = edu?.metadata || (isSummaryUnitMatch ? summary?.unit?.metadata : {}) || {};
     const unitName =
       edu?.name ||
+      edu?.nama_unit ||
       headerStudent?.unit_name ||
       headerStudent?.education_unit_name ||
       studentUnit ||
+      employeeUnit ||
       (isSummaryUnitMatch ? summary?.unit?.name : '') ||
+      summary?.unit?.name ||
       '';
-    const unitLevel = edu?.level || headerStudent?.jenjang || '';
+    const unitLevel = edu?.level || edu?.jenjang || headerStudent?.jenjang || '';
     const akreditasi = meta?.accreditation || meta?.akreditasi || null;
     const npsn = meta?.npsn || edu?.code || null;
     const kepalaSekolah = meta?.principal_name || meta?.kepala_sekolah || null;
@@ -467,7 +493,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
       email,
       city,
     };
-  }, [summary?.unit, headerStudent, studentUnit]);
+  }, [summary?.unit, headerStudent, studentUnit, user, employeeUnit]);
 
   // Helper filter ketat: hanya izinkan informasi yang khusus ditujukan untuk unit sekolah siswa (bukan 'all'/'semua unit'/'yayasan')
   const isStrictUnitMatch = useCallback((item: any, unit: string) => {
@@ -481,21 +507,24 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     return u.includes(s) || s.includes(u);
   }, []);
 
-  // Filter ketat (Hanya Unit Siswa Saja): Menyembunyikan informasi berlabel "all / semua unit"
+  // Filter ketat (Hanya Unit Siswa Saja): Untuk orang tua menyembunyikan informasi berlabel "all / semua unit"
+  // Untuk pegawai & Tata Usaha: Tampilkan seluruh informasi yang telah disaring secara aman oleh backend
   const displayItems = useMemo(() => {
+    if (isEmployee) {
+      return items;
+    }
     return items.filter((item) => isStrictUnitMatch(item, studentUnit));
-  }, [items, studentUnit, isStrictUnitMatch]);
+  }, [items, isEmployee, studentUnit, isStrictUnitMatch]);
 
   // 2. Load summary from backend
   const loadSummary = useCallback(async () => {
-    if (isTeacherOnly) {
-      return;
-    }
     try {
-      const activeId = selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
+      const activeId = isEmployee
+        ? undefined
+        : selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
       const res = await mobileApiService.getPortalSchoolInformationSummary({
         child_id: activeId ? String(activeId) : undefined,
-        strict_unit: true,
+        strict_unit: !isEmployee,
       });
       const data = unwrapApiData<any>(res) || {};
       if (Array.isArray(data?.important)) {
@@ -508,11 +537,13 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     } catch {
       // safe fallback if offline
     }
-  }, [isTeacherOnly, selectedChildId, globalActiveChildId]);
+  }, [isEmployee, selectedChildId, globalActiveChildId]);
 
   // 3. Load items from database API
   const loadItems = useCallback(async (targetPage = 1) => {
-    const activeId = selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
+    const activeId = isEmployee
+      ? undefined
+      : selectedChildId || globalActiveChildId || useActiveChildStore.getState().activeChildId;
     const cacheKey = offlineCache.buildKey('school_info', user?.id, activeId);
     // 1. Baca cache dulu saat halaman pertama tanpa filter
     if (targetPage === 1 && !searchQuery.trim() && selectedTab === 'all' && !showBookmarkedOnly) {
@@ -527,34 +558,22 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
       let list: InfoItem[] = [];
       let total = 0;
 
-      if (isTeacherOnly) {
-        const res = await mobileApiService.getTeacherAnnouncements({
-          type: selectedTab === 'all' ? undefined : selectedTab,
-          search: searchQuery.trim() || undefined,
-          per_page: 15,
-          page: targetPage,
-        });
-        const data = unwrapApiData<any>(res) || res?.data || res || [];
-        list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-        total = data?.total || list.length;
-      } else {
-        const params: Record<string, any> = {
-          child_id: activeId ? String(activeId) : undefined,
-          strict_unit: true,
-          type: selectedTab === 'all' ? undefined : selectedTab,
-          search: searchQuery.trim() || undefined,
-          bookmarked: showBookmarkedOnly ? true : undefined,
-          per_page: 15,
-          page: targetPage,
-        };
+      const params: Record<string, any> = {
+        child_id: isEmployee ? undefined : activeId ? String(activeId) : undefined,
+        strict_unit: !isEmployee,
+        type: selectedTab === 'all' ? undefined : selectedTab,
+        search: searchQuery.trim() || undefined,
+        bookmarked: showBookmarkedOnly ? true : undefined,
+        per_page: 15,
+        page: targetPage,
+      };
 
-        const res = await mobileApiService.getPortalSchoolInformation(params);
-        const data = unwrapApiData<any>(res) || {};
-        list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-        total = data?.total || list.length;
-        if (res?.student || data?.student) {
-          setStudentInfo(res?.student || data?.student);
-        }
+      const res = await mobileApiService.getPortalSchoolInformation(params);
+      const data = unwrapApiData<any>(res) || {};
+      list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+      total = data?.total || list.length;
+      if (res?.student || data?.student) {
+        setStudentInfo(res?.student || data?.student);
       }
 
       const normalizedList = list.map(normalizeInfoItem);
@@ -568,7 +587,7 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
     } catch {
       // Offline: data cache sudah tampil dari step 1
     }
-  }, [isTeacherOnly, selectedChildId, globalActiveChildId, selectedTab, searchQuery, showBookmarkedOnly, user?.id]);
+  }, [isEmployee, selectedChildId, globalActiveChildId, selectedTab, searchQuery, showBookmarkedOnly, user?.id]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -589,7 +608,8 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   // Actions
   const handleMarkAllRead = async () => {
     try {
-      await mobileApiService.markAllSchoolInformationRead(selectedChildId);
+      const activeId = isEmployee ? undefined : selectedChildId;
+      await mobileApiService.markAllSchoolInformationRead(activeId);
       setFeedbackModal({
         visible: true,
         type: 'success',
@@ -610,7 +630,8 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   const handleToggleBookmark = async (item: InfoItem) => {
     const nextAction = item.is_bookmarked ? 'unbookmark' : 'bookmark';
     try {
-      await mobileApiService.updateSchoolInformationState(item.id, nextAction, selectedChildId);
+      const activeId = isEmployee ? undefined : selectedChildId;
+      await mobileApiService.updateSchoolInformationState(item.id, nextAction, activeId);
       // Update local item
       setItems((prev) =>
         prev.map((i) => (i.id === item.id ? { ...i, is_bookmarked: !item.is_bookmarked } : i))
@@ -627,7 +648,8 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
   const handleOpenDetail = (item: InfoItem) => {
     setSelectedItem(item);
     if (!item.is_read) {
-      void mobileApiService.updateSchoolInformationState(item.id, 'read', selectedChildId);
+      const activeId = isEmployee ? undefined : selectedChildId;
+      void mobileApiService.updateSchoolInformationState(item.id, 'read', activeId);
       setItems((prev) =>
         prev.map((i) => (i.id === item.id ? { ...i, is_read: true } : i))
       );
@@ -647,8 +669,11 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
       ? summary.important.map(normalizeInfoItem)
       : items.filter((i) => i.priority === 'mendesak' || i.priority === 'penting');
 
+    if (isEmployee) {
+      return raw.slice(0, 3);
+    }
     return raw.filter((item: InfoItem) => isStrictUnitMatch(item, studentUnit)).slice(0, 3);
-  }, [summary?.important, items, studentUnit, isStrictUnitMatch]);
+  }, [summary?.important, items, isEmployee, studentUnit, isStrictUnitMatch]);
   const unreadCount = summary?.unread_count ?? 0;
   const bookmarkedCount = summary?.bookmarked_count ?? 0;
 
@@ -701,52 +726,144 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.rootContainer}>
-      {/* ── Background Foliage Atas (IDENTIK DENGAN BERANDA & KALENDER AKADEMIK) ── */}
-      <View style={[styles.topFoliageWrapper, { height: Math.max(topInset + 300, 380) }]}>
+      {/* ── BACKGROUND FOLIAGE IDENTIK HALAMAN LAYANAN ADMINISTRASI ── */}
+      <View style={[styles.bgBackdrop, { height: 480 }]}>
         <Image
           source={PARENT_HOME_BG}
-          style={styles.topFoliageBgImage}
+          style={styles.bgImage}
           resizeMode="cover"
         />
         <LinearGradient
-          colors={['rgba(236,253,245,0.20)', 'rgba(236,253,245,0.75)', '#ECFDF5']}
-          locations={[0, 0.55, 1]}
+          colors={[
+            'rgba(24, 161, 101, 0.18)',
+            'rgba(24, 161, 101, 0.40)',
+            'rgba(240, 253, 244, 0.95)',
+            '#F0FDF4',
+          ]}
+          locations={[0, 0.28, 0.65, 1]}
           style={StyleSheet.absoluteFill}
         />
       </View>
 
-      {/* ── Clean Top Header (Fixed Luar ScrollView, IDENTIK DENGAN KALENDER AKADEMIK) ── */}
-      <View style={[styles.cleanTopHeader, { paddingTop: topInset + 6 }]}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleBack}
-          style={styles.cleanHeaderIconBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Kembali"
-        >
-          <MaterialCommunityIcons name="arrow-left" size={20} color="#065F46" />
-        </TouchableOpacity>
+      {/* ── TOP HEADER IDENTIK HALAMAN LAYANAN ADMINISTRASI ── */}
+      <View style={[styles.headerContainer, { paddingTop: topInset + 6 }]}>
+        <View style={styles.headerTopRow}>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            style={styles.backButton}
+            onPress={handleBack}
+            accessibilityRole="button"
+            accessibilityLabel="Kembali"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={20} color="#064E3B" />
+          </TouchableOpacity>
 
-        <Text numberOfLines={1} style={styles.cleanHeaderTitle}>
-          Informasi Sekolah
-        </Text>
+          <View style={styles.headerTitleWrap}>
+            <View style={styles.headerBadge}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.headerBadgeText} numberOfLines={1} ellipsizeMode="tail">
+                {isTu
+                  ? 'TATA USAHA • INFORMASI SEKOLAH'
+                  : isTeacher
+                  ? 'GURU PENGAMPU • INFORMASI SEKOLAH'
+                  : 'WARTA RESMI • INFORMASI SEKOLAH'}
+              </Text>
+            </View>
+            <Text style={styles.headerMainTitle} numberOfLines={1}>
+              Informasi Sekolah
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              {isTu
+                ? (employeeUnit && employeeUnit !== 'Unit Sekolah' ? `${employeeUnit} · Warta & Edaran` : 'Warta & Pengumuman Sekolah')
+                : (studentUnit ? `${studentUnit} · Warta & Edaran` : 'Warta & Pengumuman Resmi')}
+            </Text>
+          </View>
 
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => navigation?.navigate('Notifikasi')}
-          style={styles.cleanHeaderIconBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Notifikasi"
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {unreadCount > 0 && (
+              <TouchableOpacity
+                activeOpacity={0.75}
+                style={styles.readAllHeaderBtn}
+                onPress={handleMarkAllRead}
+                accessibilityRole="button"
+                accessibilityLabel="Tandai Semua Dibaca"
+              >
+                <MaterialCommunityIcons name="check-all" size={16} color="#059669" style={{ marginRight: 4 }} />
+                <Text style={styles.readAllHeaderBtnText}>Dibaca</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              activeOpacity={0.75}
+              style={styles.refreshButton}
+              onPress={() => {
+                void onRefresh();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Muat Ulang"
+            >
+              <MaterialCommunityIcons name="refresh" size={20} color="#064E3B" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Search Bar Identik Layanan Administrasi */}
+        <View style={styles.searchBar}>
+          <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Cari judul berita, topik, atau isi pengumuman..."
+            placeholderTextColor="#94A3B8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {/* Filter Pills with Horizontal Scroll Identik Layanan Administrasi */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabsRow}
         >
-          <MaterialCommunityIcons name="bell-outline" size={20} color="#065F46" />
-          {unreadNotificationCount > 0 && <View style={styles.cleanBellDot} />}
-        </TouchableOpacity>
+          {categoryTabs.map((tab) => {
+            const isActive = selectedTab === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                activeOpacity={0.75}
+                style={[styles.tabBtn, isActive && styles.tabBtnActive]}
+                onPress={() => setSelectedTab(tab.key)}
+              >
+                <Text style={[styles.tabBtnText, isActive && styles.tabBtnTextActive]}>
+                  {tab.label} ({tab.count})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Guidance Info Banner Identik Layanan Administrasi */}
+        <View style={styles.infoBanner}>
+          <MaterialCommunityIcons name="information-outline" size={15} color="#047857" style={{ marginRight: 6 }} />
+          <Text style={styles.infoBannerText}>
+            {isTu
+              ? 'Warta resmi, surat edaran, dan kalender kegiatan madrasah terpadu.'
+              : 'Ketuk pengumuman untuk melihat rincian lengkap & berkas resmi.'}
+          </Text>
+        </View>
       </View>
 
       {/* ── Main Scroll Sheet Container ── */}
       <View style={styles.sheetContainer}>
         <Animated.ScrollView
           style={styles.screen}
+          onScroll={handleMainScroll}
+          scrollEventThrottle={16}
           contentContainerStyle={[
             styles.cleanMainScrollContent,
             { paddingBottom: Math.max(bottomInset + 72, 94) },
@@ -763,8 +880,8 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
         >
           <View style={styles.cleanScrollInner}>
             <View style={styles.bodyContentWrapper}>
-              {/* ── 0. OPEN PROFILE ROW (IDENTIK DENGAN BERANDA & KALENDER AKADEMIK) ── */}
-              {!isTeacherOnly ? (
+              {/* ── 0. OPEN PROFILE ROW / TEACHER HERO CARD ── */}
+              {!isEmployee ? (
                 <View style={styles.studentProfileRow}>
                   {/* 60x60 Avatar with Mint Ring */}
                   <TouchableOpacity
@@ -842,117 +959,6 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
                       </View>
                     </View>
                   </View>
-                </View>
-              ) : (
-                <View style={styles.studentProfileRow}>
-                  <View style={styles.studentAvatarRing}>
-                    <Image
-                      source={getStudentAvatarSource(user)}
-                      style={styles.studentAvatarImg}
-                      resizeMode="cover"
-                    />
-                  </View>
-                  <View style={styles.studentProfileInfoCol}>
-                    <Text numberOfLines={1} style={styles.studentProfileName}>
-                      {String((user as any)?.nama_lengkap || (user as any)?.full_name || (user as any)?.name || 'Dewan Guru')}
-                    </Text>
-                    <View style={styles.studentMetaRow}>
-                      <MaterialCommunityIcons name="school" size={12} color="#047857" style={{ marginRight: 4 }} />
-                      <Text numberOfLines={1} style={styles.studentProfileUnitText}>
-                        {String(
-                          (user as any)?.employee?.unit_name ||
-                            (user as any)?.employee?.educationUnit?.name ||
-                            (user as any)?.unit_name ||
-                            (user as any)?.unit ||
-                            'Tenaga Pendidik & Kependidikan'
-                        )}
-                      </Text>
-                    </View>
-                    <View style={styles.studentActionBadgeRow}>
-                      <View style={[styles.studentStatusBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-                        <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
-                        <Text style={[styles.studentStatusBadgeText, { color: '#059669' }]}>
-                          {String(
-                            (user as any)?.employee?.jabatan ||
-                              (user as any)?.employee?.position ||
-                              'Pendidik & Tenaga Kependidikan'
-                          )}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              )}
-
-              {/* ── CARD INFORMASI SEKOLAH (COMPACT & SOFT MINT, BUKAN SOLID GELAP) ── */}
-              {unitInfo.name ? (
-                <View style={styles.compactUnitCard}>
-                  <View style={styles.compactUnitCardHeader}>
-                    <View style={styles.compactUnitIconBox}>
-                      <MaterialCommunityIcons name="office-building-marker-outline" size={20} color="#047857" />
-                    </View>
-                    <View style={styles.compactUnitTitleCol}>
-                      <Text numberOfLines={1} style={styles.compactUnitName}>
-                        {unitInfo.name}
-                      </Text>
-                      <View style={styles.compactUnitBadgesRow}>
-                        {unitInfo.akreditasi ? (
-                          <View style={styles.compactUnitBadgeAmber}>
-                            <MaterialCommunityIcons name="certificate-outline" size={11} color="#D97706" />
-                            <Text style={styles.compactUnitBadgeAmberText}>
-                              Akreditasi {unitInfo.akreditasi}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {unitInfo.npsn ? (
-                          <View style={styles.compactUnitBadgeMint}>
-                            <MaterialCommunityIcons name="identifier" size={11} color="#059669" />
-                            <Text style={styles.compactUnitBadgeMintText}>
-                              NPSN {unitInfo.npsn}
-                            </Text>
-                          </View>
-                        ) : null}
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Info Detail Dinamis (Hanya tampil jika ada data nyata dari DB) */}
-                  {(unitInfo.kepalaSekolah || (unitInfo.jamMasuk && unitInfo.jamPulang) || unitInfo.telepon || unitInfo.alamat) ? (
-                    <View style={styles.compactUnitMetaList}>
-                      {unitInfo.kepalaSekolah ? (
-                        <View style={styles.compactUnitMetaItem}>
-                          <MaterialCommunityIcons name="account-tie-outline" size={13} color="#059669" />
-                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
-                            Kepala Sekolah: <Text style={styles.compactUnitMetaHighlight}>{unitInfo.kepalaSekolah}</Text>
-                          </Text>
-                        </View>
-                      ) : null}
-                      {unitInfo.jamMasuk && unitInfo.jamPulang ? (
-                        <View style={styles.compactUnitMetaItem}>
-                          <MaterialCommunityIcons name="clock-outline" size={13} color="#059669" />
-                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
-                            KBM: <Text style={styles.compactUnitMetaHighlight}>{unitInfo.jamMasuk} - {unitInfo.jamPulang} WIB</Text>
-                          </Text>
-                        </View>
-                      ) : null}
-                      {unitInfo.telepon ? (
-                        <View style={styles.compactUnitMetaItem}>
-                          <MaterialCommunityIcons name="phone-outline" size={13} color="#059669" />
-                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
-                            Kontak: <Text style={styles.compactUnitMetaHighlight}>{unitInfo.telepon}</Text>
-                          </Text>
-                        </View>
-                      ) : null}
-                      {unitInfo.alamat ? (
-                        <View style={styles.compactUnitMetaItem}>
-                          <MaterialCommunityIcons name="map-marker-outline" size={13} color="#059669" />
-                          <Text numberOfLines={1} style={styles.compactUnitMetaText}>
-                            {unitInfo.alamat}{unitInfo.city ? `, ${unitInfo.city}` : ''}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : null}
                 </View>
               ) : null}
 
@@ -1047,132 +1053,45 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            {/* 2. CATEGORY TABS HORIZONTAL SCROLL (WARNA WARNI & DINAMIS) */}
-            <View style={styles.tabsSection}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
-                {categoryTabs.map((tab) => {
-                  const isActive = selectedTab === tab.key;
-                  return (
-                    <TouchableOpacity
-                      key={tab.key}
-                      activeOpacity={0.78}
-                      onPress={() => setSelectedTab(tab.key)}
-                      style={[
-                        styles.categoryTab,
-                        isActive
-                          ? { backgroundColor: tab.color, borderColor: tab.color }
-                          : { borderColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={tab.icon as any}
-                        size={15}
-                        color={isActive ? '#FFFFFF' : tab.color}
-                      />
-                      <Text
-                        style={[
-                          styles.categoryTabText,
-                          isActive ? { color: '#FFFFFF', fontWeight: '900' } : { color: '#334155' },
-                        ]}
-                      >
-                        {tab.label}
-                      </Text>
-                      <View
-                        style={[
-                          styles.tabCountPill,
-                          isActive
-                            ? { backgroundColor: 'rgba(255, 255, 255, 0.28)' }
-                            : { backgroundColor: '#F1F5F9' },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.tabCountText,
-                            isActive ? { color: '#FFFFFF' } : { color: '#64748B' },
-                          ]}
-                        >
-                          {tab.count}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* 3. PENCARIAN & QUICK FILTER ACTION ROW */}
-            <View style={styles.searchSection}>
-              <View style={styles.searchBox}>
-                <MaterialCommunityIcons name="magnify" size={20} color="#059669" />
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder="Cari judul berita, topik, atau isi pengumuman..."
-                  placeholderTextColor="#94A3B8"
-                  style={styles.searchInput}
-                  returnKeyType="search"
+            {/* 2. QUICK FILTER ACTION ROW */}
+            <View style={styles.quickFilterBar}>
+              {/* Chip Bookmark */}
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => setShowBookmarkedOnly(!showBookmarkedOnly)}
+                style={[
+                  styles.quickFilterChip,
+                  showBookmarkedOnly
+                    ? { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }
+                    : { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' },
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={showBookmarkedOnly ? 'bookmark' : 'bookmark-outline'}
+                  size={15}
+                  color={showBookmarkedOnly ? '#D97706' : '#64748B'}
                 />
-                {searchQuery.length > 0 ? (
-                  <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              {/* Action Chips Row */}
-              <View style={styles.quickFilterBar}>
-                {/* Chip Bookmark */}
-                <TouchableOpacity
-                  activeOpacity={0.75}
-                  onPress={() => setShowBookmarkedOnly(!showBookmarkedOnly)}
+                <Text
                   style={[
-                    styles.quickFilterChip,
-                    showBookmarkedOnly
-                      ? { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }
-                      : { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' },
+                    styles.quickFilterChipText,
+                    showBookmarkedOnly ? { color: '#B45309', fontWeight: '900' } : { color: '#475569' },
                   ]}
                 >
-                  <MaterialCommunityIcons
-                    name={showBookmarkedOnly ? 'bookmark' : 'bookmark-outline'}
-                    size={15}
-                    color={showBookmarkedOnly ? '#D97706' : '#64748B'}
-                  />
-                  <Text
-                    style={[
-                      styles.quickFilterChipText,
-                      showBookmarkedOnly ? { color: '#B45309', fontWeight: '900' } : { color: '#475569' },
-                    ]}
-                  >
-                    Tersimpan {bookmarkedCount > 0 ? `(${bookmarkedCount})` : ''}
-                  </Text>
+                  Tersimpan {bookmarkedCount > 0 ? `(${bookmarkedCount})` : ''}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Tombol Reset Filter */}
+              {(searchQuery.trim().length > 0 || selectedTab !== 'all' || showBookmarkedOnly) && (
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={handleResetFilter}
+                  style={[styles.quickFilterChip, { backgroundColor: '#F8FAFC', borderColor: '#CBD5E1' }]}
+                >
+                  <MaterialCommunityIcons name="filter-remove-outline" size={15} color="#64748B" />
+                  <Text style={[styles.quickFilterChipText, { color: '#64748B' }]}>Reset Filter</Text>
                 </TouchableOpacity>
-
-                {/* Tombol Tandai Semua Dibaca */}
-                {unreadCount > 0 && !isTeacherOnly && (
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={handleMarkAllRead}
-                    style={[styles.quickFilterChip, { backgroundColor: '#EBF8F2', borderColor: '#A7F3D0' }]}
-                  >
-                    <MaterialCommunityIcons name="check-all" size={15} color="#18A165" />
-                    <Text style={[styles.quickFilterChipText, { color: '#065F46' }]}>
-                      Tandai Dibaca ({unreadCount})
-                    </Text>
-                  </TouchableOpacity>
-                )}
-
-                {/* Tombol Reset Filter */}
-                {(searchQuery.trim().length > 0 || selectedTab !== 'all' || showBookmarkedOnly) && (
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={handleResetFilter}
-                    style={[styles.quickFilterChip, { backgroundColor: '#F8FAFC', borderColor: '#CBD5E1' }]}
-                  >
-                    <MaterialCommunityIcons name="filter-remove-outline" size={15} color="#64748B" />
-                    <Text style={[styles.quickFilterChipText, { color: '#64748B' }]}>Reset</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+              )}
             </View>
 
             {/* 4. INFORMASI PRIORITAS & MENDESAK (HIGHLIGHT CARD) */}
@@ -1742,60 +1661,201 @@ export default function SchoolInformationScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#F0FDF4',
   },
-  topFoliageWrapper: {
+  /* ── Background Mosque & School (Identik Halaman Utama & Layanan Administrasi) ── */
+  bgBackdrop: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    overflow: 'hidden',
-    zIndex: 0,
+    height: 480,
+    width: '100%',
   },
-  topFoliageBgImage: {
+  bgImage: {
     width: '100%',
     height: '100%',
+    opacity: 0.45,
   },
-  cleanTopHeader: {
+
+  // ── Top Header Identik Layanan Administrasi ──
+  headerContainer: {
+    zIndex: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    backgroundColor: 'transparent',
+  },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    backgroundColor: 'transparent',
-    zIndex: 10,
+    gap: 8,
+    marginBottom: 8,
   },
-  cleanHeaderIconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#A7F3D0',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#059669',
+    shadowColor: '#064E3B',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  cleanHeaderTitle: {
-    fontSize: 17,
+  headerTitleWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 5,
+    marginBottom: 2,
+  },
+  pulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+  },
+  headerBadgeText: {
+    fontSize: 9.5,
     fontWeight: '800',
-    color: '#004D32',
-    letterSpacing: -0.2,
+    color: '#047857',
+    letterSpacing: 0.3,
   },
-  cleanBellDot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#EF4444',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+  headerMainTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#064E3B',
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#059669',
+    marginTop: 1,
+    textAlign: 'center',
+  },
+  readAllHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 42,
+    paddingHorizontal: 12,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  readAllHeaderBtnText: {
+    color: '#059669',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  refreshButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    height: 42,
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#0F172A',
+    marginLeft: 6,
+    paddingVertical: 0,
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 8,
+    paddingBottom: 2,
+  },
+  tabBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  tabBtnActive: {
+    backgroundColor: '#059669',
+    borderColor: '#047857',
+    shadowColor: '#059669',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  tabBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  tabBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: 8,
+  },
+  infoBannerText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#065F46',
+    fontWeight: '600',
+    lineHeight: 15,
   },
   sheetContainer: {
     flex: 1,
@@ -1804,14 +1864,14 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: 'transparent' },
   cleanMainScrollContent: {
     flexGrow: 1,
-    paddingTop: 8,
+    paddingTop: 4,
   },
   cleanScrollInner: {
     width: '100%',
   },
   bodyContentWrapper: {
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 4,
   },
   studentProfileRow: {
     flexDirection: 'row',
@@ -1904,104 +1964,6 @@ const styles = StyleSheet.create({
   studentStatusBadgeText: {
     fontSize: 11,
     fontWeight: '800',
-  },
-  // Card Informasi Unit Sekolah Compact (Soft Mint & Bersih)
-  compactUnitCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 14,
-    borderWidth: 1.2,
-    borderColor: '#A7F3D0',
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  compactUnitCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  compactUnitIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: '#ECFDF5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-    borderWidth: 1,
-    borderColor: '#D1FAE5',
-  },
-  compactUnitTitleCol: {
-    flex: 1,
-  },
-  compactUnitName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#004D32',
-    letterSpacing: -0.2,
-  },
-  compactUnitBadgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
-    flexWrap: 'wrap',
-  },
-  compactUnitBadgeAmber: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#FFFBEB',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  compactUnitBadgeAmberText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#D97706',
-  },
-  compactUnitBadgeMint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  compactUnitBadgeMintText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  compactUnitMetaList: {
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F0FDF4',
-    gap: 4,
-  },
-  compactUnitMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  compactUnitMetaText: {
-    fontSize: 11,
-    color: '#4B5563',
-    flex: 1,
-  },
-  compactUnitMetaHighlight: {
-    color: '#065F46',
-    fontWeight: '700',
   },
   // Modal Pilih Ananda
   childModalBackdrop: {
@@ -2159,16 +2121,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   kpiCard: {
     width: (SCREEN_WIDTH - 32 - 10) / 2,
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 16,
+    padding: 13,
     borderWidth: 1.2,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowColor: '#064E3B',
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
@@ -2249,84 +2211,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // 2. Tabs Section
-  tabsSection: {
-    marginBottom: 12,
-  },
-  tabsScroll: {
-    gap: 8,
-    paddingRight: 10,
-  },
-  categoryTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6.5,
-    borderRadius: 10,
-    borderWidth: 1.2,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
-  categoryTabActive: {
-    backgroundColor: '#059669',
-    borderColor: '#059669',
-  },
-  categoryTabText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-  },
-  tabCountPill: {
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 8,
-  },
-  tabCountText: {
-    fontSize: 10,
-    fontWeight: '900',
-  },
-
-  // 3. Search & Quick Filters
-  searchSection: {
-    marginBottom: 14,
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'android' ? 7 : 10,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 12.5,
-    color: '#0F172A',
-    marginLeft: 8,
-    padding: 0,
-    fontWeight: '600',
-  },
+  // Quick Filters
   quickFilterBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 8,
+    marginBottom: 14,
+    marginTop: 2,
     flexWrap: 'wrap',
   },
   quickFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 11,
     borderWidth: 1,
   },
   quickFilterChipText: {
@@ -2350,9 +2250,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   sectionTitle: {
-    fontSize: 13.5,
+    fontSize: 14,
     fontWeight: '900',
-    color: '#0F172A',
+    color: '#064E3B',
+    letterSpacing: -0.2,
   },
   importantCountBadge: {
     backgroundColor: '#FEF3C7',
@@ -2479,20 +2380,21 @@ const styles = StyleSheet.create({
   },
   modernItemCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1.5,
+    borderRadius: 18,
+    borderWidth: 1.2,
     borderColor: '#E2E8F0',
-    borderLeftWidth: 4,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    borderLeftWidth: 4.5,
+    shadowColor: '#000000',
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 2,
     overflow: 'hidden',
+    marginBottom: 4,
   },
   modernItemCardUnread: {
-    backgroundColor: '#FCFDFE',
-    borderColor: '#CBD5E1',
+    backgroundColor: '#F0FDF4',
+    borderColor: '#6EE7B7',
   },
   cardCoverWrap: {
     width: '100%',

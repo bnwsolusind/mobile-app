@@ -16,6 +16,7 @@ import {
   isFoundationRole,
   isSuperAdminRole,
   isTuRole,
+  isDivisiRole,
   roleLabel,
 } from '../../utils/roles';
 import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../../utils/profile';
@@ -43,6 +44,7 @@ export default function EmployeeHeaderCard({
   const foundation = isFoundationRole(roles);
   const superAdmin = isSuperAdminRole(roles);
   const tu = isTuRole(roles);
+  const isDivisi = isDivisiRole(roles);
 
   const roleName = roleLabel(roles, 'Pegawai / Guru');
   const profileImg = getProfileImageUrl(user, dashboard);
@@ -226,14 +228,14 @@ export default function EmployeeHeaderCard({
   })();
 
   // Card theme gradients untuk non-teacher
-  const cardGradient: [string, string, string] = principal
+  const cardGradient: [string, string, string] = principal || isDivisi
     ? ['#065F46', '#047857', '#10B981']
     : foundation || superAdmin
     ? ['#0F172A', '#1E293B', '#334155']
     : ['#0D6B42', '#18A165', '#2BD988'];
 
-  const roleIcon = principal
-    ? 'shield-star'
+  const roleIcon = principal || isDivisi
+    ? 'shield-check'
     : foundation || superAdmin
     ? 'crown'
     : teacher

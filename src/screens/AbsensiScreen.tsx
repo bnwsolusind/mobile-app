@@ -45,6 +45,7 @@ import {
   isStudentRole,
   isTeacherRole,
   isTuRole,
+  isMusyrifRole,
   roleLabel,
 } from '../utils/roles';
 import {
@@ -137,7 +138,8 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const isStaff = isStaffRole(user?.roles || []) || (!isParent && !isStudent);
   const isTuStaff = isStaff && isTuRole(user?.roles || []);
   const isAboveTu = isAboveTuRole(user?.roles || []);
-  const canViewStudentReport = isTuStaff || isHomeroomRole(user?.roles || []) || isAboveTu || isOperatorRole(user?.roles || []);
+  const isMusyrif = isMusyrifRole(user?.roles || []);
+  const canViewStudentReport = isTuStaff || isHomeroomRole(user?.roles || []) || isAboveTu || isOperatorRole(user?.roles || []) || isMusyrif;
 
   // ── Sticky header bersama (StudentStickyHeader, sama dengan Tugas/Jadwal/Materi/Nilai) ──
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? 24 : 0);
@@ -194,6 +196,9 @@ export default function AbsensiScreen({ route, navigation }: any) {
     has_check_out?: boolean;
     student?: any;
     date?: string;
+    is_boarding?: boolean;
+    program_type?: string;
+    dormitory_permit?: any;
   } | null>(null);
   const [gateLoading, setGateLoading] = useState<boolean>(false);
 
@@ -551,6 +556,17 @@ export default function AbsensiScreen({ route, navigation }: any) {
     return resolveStudentDisplay(headerStudent, user).firstName || headerStudent?.name || 'Siswa';
   }, [headerStudent, user]);
 
+  const isBoardingStudent = useMemo(() => {
+    return Boolean(
+      headerStudent?.is_boarding ||
+      headerStudent?.program_type === 'boarding' ||
+      gateToday?.is_boarding ||
+      gateToday?.program_type === 'boarding' ||
+      (headerStudent?.unit_name && /asrama|ponpes|boarding/i.test(headerStudent.unit_name)) ||
+      (headerStudent?.class_name && /asrama|ponpes|boarding/i.test(headerStudent.class_name))
+    );
+  }, [headerStudent, gateToday]);
+
   const heroSubtitleFallback = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -657,7 +673,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
         }
       } else if (isStaff) {
         const empIdParam = effectiveEmployeeId ? String(effectiveEmployeeId) : undefined;
-        const [repRes, statsRes, teacherAttRes, tuRekapRes, tuStatsRes, pegRekapRes, teacherPermRes, dormRes] = await Promise.allSettled([
+        const [repRes, statsRes, teacherAttRes, tuRekapRes, tuStatsRes, pegRekapRes, teacherPermRes, dormRes, musyrifStudRes] = await Promise.allSettled([
           // Presensi mandiri milik diri sendiri — wajib sertakan tipe_presensi Pegawai
           empIdParam
             ? mobileApiService.getAttendanceReport({ employee_id: empIdParam, tipe_presensi: 'Pegawai', per_page: 100, period: selectedPeriod })
@@ -682,8 +698,14 @@ export default function AbsensiScreen({ route, navigation }: any) {
           canViewStudentReport
             ? mobileApiService.getTeacherPermissions({ per_page: 100 })
             : Promise.reject('not_allowed_permissions'),
-          // Izin Asrama / Boarding Permits
-          mobileApiService.getDormitoryPermits(),
+          // Izin Asrama / Boarding Permits (Khusus Musyrif ambil dari modul musyrif)
+          isMusyrif
+            ? mobileApiService.getMusyrifPermits()
+            : mobileApiService.getDormitoryPermits(),
+          // Daftar Santri Asrama (Khusus Musyrif)
+          isMusyrif
+            ? mobileApiService.getMusyrifStudents()
+            : Promise.resolve({ data: [] }),
         ]);
 
         let empHistory: any[] = [];
@@ -758,6 +780,13 @@ export default function AbsensiScreen({ route, navigation }: any) {
           setDormitoryPermits(dList);
         }
 
+        // Simpan daftar santri asrama binaan untuk Musyrif
+        if (musyrifStudRes && musyrifStudRes.status === 'fulfilled') {
+          const rawS = musyrifStudRes.value?.data || musyrifStudRes.value || [];
+          const sList = Array.isArray(rawS?.data) ? rawS.data : (Array.isArray(rawS) ? rawS : []);
+          setMusyrifStudents(sList);
+        }
+
         // 3. Simpan ke cache
         if (empHistory.length > 0 || empStats) {
           void offlineCache.set(cacheKey, { logs: [], perms: [], empHistory, empStats });
@@ -770,7 +799,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isParent, isStudent, isStaff, isTuStaff, isAboveTu, canViewStudentReport, selectedPeriod, selectedChildId, effectiveEmployeeId, user]);
+  }, [isParent, isStudent, isStaff, isTuStaff, isAboveTu, isMusyrif, canViewStudentReport, selectedPeriod, selectedChildId, effectiveEmployeeId, user]);
 
 
   useEffect(() => {
@@ -1747,6 +1776,48 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const [dropOffDriverName, setDropOffDriverName] = useState<string>('');
   const [dropOffNotes, setDropOffNotes] = useState<string>('');
 
+  // ── 5D. Boarding Return Drop-off & Extension State ──
+  const [boardingReturnModalVisible, setBoardingReturnModalVisible] = useState<boolean>(false);
+  const [boardingReturnNotes, setBoardingReturnNotes] = useState<string>('');
+  const [boardingReturnEscortName, setBoardingReturnEscortName] = useState<string>('');
+  const [submittingBoardingReturn, setSubmittingBoardingReturn] = useState<boolean>(false);
+
+  const [boardingExtensionModalVisible, setBoardingExtensionModalVisible] = useState<boolean>(false);
+  const [targetExtensionPermit, setTargetExtensionPermit] = useState<any>(null);
+  const [requestedReturnAt, setRequestedReturnAt] = useState<string>('');
+  const [extensionReason, setExtensionReason] = useState<string>('');
+  const [submittingExtension, setSubmittingExtension] = useState<boolean>(false);
+
+  // ── 5E. Musyrif Management State (Batch Schedule, Fast-track Emergency, Review) ──
+  const [musyrifStudents, setMusyrifStudents] = useState<any[]>([]);
+  const [musyrifBatchModalVisible, setMusyrifBatchModalVisible] = useState<boolean>(false);
+  const [musyrifBatchForm, setMusyrifBatchForm] = useState({
+    permit_type: 'pesiar_mingguan',
+    scheduled_departure_at: '',
+    scheduled_return_at: '',
+    destination: 'Rumah Orang Tua / Wali',
+    notes: '',
+  });
+  const [submittingBatchSchedule, setSubmittingBatchSchedule] = useState<boolean>(false);
+
+  const [musyrifEmergencyModalVisible, setMusyrifEmergencyModalVisible] = useState<boolean>(false);
+  const [musyrifEmergencyForm, setMusyrifEmergencyForm] = useState({
+    student_id: '',
+    medical_complaint: '',
+    medical_destination: 'Klinik / RS Terdekat',
+    medical_escort_name: '',
+    guardian_phone: '',
+    estimated_hours: 6,
+  });
+  const [submittingEmergency, setSubmittingEmergency] = useState<boolean>(false);
+
+  const [musyrifReviewModalVisible, setMusyrifReviewModalVisible] = useState<boolean>(false);
+  const [selectedReviewPermit, setSelectedReviewPermit] = useState<any>(null);
+  const [musyrifReviewAction, setMusyrifReviewAction] = useState<'approve' | 'reject'>('approve');
+  const [musyrifReviewNewReturnAt, setMusyrifReviewNewReturnAt] = useState<string>('');
+  const [musyrifReviewAdminNotes, setMusyrifReviewAdminNotes] = useState<string>('');
+  const [submittingMusyrifReview, setSubmittingMusyrifReview] = useState<boolean>(false);
+
   // ── 5C. Gate Location, Map Tile URL, Haversine Distance & Maps Navigation ──
   const mapboxToken = useMobileConfigStore(
     (state) => state.config?.mapbox_token || state.config?.system?.mapbox_token
@@ -1887,7 +1958,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
     return `${(meters / 1000).toFixed(2)} km`;
   };
 
-  // Compute Static Map URL for Gate Attendance (Mapbox Retina 2x or OpenStreetMap tile fallback)
+  // Compute Static Map URL for Gate Attendance (Mapbox Retina 2x Streets v12)
   const gateMapTileUrl = useMemo(() => {
     const { lat, lng } = gateTargetUnit;
     const userLat = userGpsLocation?.latitude ?? (gateToday?.attendance?.latitude ? Number(gateToday.attendance.latitude) : null);
@@ -1897,30 +1968,17 @@ export default function AbsensiScreen({ route, navigation }: any) {
     const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 64), 400);
     const mapHeight = 165;
 
-    if (token) {
-      if (userLat && userLng) {
-        // Mapbox Static dengan 2 pin: Pin Gerbang Hijau (#059669) & Pin Posisi Anda Biru (#2563EB)
-        const pGate = `pin-s-school+059669(${lng.toFixed(6)},${lat.toFixed(6)})`;
-        const pUser = `pin-s-circle+2563eb(${userLng.toFixed(6)},${userLat.toFixed(6)})`;
-        return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pGate},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${token}`;
-      }
-      // Mapbox Static dengan pin gerbang sekolah
-      const pGate = `pin-s-school+059669(${lng.toFixed(6)},${lat.toFixed(6)})`;
-      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pGate}/${lng.toFixed(6)},${lat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${token}`;
-    }
+    const activeToken = token || 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A';
 
-    // Fallback OpenStreetMap standard tile
-    const centerLat = userLat ? (userLat + lat) / 2 : lat;
-    const centerLng = userLng ? (userLng + lng) / 2 : lng;
-    const zoom = 16;
-    const lon2tile = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-    const lat2tile = (l: number, z: number) => {
-      const rad = (l * Math.PI) / 180;
-      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, z));
-    };
-    const tileX = lon2tile(centerLng, zoom);
-    const tileY = lat2tile(centerLat, zoom);
-    return `https://tile.openstreetmap.org/${zoom}/${tileX}/${tileY}.png`;
+    if (userLat && userLng) {
+      // Mapbox Static dengan 2 pin: Pin Gerbang Hijau (#059669) & Pin Posisi Anda Biru (#2563EB)
+      const pGate = `pin-s-school+059669(${lng.toFixed(6)},${lat.toFixed(6)})`;
+      const pUser = `pin-s-circle+2563eb(${userLng.toFixed(6)},${userLat.toFixed(6)})`;
+      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pGate},${pUser}/auto/${mapWidth}x${mapHeight}@2x?padding=45,45,45,45&access_token=${activeToken}`;
+    }
+    // Mapbox Static dengan pin gerbang sekolah
+    const pGate = `pin-s-school+059669(${lng.toFixed(6)},${lat.toFixed(6)})`;
+    return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pGate}/${lng.toFixed(6)},${lat.toFixed(6)},16.5,0/${mapWidth}x${mapHeight}@2x?access_token=${activeToken}`;
   }, [gateTargetUnit, gateToday, userGpsLocation, mapboxToken]);
 
   const handleOpenGateMaps = () => {
@@ -2065,6 +2123,266 @@ export default function AbsensiScreen({ route, navigation }: any) {
     const fullNotes = `[${catName}]${driverStr} ${dropOffNotes.trim()}`;
 
     await executeGateTap(dropOffActionType, fullNotes);
+  };
+
+  const handleConfirmBoardingReturn = async () => {
+    setSubmittingBoardingReturn(true);
+    try {
+      let coords = userGpsLocation;
+      if (!coords) {
+        coords = await requestUserGps(false);
+      }
+      const locationName = coords
+        ? `GPS (${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)})`
+        : 'Gerbang Boarding Asrama';
+
+      const targetId = isParent ? selectedChildId : undefined;
+      const res = await mobileApiService.dropoffDormitoryReturn({
+        child_id: targetId || (headerStudent?.id ? String(headerStudent.id) : ''),
+        latitude: coords?.latitude,
+        longitude: coords?.longitude,
+        location: locationName,
+        notes: boardingReturnNotes.trim() || 'Santri telah diantar kembali ke asrama oleh orang tua/wali',
+        guardian_name: boardingReturnEscortName.trim() || user?.name || 'Orang Tua / Wali Santri',
+      });
+
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Presensi Pengantaran Berhasil',
+        message: res?.message || 'Ananda telah berhasil tercatat kembali ke boarding asrama.',
+      });
+
+      setBoardingReturnModalVisible(false);
+      setBoardingReturnNotes('');
+      setBoardingReturnEscortName('');
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Presensi Pengantaran Gagal',
+        message: getApiErrorMessage(err, 'Gagal mencatat pengantaran santri kembali ke boarding.'),
+      });
+    } finally {
+      setSubmittingBoardingReturn(false);
+    }
+  };
+
+  const handleConfirmBoardingExtension = async () => {
+    if (!targetExtensionPermit?.id) return;
+    if (!requestedReturnAt || !extensionReason.trim()) {
+      Alert.alert('Perhatian', 'Mohon tentukan waktu baru kembali dan isi alasan perpanjangan izin.');
+      return;
+    }
+
+    setSubmittingExtension(true);
+    try {
+      const res = await mobileApiService.requestDormitoryExtension(targetExtensionPermit.id, {
+        requested_return_at: requestedReturnAt,
+        reason: extensionReason.trim(),
+      });
+
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Permohonan Terkirim',
+        message: res?.message || 'Permohonan perpanjangan jam kembali santri telah dikirimkan ke Musyrif & TU Pondok.',
+      });
+
+      setBoardingExtensionModalVisible(false);
+      setTargetExtensionPermit(null);
+      setExtensionReason('');
+      setRequestedReturnAt('');
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Mengajukan Perpanjangan',
+        message: getApiErrorMessage(err, 'Terjadi kendala saat mengajukan perpanjangan izin kembali.'),
+      });
+    } finally {
+      setSubmittingExtension(false);
+    }
+  };
+
+  // ── 5F. Musyrif Handlers (Tap Keluar, Absensi Kembali, Review Perpanjangan, Batch, Emergency) ──
+  const handleMusyrifCheckout = async (permitId: string) => {
+    try {
+      const res = await mobileApiService.checkoutDormitoryPermit(permitId);
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Check-out Santri Berhasil',
+        message: res?.message || 'Santri telah berhasil dicatat check-out keluar gerbang asrama.',
+      });
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Check-out Gagal',
+        message: getApiErrorMessage(err, 'Gagal mencatat check-out santri.'),
+      });
+    }
+  };
+
+  const handleMusyrifCheckin = async (permitId: string) => {
+    try {
+      const res = await mobileApiService.checkinDormitoryPermit(permitId, {
+        notes: `Check-in konfirmasi musyrif di pos asrama (${user?.name || 'Musyrif'})`,
+      });
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Santri Kembali Berhasil',
+        message: res?.message || 'Santri telah berhasil dicatat kembali ke dalam asrama.',
+      });
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Konfirmasi Kembali Gagal',
+        message: getApiErrorMessage(err, 'Gagal mencatat santri kembali ke asrama.'),
+      });
+    }
+  };
+
+  const handleOpenReview = (permit: any) => {
+    setSelectedReviewPermit(permit);
+    setMusyrifReviewAction('approve');
+    setMusyrifReviewNewReturnAt(permit.scheduled_return_at ? String(permit.scheduled_return_at).slice(0, 16) : '');
+    setMusyrifReviewAdminNotes('');
+    setMusyrifReviewModalVisible(true);
+  };
+
+  const handleMusyrifReviewSubmit = async () => {
+    if (!selectedReviewPermit?.id) return;
+    if (musyrifReviewAction === 'approve' && !musyrifReviewNewReturnAt) {
+      Alert.alert('Perhatian', 'Mohon tentukan jadwal baru batas kembali santri.');
+      return;
+    }
+
+    setSubmittingMusyrifReview(true);
+    try {
+      const res = await mobileApiService.reviewDormitoryExtension(selectedReviewPermit.id, {
+        action: musyrifReviewAction,
+        new_scheduled_return_at: musyrifReviewAction === 'approve' ? musyrifReviewNewReturnAt : undefined,
+        admin_notes: musyrifReviewAdminNotes.trim(),
+      });
+
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Keputusan Perpanjangan Disimpan',
+        message: res?.message || 'Keputusan perpanjangan izin telah berhasil disimpan dan diberitahukan ke wali santri.',
+      });
+
+      setMusyrifReviewModalVisible(false);
+      setSelectedReviewPermit(null);
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Memproses Tinjauan',
+        message: getApiErrorMessage(err, 'Terjadi kendala saat menyimpan keputusan perpanjangan izin.'),
+      });
+    } finally {
+      setSubmittingMusyrifReview(false);
+    }
+  };
+
+  const handleMusyrifEmergencySubmit = async () => {
+    if (!musyrifEmergencyForm.student_id || !musyrifEmergencyForm.medical_complaint.trim()) {
+      Alert.alert('Perhatian', 'Mohon pilih santri dan isi keluhan darurat medis/keluarga.');
+      return;
+    }
+
+    setSubmittingEmergency(true);
+    try {
+      const res = await mobileApiService.emergencyExitDormitory({
+        student_id: musyrifEmergencyForm.student_id,
+        medical_complaint: musyrifEmergencyForm.medical_complaint.trim(),
+        medical_destination: musyrifEmergencyForm.medical_destination.trim() || 'Klinik / RS Terdekat',
+        medical_escort_name: musyrifEmergencyForm.medical_escort_name.trim() || user?.name || 'Musyrif Pembina',
+        guardian_phone: musyrifEmergencyForm.guardian_phone.trim(),
+        estimated_hours: Number(musyrifEmergencyForm.estimated_hours) || 6,
+      });
+
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Izin Darurat Berhasil Diterbitkan',
+        message: res?.message || 'Surat izin darurat berhasil dibuat dan santri tercatat keluar asrama.',
+      });
+
+      setMusyrifEmergencyModalVisible(false);
+      setMusyrifEmergencyForm({
+        student_id: '',
+        medical_complaint: '',
+        medical_destination: 'Klinik / RS Terdekat',
+        medical_escort_name: '',
+        guardian_phone: '',
+        estimated_hours: 6,
+      });
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Penerbitan Izin Darurat Gagal',
+        message: getApiErrorMessage(err, 'Terjadi kendala saat menerbitkan izin darurat.'),
+      });
+    } finally {
+      setSubmittingEmergency(false);
+    }
+  };
+
+  const handleMusyrifBatchSubmit = async () => {
+    if (!musyrifBatchForm.scheduled_departure_at || !musyrifBatchForm.scheduled_return_at) {
+      Alert.alert('Perhatian', 'Mohon lengkapi jadwal mulai pulang dan batas jam kembali santri.');
+      return;
+    }
+
+    setSubmittingBatchSchedule(true);
+    try {
+      const res = await mobileApiService.batchScheduleDormitory({
+        permit_type: musyrifBatchForm.permit_type,
+        scheduled_departure_at: musyrifBatchForm.scheduled_departure_at,
+        scheduled_return_at: musyrifBatchForm.scheduled_return_at,
+        destination: musyrifBatchForm.destination.trim() || 'Rumah Orang Tua / Wali',
+        notes: musyrifBatchForm.notes.trim(),
+      });
+
+      setFeedbackModal({
+        visible: true,
+        type: 'success',
+        title: 'Jadwal Kepulangan Massal Terbit',
+        message: res?.message || 'Jadwal kepulangan massal berhasil diterbitkan untuk seluruh santri aktif.',
+      });
+
+      setMusyrifBatchModalVisible(false);
+      setMusyrifBatchForm({
+        permit_type: 'pesiar_mingguan',
+        scheduled_departure_at: '',
+        scheduled_return_at: '',
+        destination: 'Rumah Orang Tua / Wali',
+        notes: '',
+      });
+      await loadAttendanceData();
+    } catch (err: any) {
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Penjadwalan Massal Gagal',
+        message: getApiErrorMessage(err, 'Gagal menerbitkan jadwal kepulangan massal.'),
+      });
+    } finally {
+      setSubmittingBatchSchedule(false);
+    }
   };
 
   // ── 6. Submit Permission Form ──
@@ -2929,7 +3247,70 @@ export default function AbsensiScreen({ route, navigation }: any) {
           {/* ══════════════════════════════════════════════════════════════
               SECTION 3: AKSI UTAMA / PRESENSI MANDIRI / PENGAJUAN IZIN
              ══════════════════════════════════════════════════════════════ */}
-          {isStaff && activeTab === 'permissions' ? (
+          {isStaff && (activeTab === 'boarding' || isMusyrif) ? (
+            <View style={styles.containerBlock}>
+              <View style={styles.actionBannerCard}>
+                <View style={styles.actionBannerHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.actionBannerTitle}>Pusat Kepulangan & Izin Asrama</Text>
+                    <Text style={styles.actionBannerSub}>
+                      Atur jadwal kepulangan santri terjadwal, terbitkan izin darurat medis, serta kelola batas waktu kembali ke pondok.
+                    </Text>
+                  </View>
+                  <View style={[styles.actionIconCircle, { backgroundColor: '#CCFBF1' }]}>
+                    <MaterialCommunityIcons name="home-clock-outline" size={24} color="#0D9488" />
+                  </View>
+                </View>
+
+                {/* 2 Action Buttons for Musyrif */}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setMusyrifBatchModalVisible(true)}
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#059669',
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      elevation: 2,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="calendar-clock" size={16} color="#FFFFFF" />
+                    <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>
+                      Jadwal Massal
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setMusyrifEmergencyModalVisible(true)}
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#E11D48',
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      elevation: 2,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="alert-octagon" size={16} color="#FFFFFF" />
+                    <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>
+                      🚨 Izin Darurat
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ) : isStaff && activeTab === 'permissions' ? (
             <View style={styles.containerBlock}>
               <View style={styles.actionBannerCard}>
                 <View style={styles.actionBannerHeader}>
@@ -3154,7 +3535,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
                   {/* ── MAP LOKASI UNIT & POSISI USER DENGAN INDIKATOR JARAK REALTIME ── */}
                   <View style={styles.gateLiveMapContainer}>
-                    {/* Map Image View (Mapbox Retina 2x / OpenStreetMap) */}
+                    {/* Map Image View (Mapbox Retina 2x High Definition) */}
                     <View style={styles.gateMapFrame}>
                       {gateMapTileUrl ? (
                         <Image
@@ -3309,148 +3690,280 @@ export default function AbsensiScreen({ route, navigation }: any) {
                     </View>
                   </View>
 
-                  {/* Status Box: 3 Kartu Terpisah ala TU (Masuk, Pulang, Status) Bebas Tumpang Tindih */}
-                  <View style={styles.gateTodayStatusRow}>
-                    {/* Card 1: Masuk */}
-                    <View style={[styles.gateStatusPillBox, gateToday?.has_check_in ? styles.gateStatusPillBoxActiveIn : styles.gateStatusPillBoxNeutral]}>
-                      <View style={styles.gateStatusPillHeader}>
-                        <MaterialCommunityIcons name="login" size={13} color="#059669" />
-                        <Text style={[styles.gateStatusPillLabel, gateToday?.has_check_in && { color: '#047857' }]}>MASUK</Text>
-                      </View>
-                      <Text style={styles.gateStatusPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                        {gateToday?.attendance?.check_in_time ? `${String(gateToday.attendance.check_in_time).slice(0, 5)} WIB` : '--:--'}
-                      </Text>
-                      <Text style={[styles.gateStatusPillSub, gateToday?.has_check_in && { color: '#059669' }]} numberOfLines={1}>
-                        {gateToday?.has_check_in ? 'WIB • Tercatat' : 'Belum Absen'}
-                      </Text>
-                    </View>
+                  {/* Status Box & Actions: Dibedakan antara Boarding (Asrama 24 Jam) vs Fullday */}
+                  {isBoardingStudent ? (
+                    (() => {
+                      const activeBoardingPermit = gateToday?.dormitory_permit || dormitoryPermits.find(
+                        (p) => p.status === 'keluar' || p.presence_status === 'di_luar' || p.presence_status === 'berobat'
+                      );
+                      const isOutOfBoarding = Boolean(activeBoardingPermit);
+                      const isMedicalExit = activeBoardingPermit?.permit_type === 'sakit_berobat' || activeBoardingPermit?.presence_status === 'berobat';
+                      const isOverdueReturn = activeBoardingPermit?.deadline_status === 'overdue';
 
-                    {/* Card 2: Pulang */}
-                    <View style={[styles.gateStatusPillBox, gateToday?.has_check_out ? styles.gateStatusPillBoxActiveOut : styles.gateStatusPillBoxNeutral]}>
-                      <View style={styles.gateStatusPillHeader}>
-                        <MaterialCommunityIcons name="logout" size={13} color="#0D9488" />
-                        <Text style={[styles.gateStatusPillLabel, gateToday?.has_check_out && { color: '#0F766E' }]}>PULANG</Text>
-                      </View>
-                      <Text style={styles.gateStatusPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                        {gateToday?.attendance?.check_out_time ? `${String(gateToday.attendance.check_out_time).slice(0, 5)} WIB` : '--:--'}
-                      </Text>
-                      <Text style={[styles.gateStatusPillSub, gateToday?.has_check_out && { color: '#0D9488' }]} numberOfLines={1}>
-                        {gateToday?.has_check_out ? 'WIB • Selesai' : 'Belum Absen'}
-                      </Text>
-                    </View>
+                      return (
+                        <View style={{ marginTop: 12, width: '100%' }}>
+                          {isOutOfBoarding ? (
+                            <View
+                              style={{
+                                backgroundColor: isOverdueReturn ? '#FEF2F2' : '#F0FDF4',
+                                borderRadius: 18,
+                                padding: 14,
+                                borderWidth: 1.5,
+                                borderColor: isOverdueReturn ? '#FCA5A5' : '#86EFAC',
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 1 },
+                                shadowOpacity: 0.05,
+                                shadowRadius: 3,
+                                elevation: 1,
+                              }}
+                            >
+                              {/* Header Status */}
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <MaterialCommunityIcons
+                                    name={isMedicalExit ? 'hospital-box' : 'home-alert'}
+                                    size={18}
+                                    color={isOverdueReturn ? '#DC2626' : isMedicalExit ? '#D97706' : '#059669'}
+                                  />
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: isOverdueReturn ? '#DC2626' : isMedicalExit ? '#B45309' : '#047857' }}>
+                                    {isMedicalExit ? 'STATUS: SEDANG BEROBAT MEDIS' : 'STATUS: SEDANG DI LUAR PONDOK'}
+                                  </Text>
+                                </View>
+                                <View style={{ backgroundColor: isOverdueReturn ? '#FEE2E2' : '#DCFCE7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '700', color: isOverdueReturn ? '#991B1B' : '#15803D' }}>
+                                    #{activeBoardingPermit.permit_number || 'IZIN-BOARDING'}
+                                  </Text>
+                                </View>
+                              </View>
 
-                    {/* Card 3: Status */}
-                    <View style={[
-                      styles.gateStatusPillBox,
-                      gateToday?.has_check_in ? styles.gateStatusPillBoxSuccess : styles.gateStatusPillBoxNeutral
-                    ]}>
-                      <View style={styles.gateStatusPillHeader}>
-                        <MaterialCommunityIcons
-                          name={gateToday?.has_check_in ? 'check-circle' : 'clock-outline'}
-                          size={13}
-                          color={gateToday?.has_check_in ? '#047857' : '#64748B'}
-                        />
-                        <Text style={[
-                          styles.gateStatusPillLabel,
-                          gateToday?.has_check_in ? { color: '#047857' } : { color: '#64748B' }
+                              {/* Target Return Time */}
+                              <View style={{ backgroundColor: '#FFFFFF', borderRadius: 14, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                                <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>Wajib Kembali ke Asrama Sebelum:</Text>
+                                <Text style={{ fontSize: 14, fontWeight: '800', color: isOverdueReturn ? '#DC2626' : '#0F172A', marginTop: 2 }}>
+                                  {formatTanggalSingkat(activeBoardingPermit.scheduled_return_at)}, {formatJamIndo(activeBoardingPermit.scheduled_return_at)} WIB
+                                </Text>
+                                {isOverdueReturn ? (
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626', marginTop: 3 }}>
+                                    ⚠️ Perhatian: Telah melewati tenggat jam kembali ke pondok!
+                                  </Text>
+                                ) : (
+                                  <Text style={{ fontSize: 11, fontWeight: '500', color: '#059669', marginTop: 2 }}>
+                                    Tujuan: {activeBoardingPermit.medical_destination || activeBoardingPermit.destination || 'Kediaman Orang Tua'}
+                                  </Text>
+                                )}
+                              </View>
+
+                              {/* Primary Action Button: Drop-off Return */}
+                              <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => setBoardingReturnModalVisible(true)}
+                                style={[styles.gateCheckActionBtn, { backgroundColor: '#059669', width: '100%', borderRadius: 14, paddingVertical: 12 }]}
+                              >
+                                <MaterialCommunityIcons name="account-arrow-left" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                                <Text style={styles.gateCheckActionBtnText}>
+                                  Presensi Pengantaran Kembali ke Boarding
+                                </Text>
+                              </TouchableOpacity>
+
+                              {/* Secondary Action: Minta Perpanjangan Waktu */}
+                              <TouchableOpacity
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                  setTargetExtensionPermit(activeBoardingPermit);
+                                  setRequestedReturnAt(activeBoardingPermit.scheduled_return_at ? String(activeBoardingPermit.scheduled_return_at).slice(0, 16) : '');
+                                  setBoardingExtensionModalVisible(true);
+                                }}
+                                style={{
+                                  marginTop: 8,
+                                  paddingVertical: 9,
+                                  borderRadius: 14,
+                                  borderWidth: 1,
+                                  borderColor: '#0D9488',
+                                  backgroundColor: 'rgba(13, 148, 136, 0.08)',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexDirection: 'row',
+                                  gap: 6,
+                                }}
+                              >
+                                <MaterialCommunityIcons name="clock-fast" size={15} color="#0D9488" />
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F766E' }}>
+                                  Ajukan Perpanjangan Jam Kembali
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <View
+                              style={{
+                                backgroundColor: '#F0FDF4',
+                                borderRadius: 18,
+                                padding: 14,
+                                borderWidth: 1.5,
+                                borderColor: '#86EFAC',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+                                <MaterialCommunityIcons name="home-heart" size={24} color="#059669" />
+                              </View>
+                              <Text style={{ fontSize: 13, fontWeight: '800', color: '#047857' }}>
+                                SANTRI BERADA DI ASRAMA
+                              </Text>
+                              <Text style={{ fontSize: 11, color: '#475569', textAlign: 'center', marginTop: 4, lineHeight: 16 }}>
+                                Ananda berada di lingkungan boarding. Presensi harian dilakukan melalui halaqah sholat & tahfizh oleh Musyrif. Fitur presensi pengantaran orang tua akan aktif saat ananda izin keluar/libur.
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })()
+                  ) : (
+                    <>
+                      {/* Fullday: 3 Kartu Terpisah ala TU (Masuk, Pulang, Status) */}
+                      <View style={styles.gateTodayStatusRow}>
+                        {/* Card 1: Masuk */}
+                        <View style={[styles.gateStatusPillBox, gateToday?.has_check_in ? styles.gateStatusPillBoxActiveIn : styles.gateStatusPillBoxNeutral]}>
+                          <View style={styles.gateStatusPillHeader}>
+                            <MaterialCommunityIcons name="login" size={13} color="#059669" />
+                            <Text style={[styles.gateStatusPillLabel, gateToday?.has_check_in && { color: '#047857' }]}>MASUK</Text>
+                          </View>
+                          <Text style={styles.gateStatusPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                            {gateToday?.attendance?.check_in_time ? `${String(gateToday.attendance.check_in_time).slice(0, 5)} WIB` : '--:--'}
+                          </Text>
+                          <Text style={[styles.gateStatusPillSub, gateToday?.has_check_in && { color: '#059669' }]} numberOfLines={1}>
+                            {gateToday?.has_check_in ? 'WIB • Tercatat' : 'Belum Absen'}
+                          </Text>
+                        </View>
+
+                        {/* Card 2: Pulang */}
+                        <View style={[styles.gateStatusPillBox, gateToday?.has_check_out ? styles.gateStatusPillBoxActiveOut : styles.gateStatusPillBoxNeutral]}>
+                          <View style={styles.gateStatusPillHeader}>
+                            <MaterialCommunityIcons name="logout" size={13} color="#0D9488" />
+                            <Text style={[styles.gateStatusPillLabel, gateToday?.has_check_out && { color: '#0F766E' }]}>PULANG</Text>
+                          </View>
+                          <Text style={styles.gateStatusPillValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                            {gateToday?.attendance?.check_out_time ? `${String(gateToday.attendance.check_out_time).slice(0, 5)} WIB` : '--:--'}
+                          </Text>
+                          <Text style={[styles.gateStatusPillSub, gateToday?.has_check_out && { color: '#0D9488' }]} numberOfLines={1}>
+                            {gateToday?.has_check_out ? 'WIB • Selesai' : 'Belum Absen'}
+                          </Text>
+                        </View>
+
+                        {/* Card 3: Status */}
+                        <View style={[
+                          styles.gateStatusPillBox,
+                          gateToday?.has_check_in ? styles.gateStatusPillBoxSuccess : styles.gateStatusPillBoxNeutral
                         ]}>
-                          STATUS
-                        </Text>
+                          <View style={styles.gateStatusPillHeader}>
+                            <MaterialCommunityIcons
+                              name={gateToday?.has_check_in ? 'check-circle' : 'clock-outline'}
+                              size={13}
+                              color={gateToday?.has_check_in ? '#047857' : '#64748B'}
+                            />
+                            <Text style={[
+                              styles.gateStatusPillLabel,
+                              gateToday?.has_check_in ? { color: '#047857' } : { color: '#64748B' }
+                            ]}>
+                              STATUS
+                            </Text>
+                          </View>
+                          <Text
+                            style={[
+                              styles.gateStatusPillValue,
+                              gateToday?.has_check_in ? { color: '#047857' } : { color: '#64748B' }
+                            ]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.8}
+                          >
+                            {gateToday?.has_check_in ? (gateToday?.attendance?.status_label || gateToday?.attendance?.status || 'Hadir') : 'Belum Tap'}
+                          </Text>
+                          <Text style={[
+                            styles.gateStatusPillSub,
+                            gateToday?.has_check_in ? { color: '#059669' } : { color: '#94A3B8' }
+                          ]} numberOfLines={1}>
+                            {gateToday?.has_check_in ? 'Tervalidasi' : 'Gerbang'}
+                          </Text>
+                        </View>
                       </View>
-                      <Text
-                        style={[
-                          styles.gateStatusPillValue,
-                          gateToday?.has_check_in ? { color: '#047857' } : { color: '#64748B' }
-                        ]}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.8}
-                      >
-                        {gateToday?.has_check_in ? (gateToday?.attendance?.status_label || gateToday?.attendance?.status || 'Hadir') : 'Belum Tap'}
-                      </Text>
-                      <Text style={[
-                        styles.gateStatusPillSub,
-                        gateToday?.has_check_in ? { color: '#059669' } : { color: '#94A3B8' }
-                      ]} numberOfLines={1}>
-                        {gateToday?.has_check_in ? 'Tervalidasi' : 'Gerbang'}
-                      </Text>
-                    </View>
-                  </View>
 
-                  {/* Dual Action Buttons Berdampingan ala TU */}
-                  <View style={styles.gateActionButtonsRow}>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => void handleGateTap('in')}
-                      disabled={gateLoading || Boolean(gateToday?.has_check_in)}
-                      style={[
-                        styles.gateCheckActionBtn,
-                        { backgroundColor: '#059669' },
-                        Boolean(gateToday?.has_check_in) && { opacity: 0.55 },
-                      ]}
-                    >
-                      {gateLoading ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <MaterialCommunityIcons name="login" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                          <Text style={styles.gateCheckActionBtnText}>
-                            {gateToday?.has_check_in ? 'Sudah Masuk' : 'Tap Masuk'}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => void handleGateTap('out')}
-                      disabled={
-                        gateLoading ||
-                        !gateToday?.has_check_in ||
-                        Boolean(gateToday?.has_check_out)
-                      }
-                      style={[
-                        styles.gateCheckActionBtn,
-                        { backgroundColor: '#0D9488' },
-                        (!gateToday?.has_check_in || Boolean(gateToday?.has_check_out)) && { opacity: 0.55 },
-                      ]}
-                    >
-                      {gateLoading ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <MaterialCommunityIcons name="logout" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                          <Text style={styles.gateCheckActionBtnText}>
-                            {gateToday?.has_check_out ? 'Sudah Pulang' : 'Tap Pulang'}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Tombol Pembaruan Khusus jika sudah Masuk & Pulang */}
-                  {gateToday?.has_check_in && (
-                    <View style={styles.gateSecondaryTapRow}>
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => void handleGateTap('in')}
-                        style={styles.gateMiniRefreshBtn}
-                      >
-                        <MaterialCommunityIcons name="refresh" size={12} color="#059669" />
-                        <Text style={styles.gateMiniRefreshBtnText}>Tap Ulang Masuk</Text>
-                      </TouchableOpacity>
-
-                      {gateToday?.has_check_out && (
+                      {/* Fullday Action Buttons Berdampingan ala TU */}
+                      <View style={styles.gateActionButtonsRow}>
                         <TouchableOpacity
-                          activeOpacity={0.8}
-                          onPress={() => void handleGateTap('out')}
-                          style={styles.gateMiniRefreshBtn}
+                          activeOpacity={0.85}
+                          onPress={() => void handleGateTap('in')}
+                          disabled={gateLoading || Boolean(gateToday?.has_check_in)}
+                          style={[
+                            styles.gateCheckActionBtn,
+                            { backgroundColor: '#059669' },
+                            Boolean(gateToday?.has_check_in) && { opacity: 0.55 },
+                          ]}
                         >
-                          <MaterialCommunityIcons name="refresh" size={12} color="#0D9488" />
-                          <Text style={[styles.gateMiniRefreshBtnText, { color: '#0D9488' }]}>Perbarui Pulang</Text>
+                          {gateLoading ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <MaterialCommunityIcons name="login" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                              <Text style={styles.gateCheckActionBtnText}>
+                                {gateToday?.has_check_in ? 'Sudah Masuk' : 'Tap Masuk'}
+                              </Text>
+                            </>
+                          )}
                         </TouchableOpacity>
+
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => void handleGateTap('out')}
+                          disabled={
+                            gateLoading ||
+                            !gateToday?.has_check_in ||
+                            Boolean(gateToday?.has_check_out)
+                          }
+                          style={[
+                            styles.gateCheckActionBtn,
+                            { backgroundColor: '#0D9488' },
+                            (!gateToday?.has_check_in || Boolean(gateToday?.has_check_out)) && { opacity: 0.55 },
+                          ]}
+                        >
+                          {gateLoading ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <MaterialCommunityIcons name="logout" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                              <Text style={styles.gateCheckActionBtnText}>
+                                {gateToday?.has_check_out ? 'Sudah Pulang' : 'Tap Pulang'}
+                              </Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Tombol Pembaruan Khusus jika sudah Masuk & Pulang */}
+                      {gateToday?.has_check_in && (
+                        <View style={styles.gateSecondaryTapRow}>
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={() => void handleGateTap('in')}
+                            style={styles.gateMiniRefreshBtn}
+                          >
+                            <MaterialCommunityIcons name="refresh" size={12} color="#059669" />
+                            <Text style={styles.gateMiniRefreshBtnText}>Tap Ulang Masuk</Text>
+                          </TouchableOpacity>
+
+                          {gateToday?.has_check_out && (
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={() => void handleGateTap('out')}
+                              style={styles.gateMiniRefreshBtn}
+                            >
+                              <MaterialCommunityIcons name="refresh" size={12} color="#0D9488" />
+                              <Text style={[styles.gateMiniRefreshBtnText, { color: '#0D9488' }]}>Perbarui Pulang</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
                       )}
-                    </View>
+                    </>
                   )}
                 </LinearGradient>
               </View>
@@ -4202,6 +4715,80 @@ export default function AbsensiScreen({ route, navigation }: any) {
                               {canReviewThis ? 'Tolak Izin' : 'Ubah ke Tolak'}
                             </Text>
                           </TouchableOpacity>
+                        </View>
+                      )}
+
+                      {/* Tombol Aksi Musyrif untuk Boarding Pass */}
+                      {(isStaff || isMusyrif) && item.category === 'boarding_pass' && (
+                        <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                          {item.raw?.extension_status === 'pending' && (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => handleOpenReview(item.raw)}
+                              style={{
+                                flex: 1,
+                                minWidth: 130,
+                                backgroundColor: '#FEF3C7',
+                                borderWidth: 1,
+                                borderColor: '#F59E0B',
+                                borderRadius: 10,
+                                paddingVertical: 7,
+                                paddingHorizontal: 10,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 5,
+                              }}
+                            >
+                              <MaterialCommunityIcons name="clock-alert-outline" size={15} color="#B45309" />
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#B45309' }}>Tinjau Perpanjangan</Text>
+                            </TouchableOpacity>
+                          )}
+                          {item.raw?.status === 'keluar' || item.raw?.presence_status === 'di_luar' || item.raw?.presence_status === 'berobat' ? (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => handleMusyrifCheckin(item.raw)}
+                              style={{
+                                flex: 1,
+                                minWidth: 130,
+                                backgroundColor: '#ECFDF5',
+                                borderWidth: 1,
+                                borderColor: '#10B981',
+                                borderRadius: 10,
+                                paddingVertical: 7,
+                                paddingHorizontal: 10,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 5,
+                              }}
+                            >
+                              <MaterialCommunityIcons name="home-import-outline" size={15} color="#047857" />
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857' }}>Konfirmasi Tiba</Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => handleMusyrifCheckout(item.raw)}
+                              style={{
+                                flex: 1,
+                                minWidth: 130,
+                                backgroundColor: '#F0F9FF',
+                                borderWidth: 1,
+                                borderColor: '#0284C7',
+                                borderRadius: 10,
+                                paddingVertical: 7,
+                                paddingHorizontal: 10,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 5,
+                              }}
+                            >
+                              <MaterialCommunityIcons name="door-open" size={15} color="#0369A1" />
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#0369A1' }}>Tap Keluar Gerbang</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       )}
                     </TouchableOpacity>
@@ -6438,6 +7025,85 @@ export default function AbsensiScreen({ route, navigation }: any) {
                     </View>
                   </ScrollView>
 
+                  {/* Musyrif Quick Actions in Detail Modal */}
+                  {(isStaff || isMusyrif) && selectedDetail.category === 'boarding_pass' && (
+                    <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {selectedDetail.raw?.extension_status === 'pending' && (
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            setIsDetailModalOpen(false);
+                            handleOpenReview(selectedDetail.raw);
+                          }}
+                          style={{
+                            flex: 1,
+                            minWidth: 140,
+                            backgroundColor: '#FEF3C7',
+                            borderWidth: 1,
+                            borderColor: '#F59E0B',
+                            borderRadius: 12,
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                        >
+                          <MaterialCommunityIcons name="clock-alert-outline" size={16} color="#B45309" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#B45309' }}>Tinjau Perpanjangan</Text>
+                        </TouchableOpacity>
+                      )}
+                      {selectedDetail.raw?.status === 'keluar' || selectedDetail.raw?.presence_status === 'di_luar' || selectedDetail.raw?.presence_status === 'berobat' ? (
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            setIsDetailModalOpen(false);
+                            handleMusyrifCheckin(selectedDetail.raw);
+                          }}
+                          style={{
+                            flex: 1,
+                            minWidth: 140,
+                            backgroundColor: '#059669',
+                            borderRadius: 12,
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                        >
+                          <MaterialCommunityIcons name="home-import-outline" size={16} color="#FFFFFF" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Konfirmasi Tiba di Pondok</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            setIsDetailModalOpen(false);
+                            handleMusyrifCheckout(selectedDetail.raw);
+                          }}
+                          style={{
+                            flex: 1,
+                            minWidth: 140,
+                            backgroundColor: '#0284C7',
+                            borderRadius: 12,
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                        >
+                          <MaterialCommunityIcons name="door-open" size={16} color="#FFFFFF" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Tap Keluar Gerbang</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+
                   {/* Gradient Close Button */}
                   <TouchableOpacity
                     activeOpacity={0.88}
@@ -7115,6 +7781,664 @@ export default function AbsensiScreen({ route, navigation }: any) {
                     <MaterialCommunityIcons name="check-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
                     <Text style={styles.dropOffSubmitBtnText}>
                       Kirim Presensi {dropOffActionType === 'in' ? 'Masuk' : 'Pulang'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL PRESENSI PENGANTARAN KEMBALI SANTRI KE BOARDING ── */}
+      <Modal
+        visible={boardingReturnModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBoardingReturnModalVisible(false)}
+      >
+        <View style={styles.dropOffModalOverlay}>
+          <View style={styles.dropOffModalCard}>
+            <View style={[styles.dropOffModalTopBar, { backgroundColor: '#059669' }]} />
+
+            <View style={styles.dropOffModalHeader}>
+              <View style={[styles.dropOffHeaderIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                <MaterialCommunityIcons name="account-arrow-left" size={24} color="#059669" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dropOffModalTitle}>
+                  Presensi Pengantaran ke Boarding
+                </Text>
+                <Text style={styles.dropOffModalSubtitle} numberOfLines={1}>
+                  {activeStudentName} • {gateTargetUnit.name}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setBoardingReturnModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.dropOffModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+              <View style={[styles.dropOffDistanceBox, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                <MaterialCommunityIcons name="shield-check" size={20} color="#059669" />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dropOffDistanceTitle, { color: '#047857' }]}>Validasi Kepulangan Santri</Text>
+                  <Text style={[styles.dropOffDistanceText, { color: '#065F46' }]}>
+                    Dengan menekan tombol konfirmasi di bawah, orang tua/wali menyatakan bahwa ananda telah tiba kembali dengan selamat di asrama boarding dan diserahterimakan kepada pihak pondok.
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.dropOffInputLabel}>Nama Orang Tua / Pengantar *</Text>
+              <TextInput
+                value={boardingReturnEscortName}
+                onChangeText={setBoardingReturnEscortName}
+                placeholder={user?.name || 'Nama Orang Tua / Penjemput'}
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Catatan Pengantaran Santri (Opsional)</Text>
+              <TextInput
+                value={boardingReturnNotes}
+                onChangeText={setBoardingReturnNotes}
+                placeholder="Contoh: Ananda diserahkan ke pos musyrif piket dalam kondisi sehat..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={3}
+                style={[styles.dropOffTextInput, { minHeight: 70, textAlignVertical: 'top' }]}
+              />
+
+              <View style={{ marginTop: 6, padding: 10, borderRadius: 12, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                <Text style={{ fontSize: 10, color: '#64748B', fontWeight: '600' }}>
+                  Lokasi Terdeteksi: {userGpsLocation ? `${userGpsLocation.latitude.toFixed(5)}, ${userGpsLocation.longitude.toFixed(5)}` : 'Menggunakan GPS Gerbang'}
+                </Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.dropOffModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setBoardingReturnModalVisible(false)}
+                disabled={submittingBoardingReturn}
+                style={styles.dropOffCancelBtn}
+              >
+                <Text style={styles.dropOffCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleConfirmBoardingReturn}
+                disabled={submittingBoardingReturn}
+                style={[styles.dropOffSubmitBtn, { backgroundColor: '#059669' }]}
+              >
+                {submittingBoardingReturn ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="check-circle" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.dropOffSubmitBtnText}>
+                      Konfirmasi Santri Kembali
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL PERMOHONAN PERPANJANGAN JAM KEMBALI BOARDING ── */}
+      <Modal
+        visible={boardingExtensionModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBoardingExtensionModalVisible(false)}
+      >
+        <View style={styles.dropOffModalOverlay}>
+          <View style={styles.dropOffModalCard}>
+            <View style={[styles.dropOffModalTopBar, { backgroundColor: '#0D9488' }]} />
+
+            <View style={styles.dropOffModalHeader}>
+              <View style={[styles.dropOffHeaderIconWrap, { backgroundColor: '#CCFBF1' }]}>
+                <MaterialCommunityIcons name="clock-fast" size={24} color="#0D9488" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dropOffModalTitle}>
+                  Ajukan Perpanjangan Jam Kembali
+                </Text>
+                <Text style={styles.dropOffModalSubtitle} numberOfLines={1}>
+                  Santri: {activeStudentName}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setBoardingExtensionModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.dropOffModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+              <View style={[styles.dropOffDistanceBox, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}>
+                <MaterialCommunityIcons name="information" size={20} color="#0D9488" />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dropOffDistanceTitle, { color: '#0F766E' }]}>Jadwal Kembali Awal</Text>
+                  <Text style={[styles.dropOffDistanceText, { color: '#115E59', fontWeight: '700' }]}>
+                    {targetExtensionPermit?.scheduled_return_at ? `${formatTanggalSingkat(targetExtensionPermit.scheduled_return_at)}, ${formatJamIndo(targetExtensionPermit.scheduled_return_at)} WIB` : '-'}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.dropOffInputLabel}>Usulan Batas Tanggal & Jam Baru Kembali (YYYY-MM-DD HH:mm) *</Text>
+              <TextInput
+                value={requestedReturnAt}
+                onChangeText={setRequestedReturnAt}
+                placeholder="2026-10-28 20:00"
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Alasan Keterlambatan / Perpanjangan Waktu *</Text>
+              <TextInput
+                value={extensionReason}
+                onChangeText={setExtensionReason}
+                placeholder="Contoh: Terkendala macet parah di jalur mudik / Kendaraan mogok / Perlu menyelesaikan pemeriksaan dokter..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={3}
+                style={[styles.dropOffTextInput, { minHeight: 70, textAlignVertical: 'top' }]}
+              />
+            </ScrollView>
+
+            <View style={styles.dropOffModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setBoardingExtensionModalVisible(false)}
+                disabled={submittingExtension}
+                style={styles.dropOffCancelBtn}
+              >
+                <Text style={styles.dropOffCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleConfirmBoardingExtension}
+                disabled={submittingExtension || !requestedReturnAt.trim() || !extensionReason.trim()}
+                style={[styles.dropOffSubmitBtn, { backgroundColor: '#0D9488' }]}
+              >
+                {submittingExtension ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="send" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.dropOffSubmitBtnText}>
+                      Kirim Permohonan
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL JADWAL MASSAL KEPULANGAN ASRAMA (MUSYRIF) ── */}
+      <Modal
+        visible={musyrifBatchModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMusyrifBatchModalVisible(false)}
+      >
+        <View style={styles.dropOffModalOverlay}>
+          <View style={styles.dropOffModalCard}>
+            <View style={[styles.dropOffModalTopBar, { backgroundColor: '#059669' }]} />
+
+            <View style={styles.dropOffModalHeader}>
+              <View style={[styles.dropOffHeaderIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                <MaterialCommunityIcons name="calendar-clock" size={24} color="#059669" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dropOffModalTitle}>
+                  Jadwal Massal Kepulangan Santri
+                </Text>
+                <Text style={styles.dropOffModalSubtitle}>
+                  Atur jam pulang & batas kembali serentak
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setMusyrifBatchModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.dropOffModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+              <Text style={styles.dropOffInputLabel}>Jenis Kepulangan Massal *</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {[
+                  { id: 'pesiar_mingguan', label: 'Pesiar Mingguan' },
+                  { id: 'pulang_bulanan', label: 'Pulang Bulanan' },
+                  { id: 'libur_semester', label: 'Libur Semester' },
+                  { id: 'libur_ramadhan', label: 'Libur Ramadhan' },
+                ].map((t) => {
+                  const isSelected = musyrifBatchForm.permit_type === t.id;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      activeOpacity={0.8}
+                      onPress={() => setMusyrifBatchForm(prev => ({ ...prev, permit_type: t.id }))}
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        borderRadius: 10,
+                        backgroundColor: isSelected ? '#059669' : '#F1F5F9',
+                        borderWidth: 1,
+                        borderColor: isSelected ? '#047857' : '#E2E8F0',
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: isSelected ? '700' : '500', color: isSelected ? '#FFFFFF' : '#475569' }}>
+                        {t.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.dropOffInputLabel}>Waktu Berangkat / Mulai Pulang (YYYY-MM-DD HH:mm) *</Text>
+              <TextInput
+                value={musyrifBatchForm.scheduled_departure_at}
+                onChangeText={(text) => setMusyrifBatchForm(prev => ({ ...prev, scheduled_departure_at: text }))}
+                placeholder="2026-10-30 14:00"
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Batas Wajib Kembali ke Asrama (YYYY-MM-DD HH:mm) *</Text>
+              <TextInput
+                value={musyrifBatchForm.scheduled_return_at}
+                onChangeText={(text) => setMusyrifBatchForm(prev => ({ ...prev, scheduled_return_at: text }))}
+                placeholder="2026-11-01 17:00"
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Tujuan Kepulangan *</Text>
+              <TextInput
+                value={musyrifBatchForm.destination}
+                onChangeText={(text) => setMusyrifBatchForm(prev => ({ ...prev, destination: text }))}
+                placeholder="Contoh: Rumah Orang Tua / Domisili Masing-masing"
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Catatan / Instruksi Asrama (Opsional)</Text>
+              <TextInput
+                value={musyrifBatchForm.notes}
+                onChangeText={(text) => setMusyrifBatchForm(prev => ({ ...prev, notes: text }))}
+                placeholder="Contoh: Wajib mengenakan pakaian rapi & kembali tepat waktu"
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={2}
+                style={[styles.dropOffTextInput, { minHeight: 60, textAlignVertical: 'top' }]}
+              />
+            </ScrollView>
+
+            <View style={styles.dropOffModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setMusyrifBatchModalVisible(false)}
+                disabled={submittingBatchSchedule}
+                style={styles.dropOffCancelBtn}
+              >
+                <Text style={styles.dropOffCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleMusyrifBatchSubmit}
+                disabled={submittingBatchSchedule || !musyrifBatchForm.scheduled_departure_at.trim() || !musyrifBatchForm.scheduled_return_at.trim()}
+                style={[styles.dropOffSubmitBtn, { backgroundColor: '#059669' }]}
+              >
+                {submittingBatchSchedule ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="check-all" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.dropOffSubmitBtnText}>
+                      Terbitkan Jadwal
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL IZIN DARURAT / SAKIT ASRAMA (MUSYRIF) ── */}
+      <Modal
+        visible={musyrifEmergencyModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMusyrifEmergencyModalVisible(false)}
+      >
+        <View style={styles.dropOffModalOverlay}>
+          <View style={styles.dropOffModalCard}>
+            <View style={[styles.dropOffModalTopBar, { backgroundColor: '#E11D48' }]} />
+
+            <View style={styles.dropOffModalHeader}>
+              <View style={[styles.dropOffHeaderIconWrap, { backgroundColor: '#FFE4E6' }]}>
+                <MaterialCommunityIcons name="ambulance" size={24} color="#E11D48" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dropOffModalTitle}>
+                  Izin Darurat / Santri Sakit
+                </Text>
+                <Text style={styles.dropOffModalSubtitle}>
+                  Fast-track rujukan medis atau keperluan mendesak
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setMusyrifEmergencyModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.dropOffModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+              <Text style={styles.dropOffInputLabel}>Pilih Santri *</Text>
+              {musyrifStudents.length === 0 ? (
+                <View style={{ padding: 12, backgroundColor: '#F8FAFC', borderRadius: 12, marginBottom: 10 }}>
+                  <Text style={{ fontSize: 11, color: '#64748B' }}>Memuat daftar santri asrama...</Text>
+                </View>
+              ) : (
+                <View style={{ maxHeight: 130, marginBottom: 10, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden' }}>
+                  <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                    {musyrifStudents.map((st: any) => {
+                      const isSelected = musyrifEmergencyForm.student_id === st.id;
+                      const sName = st.full_name || st.name || 'Santri';
+                      const cName = st.classroom_name || st.class_name || st.school_class?.name || '';
+                      return (
+                        <TouchableOpacity
+                          key={st.id}
+                          activeOpacity={0.7}
+                          onPress={() => setMusyrifEmergencyForm(prev => ({
+                            ...prev,
+                            student_id: st.id,
+                            guardian_phone: st.guardian_phone || st.parent_phone || prev.guardian_phone,
+                          }))}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            backgroundColor: isSelected ? '#EFF6FF' : '#FFFFFF',
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#F1F5F9',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                          }}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 12, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#1D4ED8' : '#1E293B' }}>
+                              {sName}
+                            </Text>
+                            <Text style={{ fontSize: 10, color: '#64748B' }}>
+                              NIS: {st.nis || '-'} • {cName}
+                            </Text>
+                          </View>
+                          {isSelected && (
+                            <MaterialCommunityIcons name="check-circle" size={16} color="#2563EB" />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+
+              <Text style={styles.dropOffInputLabel}>Keluhan Sakit / Alasan Darurat *</Text>
+              <TextInput
+                value={musyrifEmergencyForm.medical_complaint}
+                onChangeText={(text) => setMusyrifEmergencyForm(prev => ({ ...prev, medical_complaint: text }))}
+                placeholder="Contoh: Demam tinggi 39°C, pusing hebat & butuh penanganan dokter"
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={2}
+                style={[styles.dropOffTextInput, { minHeight: 55, textAlignVertical: 'top' }]}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Tempat Berobat / Tujuan Rujukan *</Text>
+              <TextInput
+                value={musyrifEmergencyForm.medical_destination}
+                onChangeText={(text) => setMusyrifEmergencyForm(prev => ({ ...prev, medical_destination: text }))}
+                placeholder="Contoh: RS Ibnu Sina / Puskesmas / Rumah Orang Tua"
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Nama Pendamping / Pengantar</Text>
+              <TextInput
+                value={musyrifEmergencyForm.medical_escort_name}
+                onChangeText={(text) => setMusyrifEmergencyForm(prev => ({ ...prev, medical_escort_name: text }))}
+                placeholder="Contoh: Ust. Musyrif Jaga / Orang Tua Kandung"
+                placeholderTextColor="#94A3B8"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>No. HP / WhatsApp Wali</Text>
+              <TextInput
+                value={musyrifEmergencyForm.guardian_phone}
+                onChangeText={(text) => setMusyrifEmergencyForm(prev => ({ ...prev, guardian_phone: text }))}
+                placeholder="081234567890"
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad"
+                style={styles.dropOffTextInput}
+              />
+
+              <Text style={styles.dropOffInputLabel}>Estimasi Durasi Izin Keluar (Jam)</Text>
+              <TextInput
+                value={String(musyrifEmergencyForm.estimated_hours)}
+                onChangeText={(text) => {
+                  const n = parseInt(text, 10);
+                  setMusyrifEmergencyForm(prev => ({ ...prev, estimated_hours: isNaN(n) ? 6 : n }));
+                }}
+                placeholder="6"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+                style={styles.dropOffTextInput}
+              />
+            </ScrollView>
+
+            <View style={styles.dropOffModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setMusyrifEmergencyModalVisible(false)}
+                disabled={submittingEmergency}
+                style={styles.dropOffCancelBtn}
+              >
+                <Text style={styles.dropOffCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleMusyrifEmergencySubmit}
+                disabled={submittingEmergency || !musyrifEmergencyForm.student_id || !musyrifEmergencyForm.medical_complaint.trim() || !musyrifEmergencyForm.medical_destination.trim()}
+                style={[styles.dropOffSubmitBtn, { backgroundColor: '#E11D48' }]}
+              >
+                {submittingEmergency ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="ambulance" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.dropOffSubmitBtnText}>
+                      Terbitkan Izin Darurat
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL TINJAU PERPANJANGAN KEPULANGAN OLEH MUSYRIF ── */}
+      <Modal
+        visible={musyrifReviewModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMusyrifReviewModalVisible(false)}
+      >
+        <View style={styles.dropOffModalOverlay}>
+          <View style={styles.dropOffModalCard}>
+            <View style={[styles.dropOffModalTopBar, { backgroundColor: '#D97706' }]} />
+
+            <View style={styles.dropOffModalHeader}>
+              <View style={[styles.dropOffHeaderIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                <MaterialCommunityIcons name="clock-edit-outline" size={24} color="#D97706" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dropOffModalTitle}>
+                  Tinjau Perpanjangan Kepulangan
+                </Text>
+                <Text style={styles.dropOffModalSubtitle}>
+                  Permohonan dari orang tua / santri
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setMusyrifReviewModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.dropOffModalCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+              {/* Card Detail Permohonan */}
+              <View style={[styles.dropOffDistanceBox, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A', marginBottom: 12 }]}>
+                <MaterialCommunityIcons name="account-clock" size={20} color="#D97706" />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dropOffDistanceTitle, { color: '#B45309' }]}>
+                    Santri: {selectedReviewPermit?.student?.full_name || selectedReviewPermit?.student_name || 'Santri'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#92400E', marginTop: 2 }}>
+                    Jadwal Semula: {selectedReviewPermit?.scheduled_return_at ? `${formatTanggalSingkat(selectedReviewPermit.scheduled_return_at)} ${formatJamIndo(selectedReviewPermit.scheduled_return_at)} WIB` : '-'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#92400E', marginTop: 2 }}>
+                    Permohonan Kembali Baru: <Text style={{ fontWeight: '700' }}>{selectedReviewPermit?.requested_return_at ? `${formatTanggalSingkat(selectedReviewPermit.requested_return_at)} ${formatJamIndo(selectedReviewPermit.requested_return_at)} WIB` : '-'}</Text>
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#78350F', marginTop: 4, fontStyle: 'italic' }}>
+                    Alasan Ortu: "{selectedReviewPermit?.extension_reason || selectedReviewPermit?.notes || '-'}"
+                  </Text>
+                </View>
+              </View>
+
+              {/* Action Selector */}
+              <Text style={styles.dropOffInputLabel}>Keputusan Musyrif *</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setMusyrifReviewAction('approve')}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 12,
+                    backgroundColor: musyrifReviewAction === 'approve' ? '#059669' : '#F1F5F9',
+                    borderWidth: 1,
+                    borderColor: musyrifReviewAction === 'approve' ? '#047857' : '#E2E8F0',
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <MaterialCommunityIcons name="check-circle" size={16} color={musyrifReviewAction === 'approve' ? '#FFFFFF' : '#059669'} />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: musyrifReviewAction === 'approve' ? '#FFFFFF' : '#334155' }}>
+                    Setujui
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setMusyrifReviewAction('reject')}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 12,
+                    backgroundColor: musyrifReviewAction === 'reject' ? '#E11D48' : '#F1F5F9',
+                    borderWidth: 1,
+                    borderColor: musyrifReviewAction === 'reject' ? '#BE123C' : '#E2E8F0',
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <MaterialCommunityIcons name="close-circle" size={16} color={musyrifReviewAction === 'reject' ? '#FFFFFF' : '#E11D48'} />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: musyrifReviewAction === 'reject' ? '#FFFFFF' : '#334155' }}>
+                    Tolak
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {musyrifReviewAction === 'approve' && (
+                <>
+                  <Text style={styles.dropOffInputLabel}>Batas Tanggal & Jam Baru yang Disetujui (YYYY-MM-DD HH:mm) *</Text>
+                  <TextInput
+                    value={musyrifReviewNewReturnAt}
+                    onChangeText={setMusyrifReviewNewReturnAt}
+                    placeholder="2026-10-28 20:00"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.dropOffTextInput}
+                  />
+                </>
+              )}
+
+              <Text style={styles.dropOffInputLabel}>Catatan Musyrif untuk Wali *</Text>
+              <TextInput
+                value={musyrifReviewAdminNotes}
+                onChangeText={setMusyrifReviewAdminNotes}
+                placeholder="Contoh: Disetujui, harap santri tiba sebelum waktu shalat Maghrib berjamaah."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={3}
+                style={[styles.dropOffTextInput, { minHeight: 70, textAlignVertical: 'top' }]}
+              />
+            </ScrollView>
+
+            <View style={styles.dropOffModalFooter}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setMusyrifReviewModalVisible(false)}
+                disabled={submittingMusyrifReview}
+                style={styles.dropOffCancelBtn}
+              >
+                <Text style={styles.dropOffCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleMusyrifReviewSubmit}
+                disabled={submittingMusyrifReview || (musyrifReviewAction === 'approve' && !musyrifReviewNewReturnAt.trim()) || !musyrifReviewAdminNotes.trim()}
+                style={[styles.dropOffSubmitBtn, { backgroundColor: musyrifReviewAction === 'approve' ? '#059669' : '#E11D48' }]}
+              >
+                {submittingMusyrifReview ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="send-check" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.dropOffSubmitBtnText}>
+                      Simpan Keputusan
                     </Text>
                   </>
                 )}

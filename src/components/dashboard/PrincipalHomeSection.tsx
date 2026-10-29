@@ -689,8 +689,8 @@ export default function PrincipalHomeSection({
                 </View>
               </View>
               <Text style={[styles.kpiCount, { color: '#047857' }]}>{totalSiswa}</Text>
-              <Text numberOfLines={1} style={styles.kpiLabel}>Total Siswa Aktif</Text>
-              <Text numberOfLines={1} style={styles.kpiSub}>Terdaftar aktif di unit sekolah</Text>
+              <Text numberOfLines={1} style={styles.kpiLabel}>Siswa Aktif</Text>
+              <Text numberOfLines={1} style={styles.kpiSub}>Santri terdaftar</Text>
             </LinearGradient>
           </TouchableOpacity>
 
@@ -711,8 +711,8 @@ export default function PrincipalHomeSection({
                 </View>
               </View>
               <Text style={[styles.kpiCount, { color: '#0369A1' }]}>{totalGuru}</Text>
-              <Text numberOfLines={1} style={styles.kpiLabel}>Total Guru Pengajar</Text>
-              <Text numberOfLines={1} style={styles.kpiSub}>Tenaga pendidik aktif</Text>
+              <Text numberOfLines={1} style={styles.kpiLabel}>Guru Pengajar</Text>
+              <Text numberOfLines={1} style={styles.kpiSub}>Tenaga pendidik</Text>
             </LinearGradient>
           </TouchableOpacity>
 
@@ -733,8 +733,8 @@ export default function PrincipalHomeSection({
                 </View>
               </View>
               <Text style={[styles.kpiCount, { color: '#6D28D9' }]}>{totalTendik}</Text>
-              <Text numberOfLines={1} style={styles.kpiLabel}>Total Tendik / Staf</Text>
-              <Text numberOfLines={1} style={styles.kpiSub}>Administrasi & teknis (Total SDM: {totalPegawai})</Text>
+              <Text numberOfLines={1} style={styles.kpiLabel}>Tendik & Staf</Text>
+              <Text numberOfLines={1} style={styles.kpiSub}>SDM: {totalPegawai} staf</Text>
             </LinearGradient>
           </TouchableOpacity>
 
@@ -755,45 +755,15 @@ export default function PrincipalHomeSection({
                 </View>
               </View>
               <Text style={[styles.kpiCount, { color: '#B45309' }]}>{totalRombel}</Text>
-              <Text numberOfLines={1} style={styles.kpiLabel}>Total Rombel / Kelas</Text>
-              <Text numberOfLines={1} style={styles.kpiSub}>Rombongan belajar aktif</Text>
+              <Text numberOfLines={1} style={styles.kpiLabel}>Rombel / Kelas</Text>
+              <Text numberOfLines={1} style={styles.kpiSub}>Rombongan belajar</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
       </View>
 
 
-      {/* ── 2. BUTTON UTAMA: DASHBOARD KEPALA SEKOLAH (PINTASAN KE LAYAR EKSEKUTIF PENUH) ── */}
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={() => navigation.navigate('PrincipalDashboard')}
-        style={styles.heroBannerBtn}
-      >
-        <LinearGradient
-          colors={['#ECFDF5', '#D1FAE5']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.heroBannerGradient}
-        >
-          <View style={styles.heroBannerIconWrap}>
-            <MaterialCommunityIcons name="view-dashboard" size={24} color="#FFFFFF" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <View style={styles.heroBannerTitleRow}>
-              <Text style={styles.heroBannerTitle}>Dashboard Kepala Sekolah</Text>
-              <View style={styles.heroBannerBadge}>
-                <Text style={styles.heroBannerBadgeText}>EKSEKUTIF</Text>
-              </View>
-            </View>
-            <Text style={styles.heroBannerSubtitle}>
-              Buka KPI lengkap, tab kesiswaan, presensi & rekap prestasi siswa
-            </Text>
-          </View>
-          <MaterialCommunityIcons name="chevron-right" size={22} color="#059669" />
-        </LinearGradient>
-      </TouchableOpacity>
-
-      {/* ── 3. MENU UTAMA KEPALA SEKOLAH (DIGABUNG DALAM 1 CARD BER-TAB) ── */}
+      {/* ── 2. MENU UTAMA KEPALA SEKOLAH (DIGABUNG DALAM 1 CARD BER-TAB) ── */}
       <View style={styles.sectionCard}>
         {/* Header Menu Utama */}
         <View style={styles.sectionHeader}>
@@ -852,10 +822,11 @@ export default function PrincipalHomeSection({
         <View style={styles.qBtnGrid}>
           {(activeMenuTab === 'semua' || activeMenuTab === 'manajemen') && (
             <>
-              <QBtn icon="database-outline"       iconBg="#059669" label="Data Master"     onPress={() => safeNavigate('Data')} />
-              <QBtn icon="human-male-board"       iconBg="#0F766E" label="Supervisi Guru"  onPress={() => setIsTeacherMonitoringModalOpen(true)} />
-              <QBtn icon="account-switch"         iconBg="#7C3AED" label="Kelola Alumni & Mutasi"  onPress={() => safeNavigate('MutasiSiswa')} />
-              <QBtn icon="google-classroom"       iconBg="#D97706" label="Pantau Kelas"  onPress={() => safeNavigate('PantauKelas')} />
+              <QBtn icon="account-school-outline" iconBg="#0284C7" label="Buku Induk" onPress={() => safeNavigate('MasterSiswa')} />
+              <QBtn icon="account-group-outline"  iconBg="#7C3AED" label="Data SDM Guru" onPress={() => safeNavigate('Data', { initialResource: 'employees' })} />
+              <QBtn icon="human-male-board"       iconBg="#0F766E" label="Supervisi Guru" onPress={() => setIsTeacherMonitoringModalOpen(true)} />
+              <QBtn icon="account-switch"         iconBg="#059669" label="Alumni & Mutasi" onPress={() => safeNavigate('MutasiSiswa')} />
+              <QBtn icon="google-classroom"       iconBg="#D97706" label="Pantau Kelas" onPress={() => safeNavigate('PantauKelas')} />
             </>
           )}
 
@@ -864,9 +835,7 @@ export default function PrincipalHomeSection({
               <QBtn icon="account-check-outline" iconBg="#059669" label="Presensi Guru"  onPress={() => safeNavigate('RekapPresensiGuru', { defaultSubject: 'pegawai', lockedSubject: 'pegawai' })} />
               <QBtn icon="account-group"         iconBg="#0284C7" label="Presensi Siswa" onPress={() => safeNavigate('RekapPresensiSiswa', { defaultSubject: 'siswa', lockedSubject: 'siswa' })} />
               <QBtn icon="calendar-check-outline" iconBg="#10B981" label="Presensi Mandiri" onPress={() => safeNavigate('PresensiMandiriStaff')} />
-              <QBtn icon="calendar-check-outline" iconBg="#059669" label="Presensi KBM"  onPress={() => safeNavigate('PresensiKbmPengganti')} />
               <QBtn icon="file-document-edit"    iconBg="#D97706" label="Izin & Cuti"    onPress={() => safeNavigate('Perizinan', { tab: 'permissions' })} />
-              <QBtn icon="door-open"             iconBg="#E11D48" label="Izin Asrama"    onPress={() => safeNavigate('Perizinan', { tab: 'boarding' })} />
             </>
           )}
 
@@ -874,17 +843,16 @@ export default function PrincipalHomeSection({
             <>
               <QBtn icon="clock-time-four"  iconBg="#7C3AED" label="Jadwal Pelajaran" onPress={() => safeNavigate('Jadwal')} />
               <QBtn icon="calendar-month"   iconBg="#0284C7" label="Kalender Akademik" onPress={() => safeNavigate('Kalender')} />
-              <QBtn icon="book-multiple"    iconBg="#0D9488" label="Materi Belajar" onPress={() => safeNavigate('Materi')} />
-              <QBtn icon="clipboard-text"   iconBg="#F59E0B" label="Tugas Siswa"    onPress={() => safeNavigate('Tugas')} />
+              <QBtn icon="book-multiple"    iconBg="#0D9488" label="Supervisi Materi" onPress={() => safeNavigate('Materi')} />
+              <QBtn icon="clipboard-text"   iconBg="#F59E0B" label="Monitoring Tugas" onPress={() => safeNavigate('Tugas')} />
               <QBtn icon="chart-box"        iconBg="#10B981" label="Penilaian & Rapor" onPress={() => safeNavigate('Nilai')} />
-              <QBtn icon="database-outline" iconBg="#0D9488" label="Bank Soal CBT"   onPress={() => safeNavigate('BankSoal')} />
             </>
           )}
 
           {(activeMenuTab === 'semua' || activeMenuTab === 'keagamaan') && (
             <>
-              <QBtn icon="book-marker"          iconBg="#2563EB" label="Setoran Tahfizh" onPress={() => safeNavigate('Tahfizh')} />
-              <QBtn icon="clipboard-check"      iconBg="#D97706" label="Mutaba'ah"       onPress={() => safeNavigate('Mutabaah')} />
+              <QBtn icon="book-marker"          iconBg="#2563EB" label="Monitoring Tahfizh" onPress={() => safeNavigate('Tahfizh')} />
+              <QBtn icon="clipboard-check"      iconBg="#D97706" label="Rekap Mutaba'ah"   onPress={() => safeNavigate('Mutabaah')} />
               <QBtn icon="book-open-variant"    iconBg="#059669" label="Al-Qur'an"       onPress={() => safeNavigate('Quran')} />
               <QBtn icon="hands-pray"           iconBg="#F97316" label="Doa & Dzikir"    onPress={() => safeNavigate('DoaDzikir')} />
               <QBtn icon="book-open-page-variant" iconBg="#8B5CF6" label="Chat Pegawai"   onPress={() => safeNavigate('Chat Guru')} />
@@ -1567,13 +1535,17 @@ export default function PrincipalHomeSection({
                   onPress={() => setOnlineFilter(filterKey)}
                   style={[
                     styles.onlineFilterChip,
-                    onlineFilter === filterKey && styles.onlineFilterChipActive,
+                    onlineFilter === filterKey && (
+                      filterKey === 'offline' ? styles.onlineFilterChipOfflineActive : styles.onlineFilterChipActive
+                    ),
                   ]}
                 >
                   <Text
                     style={[
                       styles.onlineFilterChipText,
-                      onlineFilter === filterKey && styles.onlineFilterChipTextActive,
+                      onlineFilter === filterKey && (
+                        filterKey === 'offline' ? styles.onlineFilterChipOfflineTextActive : styles.onlineFilterChipTextActive
+                      ),
                     ]}
                   >
                     {filterKey === 'all'
@@ -1609,7 +1581,7 @@ export default function PrincipalHomeSection({
                         <View
                           style={[
                             styles.onlineUserDot,
-                            { backgroundColor: u.is_online ? '#10B981' : '#94A3B8' },
+                            { backgroundColor: u.is_online ? '#10B981' : '#EF4444' },
                           ]}
                         />
                       </View>
@@ -1618,7 +1590,10 @@ export default function PrincipalHomeSection({
                           {u.nama}
                         </Text>
                         <Text style={styles.onlineUserRole}>
-                          {u.role_label} • {u.unit} • {u.last_seen}
+                          <Text style={{ color: u.is_online ? '#059669' : '#DC2626', fontWeight: '800' }}>
+                            {u.is_online ? '● Online' : '● Offline'}
+                          </Text>
+                          {' • '}{u.role_label} • {u.unit} • {u.last_seen}
                         </Text>
                       </View>
                       <TouchableOpacity
@@ -2477,6 +2452,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
   },
+  onlineFilterChipOfflineActive: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
   onlineFilterChipText: {
     fontSize: 10.5,
     fontWeight: '600',
@@ -2484,6 +2463,10 @@ const styles = StyleSheet.create({
   },
   onlineFilterChipTextActive: {
     color: '#059669',
+    fontWeight: '800',
+  },
+  onlineFilterChipOfflineTextActive: {
+    color: '#DC2626',
     fontWeight: '800',
   },
   onlineScrollContainer: {
