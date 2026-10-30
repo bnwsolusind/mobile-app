@@ -502,9 +502,11 @@ export default function ScheduleScreen({ route, navigation }: any) {
   const hasLoadedRef = useRef<boolean>(false);
 
   // 2. Load schedules from backend API with date parameter, AbortController, SWR & offline cache
-  const loadSchedules = useCallback(async (explicitChildId?: string | boolean) => {
-    const targetChildId = typeof explicitChildId === 'string'
-      ? explicitChildId 
+  const loadSchedules = useCallback(async (explicitChildIdOrAllowCache?: string | boolean) => {
+    const isExplicitChild = typeof explicitChildIdOrAllowCache === 'string';
+    const allowCache = typeof explicitChildIdOrAllowCache === 'boolean' ? explicitChildIdOrAllowCache : true;
+    const targetChildId = isExplicitChild
+      ? explicitChildIdOrAllowCache 
       : ((selectedChildId || useActiveChildStore.getState().activeChildId) || undefined);
     if (targetChildId) {
       latestActiveChildIdRef.current = String(targetChildId);
@@ -512,13 +514,16 @@ export default function ScheduleScreen({ route, navigation }: any) {
     const dateStr = formatDateISO(selectedDate);
     const cacheKey = offlineCache.buildKey('schedule', user?.id, `${targetChildId || 'self'}_${dateStr}`);
 
-    // BACA CACHE DULU (0ms RESPON INSTAN - STALE-WHILE-REVALIDATE)
-    const cached = await offlineCache.get<any>(cacheKey);
-    if (cached) {
-      setScheduleData(cached);
-      setLoading(false);
-    } else {
-      // Jika belum ada cache sama sekali, set loading
+    // BACA CACHE DULU (0ms RESPON INSTAN - STALE-WHILE-REVALIDATE JIKA allowCache = true)
+    let cached = null;
+    if (allowCache) {
+      cached = await offlineCache.get<any>(cacheKey);
+      if (cached) {
+        setScheduleData(cached);
+        setLoading(false);
+      }
+    }
+    if (!cached) {
       setScheduleData(null);
       setLoading(true);
     }
@@ -703,12 +708,17 @@ export default function ScheduleScreen({ route, navigation }: any) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (activeTab === 'exam') {
-      await loadExamSchedules();
-    } else {
-      await loadSchedules(false);
+    try {
+      void offlineCache.clearPrefix('schedule');
+      if (activeTab === 'exam') {
+        void offlineCache.clearPrefix('cbt_exams');
+        await loadExamSchedules();
+      } else {
+        await loadSchedules(false);
+      }
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   // 7 day pill strip — mencakup seluruh siklus pekan (Senin s/d Ahad)

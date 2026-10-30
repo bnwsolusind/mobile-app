@@ -1182,7 +1182,7 @@ export default function StaffLmsGradeWorkspace({
       </View>
 
       {/* ── MODAL 1: PICKER DROPDOWN (KELAS, MAPEL, SEMESTER) ── */}
-      <Modal visible={Boolean(pickerModal?.visible)} transparent animationType="fade">
+      <Modal visible={Boolean(pickerModal?.visible)} transparent animationType="fade" onRequestClose={() => setPickerModal(null)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.pickerModalContainer}>
             <View style={styles.pickerModalHeader}>
@@ -1220,7 +1220,7 @@ export default function StaffLmsGradeWorkspace({
       </Modal>
 
       {/* ── MODAL 2: AUTO-KALKULASI BOBOT FORMULA NILAI ── */}
-      <Modal visible={showAutoCalcModal} transparent animationType="slide">
+      <Modal visible={showAutoCalcModal} transparent animationType="slide" onRequestClose={() => setShowAutoCalcModal(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.calcModalContainer}>
             <View style={styles.calcModalHeader}>
@@ -1328,7 +1328,7 @@ export default function StaffLmsGradeWorkspace({
       </Modal>
 
       {/* ── MODAL 3: GENERATE RAPOR KELAS ── */}
-      <Modal visible={showGenerateRaporModal} transparent animationType="slide">
+      <Modal visible={showGenerateRaporModal} transparent animationType="slide" onRequestClose={() => setShowGenerateRaporModal(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.calcModalContainer}>
             <View style={styles.calcModalHeader}>
@@ -1417,7 +1417,7 @@ export default function StaffLmsGradeWorkspace({
       </Modal>
 
       {/* ── MODAL 4: DETAIL PENILAIAN SISWA ── */}
-      <Modal visible={Boolean(selectedItemDetail)} transparent animationType="slide">
+      <Modal visible={Boolean(selectedItemDetail)} transparent animationType="slide" onRequestClose={() => setSelectedItemDetail(null)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.calcModalContainer}>
             <View style={styles.calcModalHeader}>
@@ -1500,7 +1500,7 @@ export default function StaffLmsGradeWorkspace({
       </Modal>
 
       {/* ── MODAL 5: DOKUMEN LEMBAR RAPOR RESMI DIGITAL ── */}
-      <Modal visible={Boolean(selectedRaporDetail)} transparent animationType="slide">
+      <Modal visible={Boolean(selectedRaporDetail)} transparent animationType="slide" onRequestClose={() => setSelectedRaporDetail(null)}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.calcModalContainer, { maxHeight: '92%' }]}>
             <View style={styles.calcModalHeader}>

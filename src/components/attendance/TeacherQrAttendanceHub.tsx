@@ -1318,23 +1318,26 @@ export default function TeacherQrAttendanceHub({
       }
 
       return await new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
-        Alert.alert(
-          'Modul GPS Native Belum Terpasang',
-          'Modul native GPS (ExpoLocation) belum terkompilasi di APK Android saat ini.\n\nApakah Anda ingin menggunakan koordinat simulasi area sekolah untuk pengujian jarak?',
-          [
-            { text: 'Batal', style: 'cancel', onPress: () => resolve(null) },
-            {
-              text: 'Simulasi Area Unit',
-              onPress: () => {
-                const fallbackLat = Number(unitLocation.latitude || -0.9242000);
-                const fallbackLng = Number(unitLocation.longitude || 100.3621000);
-                const simulated = { latitude: fallbackLat, longitude: fallbackLng, accuracy: 5 };
-                setUserLocation(simulated);
-                resolve(simulated);
-              },
-            },
-          ]
-        );
+        setFeedbackModal({
+          visible: true,
+          type: 'confirm',
+          title: 'Modul GPS Native Belum Terpasang',
+          message: 'Modul native GPS (ExpoLocation) belum terkompilasi di APK Android saat ini.\n\nApakah Anda ingin menggunakan koordinat simulasi area sekolah untuk pengujian jarak?',
+          confirmText: 'Simulasi Area Unit',
+          cancelText: 'Batal',
+          onConfirm: () => {
+            const fallbackLat = Number(unitLocation.latitude || -0.9242000);
+            const fallbackLng = Number(unitLocation.longitude || 100.3621000);
+            const simulated = { latitude: fallbackLat, longitude: fallbackLng, accuracy: 5 };
+            setUserLocation(simulated);
+            setFeedbackModal(null);
+            resolve(simulated);
+          },
+          onClose: () => {
+            setFeedbackModal(null);
+            resolve(null);
+          },
+        });
       });
     } catch (e: any) {
       if (!silent) {

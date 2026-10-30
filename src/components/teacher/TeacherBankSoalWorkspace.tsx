@@ -4,6 +4,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
@@ -1486,7 +1487,10 @@ export default function TeacherBankSoalWorkspace({
         animationType="slide"
         onRequestClose={() => !formSubmitting && setIsFormModalOpen(false)}
       >
-        <View style={styles.bottomSheetBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.bottomSheetBackdrop}
+        >
           <TouchableOpacity
             activeOpacity={1}
             style={styles.bottomSheetDismissArea}
@@ -1835,7 +1839,7 @@ export default function TeacherBankSoalWorkspace({
               )}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ══════════════════════════════════════════════════════════════
@@ -1847,7 +1851,10 @@ export default function TeacherBankSoalWorkspace({
         animationType="slide"
         onRequestClose={() => setPickerModal({ isOpen: false, type: null, title: '' })}
       >
-        <View style={styles.bottomSheetBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.bottomSheetBackdrop}
+        >
           <TouchableOpacity
             activeOpacity={1}
             style={styles.bottomSheetDismissArea}
@@ -1998,7 +2005,7 @@ export default function TeacherBankSoalWorkspace({
                   })}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ══════════════════════════════════════════════════════════════
@@ -2013,7 +2020,10 @@ export default function TeacherBankSoalWorkspace({
           setFilterPickerSearch('');
         }}
       >
-        <View style={styles.bottomSheetBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.bottomSheetBackdrop}
+        >
           <TouchableOpacity
             activeOpacity={1}
             style={styles.bottomSheetDismissArea}
@@ -2156,7 +2166,7 @@ export default function TeacherBankSoalWorkspace({
                   })}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ══════════════════════════════════════════════════════════════

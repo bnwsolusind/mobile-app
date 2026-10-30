@@ -4,6 +4,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
@@ -2651,7 +2652,10 @@ export default function TeacherAssignmentWorkspace({
           setEditingAssignment(null);
         }}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContentNoPad}>
             {/* Header Berwarna Gradasi Emerald Sesuai Modal Bahan Ajar & Modul */}
             <View style={styles.modalHeaderColored}>
@@ -3603,7 +3607,7 @@ export default function TeacherAssignmentWorkspace({
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Pop-up Picker Jadwal Form (Modal Terpisah agar Rapi & Tidak Mengganggu Konten) */}

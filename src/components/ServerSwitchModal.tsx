@@ -20,6 +20,7 @@ import {
   SERVER_PRESETS,
   ServerEnvironment,
 } from '../stores/serverConfigStore';
+import { appFeedback } from '../stores/feedbackStore';
 
 interface ServerSwitchModalProps {
   visible: boolean;
@@ -83,7 +84,7 @@ export default function ServerSwitchModal({
   const handleApply = async () => {
     const targetUrl = getEffectiveUrlForEnv(selectedEnv);
     if (!targetUrl) {
-      Alert.alert('Perhatian', 'Alamat URL server tidak boleh kosong.');
+      appFeedback.warning('Perhatian', 'Alamat URL server tidak boleh kosong.');
       return;
     }
 
@@ -97,28 +98,24 @@ export default function ServerSwitchModal({
       onClose();
     } catch (err: any) {
       setIsApplying(false);
-      Alert.alert('Gagal Mengubah Server', err.message || 'Format URL tidak valid.');
+      appFeedback.error('Gagal Mengubah Server', err.message || 'Format URL tidak valid.');
     }
   };
 
   const handleReset = async () => {
-    Alert.alert(
-      'Reset Server',
-      'Kembalikan pengaturan koneksi server ke pengaturan default awal?',
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            await resetToDefault();
-            setSelectedEnv('local');
-            setLocalFeedback(null);
-            onClose();
-          },
-        },
-      ]
-    );
+    appFeedback.confirm({
+      title: 'Reset Server',
+      message: 'Kembalikan pengaturan koneksi server ke pengaturan default awal?',
+      confirmText: 'Reset',
+      cancelText: 'Batal',
+      isDestructive: true,
+      onConfirm: async () => {
+        await resetToDefault();
+        setSelectedEnv('local');
+        setLocalFeedback(null);
+        onClose();
+      },
+    });
   };
 
   const currentPreviewUrl = getEffectiveUrlForEnv(selectedEnv);

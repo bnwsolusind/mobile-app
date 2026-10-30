@@ -1173,8 +1173,12 @@ export default function TahfizhScreen({ route, navigation }: any) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTahfizhData();
-    setRefreshing(false);
+    try {
+      void offlineCache.clearPrefix('tahfizh');
+      await loadTahfizhData();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   useEffect(() => {

@@ -35,6 +35,7 @@ import { useTeacherClassStore } from '../stores/teacherClassStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { SafeRemoteImage } from '../components/SafeRemoteImage';
 import { EmptyStateCard } from '../components/EmptyStateCard';
+import { appFeedback } from '../stores/feedbackStore';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   isAlumniRole,
@@ -597,6 +598,7 @@ export default function HomeScreen({ navigation, route }: any) {
   // Widget Tugas Terbaru & Jadwal Hari Ini & Hub 360° (Home Dashboard)
   const [homeSchedule, setHomeSchedule] = useState<any>(null);
   const [homeAssignments, setHomeAssignments] = useState<any[]>([]);
+  const [homeAssignmentsSummary, setHomeAssignmentsSummary] = useState<any>(null);
   const [homeTahfizh, setHomeTahfizh] = useState<any>(null);
   const [homeMutabaah, setHomeMutabaah] = useState<any>(null);
   const [homeAttendance, setHomeAttendance] = useState<any>(null);
@@ -651,6 +653,8 @@ export default function HomeScreen({ navigation, route }: any) {
       if (cAssign) {
         const cachedList = Array.isArray(cAssign) ? cAssign : Array.isArray(cAssign?.list) ? cAssign.list : Array.isArray(cAssign?.data) ? cAssign.data : [];
         if (cachedList.length > 0) setHomeAssignments(cachedList);
+        const cachedKpi = cAssign?.summary || cAssign?.kpi || null;
+        if (cachedKpi) setHomeAssignmentsSummary(cachedKpi);
       }
       if (cTahfizh) setHomeTahfizh(cTahfizh);
       if (cMutabaah) setHomeMutabaah(cMutabaah);
@@ -684,8 +688,17 @@ export default function HomeScreen({ navigation, route }: any) {
           ? raw
           : [];
         setHomeAssignments(list);
-        if (list.length > 0) {
-          void offlineCache.set(cacheKeyAssign, { list });
+        const kpi = raw?.kpi || raw?.summary || raw?.data?.kpi || raw?.data?.summary || null;
+        if (kpi) setHomeAssignmentsSummary(kpi);
+        if (list.length > 0 || kpi) {
+          void offlineCache.get<any>(cacheKeyAssign).then((prev) => {
+            void offlineCache.set(cacheKeyAssign, {
+              ...(prev || {}),
+              list: (prev?.list && prev.list.length > list.length) ? prev.list : list,
+              summary: kpi || prev?.summary,
+              kpi: kpi || prev?.kpi,
+            });
+          });
         }
       }
       if (tahfizhRes.status === 'fulfilled') {
@@ -808,6 +821,20 @@ export default function HomeScreen({ navigation, route }: any) {
           setUnreadNotificationCount(Math.max(0, count));
         })
         .catch(() => {});
+
+      // 4. Sinkronkan cache ringkasan tugas jika baru kembali dari halaman AssignmentScreen
+      if (currentGlobalId) {
+        const uid = useAuthStore.getState().user?.id;
+        const cacheKeyAssign = offlineCache.buildKey('assignments', uid, currentGlobalId);
+        offlineCache.get<any>(cacheKeyAssign).then((cAssign) => {
+          if (cAssign && isMounted) {
+            const cachedSummary = cAssign?.summary || cAssign?.kpi || null;
+            if (cachedSummary) setHomeAssignmentsSummary(cachedSummary);
+            const cachedList = Array.isArray(cAssign) ? cAssign : Array.isArray(cAssign?.list) ? cAssign.list : [];
+            if (cachedList.length > 0) setHomeAssignments(cachedList);
+          }
+        }).catch(() => {});
+      }
 
       return () => {
         isMounted = false;
@@ -2080,12 +2107,22 @@ export default function HomeScreen({ navigation, route }: any) {
   const childNickname = (activeStudent?.nickname || activeStudent?.full_name || activeStudent?.nama_lengkap || activeStudent?.name || 'Ananda').trim().split(' ')[0];
 
   const pendingTasksCount = useMemo(() => {
+    // 1. Selaraskan 100% dengan KPI resmi backend (sesuai dengan kartu 'Belum Selesai' dan tab 'Belum Dikerjakan' di AssignmentScreen)
+    if (homeAssignmentsSummary) {
+      if (typeof homeAssignmentsSummary.belum_dikumpulkan === 'number') {
+        return homeAssignmentsSummary.belum_dikumpulkan;
+      }
+      if (typeof homeAssignmentsSummary.tugas_aktif === 'number') {
+        return homeAssignmentsSummary.tugas_aktif;
+      }
+    }
+    // 2. Fallback filter lokal jika KPI server belum termuat
     if (!Array.isArray(homeAssignments)) return 0;
     return homeAssignments.filter((a: any) => {
       const status = String(a?.submission_status || a?.status || '').toLowerCase();
       return status !== 'submitted' && status !== 'selesai' && status !== 'graded';
     }).length;
-  }, [homeAssignments]);
+  }, [homeAssignmentsSummary, homeAssignments]);
 
   const todayScheduleList = useMemo(() => {
     const items: any[] = Array.isArray(homeSchedule?.today_schedules)
@@ -2310,8 +2347,12 @@ export default function HomeScreen({ navigation, route }: any) {
   }, [activeStudent, homeAttendance, todayTimeline]);
 
   const hubTaskData = useMemo(() => {
-    const count = homeAssignments.length;
-    if (count === 0) {
+    const totalPending = typeof homeAssignmentsSummary?.belum_dikumpulkan === 'number'
+      ? homeAssignmentsSummary.belum_dikumpulkan
+      : typeof homeAssignmentsSummary?.tugas_aktif === 'number'
+      ? homeAssignmentsSummary.tugas_aktif
+      : homeAssignments.length;
+    if (totalPending === 0) {
       return { countText: '0 Aktif', title: 'Semua tugas tuntas ✨', sub: 'Tidak ada PR mendesak' };
     }
     const firstTask = homeAssignments[0];
@@ -2325,8 +2366,8 @@ export default function HomeScreen({ navigation, route }: any) {
         sub = `Tenggat: ${d.getDate()} ${months[d.getMonth()]}`;
       }
     }
-    return { countText: `${count} Aktif`, title, sub };
-  }, [homeAssignments]);
+    return { countText: `${totalPending} Aktif`, title, sub };
+  }, [homeAssignments, homeAssignmentsSummary]);
 
   const hubTahfizhData = useMemo(() => {
     const t = homeTahfizh || todayTimeline?.tahfizh || activeStudent?.latest_tahfizh;
@@ -3103,6 +3144,7 @@ export default function HomeScreen({ navigation, route }: any) {
             refreshing={refreshing}
             onRefresh={() => {
               setRefreshing(true);
+              void offlineCache.clearPrefix('home_');
               void load();
             }}
             colors={['#047857']}
@@ -5405,7 +5447,7 @@ export default function HomeScreen({ navigation, route }: any) {
                       }}
                     >
                       <Text style={[styles.homeWidgetMoreText, { color: '#2563EB' }]}>
-                        Menampilkan seluruh {homeAssignments.length} tugas aktif · Ketuk untuk rincian
+                        Menampilkan seluruh {homeAssignmentsSummary?.total_tugas ?? homeAssignments.length} tugas aktif · Ketuk untuk rincian
                       </Text>
                       <MaterialCommunityIcons name="arrow-right" size={13} color="#2563EB" />
                     </TouchableOpacity>
@@ -8924,33 +8966,28 @@ export default function HomeScreen({ navigation, route }: any) {
                   `Assalamu'alaikum Warahmatullahi Wabarakatuh, Admin Tata Usaha & Pendaftaran ${schoolName}.\nSaya ${parentName}, bermaksud menambahkan / menghubungkan data ananda dari unit lain ke akun portal saya.`
                 );
 
-                Alert.alert(
-                  'Tambah Data Anak',
-                  `Untuk menghubungkan data ananda dari unit lain (PAUD/TK, SD, SMP, SMA, atau Pondok Pesantren di lingkungan ${schoolName}), Anda dapat menghubungi langsung Bagian Tata Usaha & Pendaftaran melalui WhatsApp resmi atau mendatangi kantor administrasi dengan membawa fotokopi KK & NIS ananda.`,
-                  [
-                    { text: 'Tutup', style: 'cancel' },
-                    {
-                      text: 'Hubungi WhatsApp TU',
-                      style: 'default',
-                      onPress: () => {
-                        const waUrl = `whatsapp://send?phone=${cleanPhone}&text=${waMessage}`;
-                        const webWaUrl = `https://wa.me/${cleanPhone}?text=${waMessage}`;
-                        void (async () => {
-                          try {
-                            const can = await Linking.canOpenURL(waUrl);
-                            if (can) {
-                              await Linking.openURL(waUrl);
-                            } else {
-                              await Linking.openURL(webWaUrl);
-                            }
-                          } catch {
-                            // no-op
-                          }
-                        })();
-                      },
-                    },
-                  ]
-                );
+                appFeedback.confirm({
+                  title: 'Tambah Data Anak',
+                  message: `Untuk menghubungkan data ananda dari unit lain (PAUD/TK, SD, SMP, SMA, atau Pondok Pesantren di lingkungan ${schoolName}), Anda dapat menghubungi langsung Bagian Tata Usaha & Pendaftaran melalui WhatsApp resmi atau mendatangi kantor administrasi dengan membawa fotokopi KK & NIS ananda.`,
+                  confirmText: 'Hubungi WhatsApp TU',
+                  cancelText: 'Tutup',
+                  onConfirm: () => {
+                    const waUrl = `whatsapp://send?phone=${cleanPhone}&text=${waMessage}`;
+                    const webWaUrl = `https://wa.me/${cleanPhone}?text=${waMessage}`;
+                    void (async () => {
+                      try {
+                        const can = await Linking.canOpenURL(waUrl);
+                        if (can) {
+                          await Linking.openURL(waUrl);
+                        } else {
+                          await Linking.openURL(webWaUrl);
+                        }
+                      } catch {
+                        // no-op
+                      }
+                    })();
+                  },
+                });
               }}
             >
               <View

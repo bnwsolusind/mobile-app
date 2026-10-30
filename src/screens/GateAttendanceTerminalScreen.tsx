@@ -4,6 +4,7 @@ import {
   Alert,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -470,11 +471,21 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
   const submitEarlyDeparture = async () => {
     if (!pendingStudent) return;
     if (!earlyReason) {
-      Alert.alert('Perhatian', 'Harap pilih alasan kepulangan awal santri.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Alasan Belum Dipilih',
+        message: 'Harap pilih alasan kepulangan awal santri terlebih dahulu.',
+      });
       return;
     }
     if (!pickupPerson.trim()) {
-      Alert.alert('Perhatian', 'Harap isi nama penjemput santri (ayah, ibu, supir, atau kerabat).');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Nama Penjemput Kosong',
+        message: 'Harap isi nama penjemput santri (ayah, ibu, supir, atau kerabat keluarga).',
+      });
       return;
     }
 
@@ -527,7 +538,12 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
         message: `Kepulangan santri ${studentName} di tengah jam pelajaran telah dicatat. Laporan & notifikasi resmi telah otomatis terkirim ke akses orang tua.`,
       });
     } catch (err: any) {
-      Alert.alert('Gagal', err?.response?.data?.message || 'Gagal menyimpan laporan kepulangan santri.');
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menyimpan',
+        message: err?.response?.data?.message || 'Gagal menyimpan laporan kepulangan santri.',
+      });
     } finally {
       setSubmittingEarlyDeparture(false);
     }
@@ -1087,7 +1103,10 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
         transparent={true}
         onRequestClose={() => setEarlyDepartureModalOpen(false)}
       >
-        <View style={s.modalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={s.modalBackdrop}
+        >
           <View style={s.earlyModalSheet}>
             {/* Modal Top Bar */}
             <View style={s.modalTopBar}>
@@ -1107,7 +1126,7 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ maxHeight: 420 }}>
               {/* Target Student Identity Card */}
               {pendingStudent && (
                 <View style={s.modalStudentCard}>
@@ -1228,7 +1247,7 @@ export default function GateAttendanceTerminalScreen({ navigation, route }: any)
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Feedback Modal */}

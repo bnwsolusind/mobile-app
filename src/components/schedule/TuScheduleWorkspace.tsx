@@ -4,6 +4,7 @@ import {
   Alert,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
@@ -20,6 +21,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApiService, unwrapApiData } from '../../services/mobileApiService';
 import { AppFeedbackModal, FeedbackType } from '../AppFeedbackModal';
 import { useNavigationHistoryStore } from '../../stores/navigationHistoryStore';
+import { appFeedback } from '../../stores/feedbackStore';
+import { offlineCache } from '../../utils/offlineCache';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PARENT_HOME_BG = require('../../../assets/parent_home_bg.jpg');
@@ -740,9 +743,56 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
     editingItem?.id,
   ]);
 
+  const handleCloseScheduleForm = () => {
+    if (saving) return;
+    const isDirty = Boolean(formData.kelas_id || formData.employee_id || formData.subject_id || formData.activity_name);
+    if (isDirty) {
+      appFeedback.confirm({
+        title: 'Tinggalkan Formulir Jadwal?',
+        message: 'Pengaturan jadwal KBM yang sedang Anda atur belum disimpan. Yakin ingin membatalkan?',
+        confirmText: 'Ya, Tinggalkan',
+        cancelText: 'Lanjut Atur',
+        isDestructive: true,
+        onConfirm: () => {
+          setFormModalVisible(false);
+          setEditingItem(null);
+        },
+      });
+      return;
+    }
+    setFormModalVisible(false);
+    setEditingItem(null);
+  };
+
+  const handleCloseExamForm = () => {
+    if (saving) return;
+    const isDirty = Boolean(examFormData.kelas_id || examFormData.subject_id || examFormData.exam_category_id);
+    if (isDirty) {
+      appFeedback.confirm({
+        title: 'Tinggalkan Formulir Ujian?',
+        message: 'Jadwal ujian yang sedang Anda atur belum disimpan. Yakin ingin membatalkan?',
+        confirmText: 'Ya, Tinggalkan',
+        cancelText: 'Lanjut Atur',
+        isDestructive: true,
+        onConfirm: () => {
+          setExamFormModalVisible(false);
+          setEditingExamItem(null);
+        },
+      });
+      return;
+    }
+    setExamFormModalVisible(false);
+    setEditingExamItem(null);
+  };
+
   const handleSaveSchedule = async () => {
     if (!formData.kelas_id) {
-      Alert.alert('Data Belum Lengkap', 'Silakan pilih Rombel / Kelas terlebih dahulu.');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Silakan pilih Rombel / Kelas terlebih dahulu.',
+      });
       return;
     }
 
@@ -750,22 +800,42 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
 
     if (isActivity) {
       if (!formData.activity_name || !formData.activity_name.trim()) {
-        Alert.alert('Data Belum Lengkap', 'Silakan ketik Nama Kegiatan Sekolah (contoh: Upacara Bendera, Dzikir Pagi, Waktu Istirahat, ISHOMA, Senam, dll).');
+        setFeedback({
+          visible: true,
+          type: 'warning',
+          title: 'Data Belum Lengkap',
+          message: 'Silakan ketik Nama Kegiatan Sekolah (contoh: Upacara Bendera, Dzikir Pagi, Waktu Istirahat, ISHOMA, Senam, dll).',
+        });
         return;
       }
     } else {
       if (!formData.employee_id) {
-        Alert.alert('Data Belum Lengkap', 'Silakan pilih Guru Pengampu terlebih dahulu.');
+        setFeedback({
+          visible: true,
+          type: 'warning',
+          title: 'Data Belum Lengkap',
+          message: 'Silakan pilih Guru Pengampu terlebih dahulu.',
+        });
         return;
       }
       if (!formData.subject_id) {
-        Alert.alert('Data Belum Lengkap', 'Silakan pilih Mata Pelajaran terlebih dahulu.');
+        setFeedback({
+          visible: true,
+          type: 'warning',
+          title: 'Data Belum Lengkap',
+          message: 'Silakan pilih Mata Pelajaran terlebih dahulu.',
+        });
         return;
       }
     }
 
     if (!formData.time_start || !formData.time_end) {
-      Alert.alert('Data Belum Lengkap', 'Jam mulai dan jam selesai wajib diisi.');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Jam mulai dan jam selesai wajib diisi.',
+      });
       return;
     }
 
@@ -811,10 +881,16 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
       }
 
       setFormModalVisible(false);
+      void offlineCache.clearPrefix('schedule');
       await fetchData(true);
     } catch (err: any) {
       const errMsg = err?.response?.data?.message || err?.message || 'Gagal menyimpan jadwal. Periksa potensi bentrok waktu.';
-      Alert.alert('Gagal Menyimpan', errMsg);
+      setFeedback({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menyimpan',
+        message: errMsg,
+      });
     } finally {
       setSaving(false);
     }
@@ -832,10 +908,16 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
         title: 'Jadwal Dihapus',
         message: 'Sesi jadwal KBM berhasil dihapus.',
       });
+      void offlineCache.clearPrefix('schedule');
       await fetchData(true);
     } catch (err: any) {
       const errMsg = err?.response?.data?.message || err?.message || 'Gagal menghapus data jadwal.';
-      Alert.alert('Gagal Hapus', errMsg);
+      setFeedback({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Hapus',
+        message: errMsg,
+      });
     } finally {
       setSaving(false);
     }
@@ -890,23 +972,48 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
 
   const handleSaveExamSchedule = async () => {
     if (!examFormData.exam_category_id) {
-      Alert.alert('Data Belum Lengkap', 'Silakan pilih Kategori Ujian (PTS/PAS/PAT/dll).');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Silakan pilih Kategori Ujian (PTS/PAS/PAT/dll).',
+      });
       return;
     }
     if (!examFormData.kelas_id) {
-      Alert.alert('Data Belum Lengkap', 'Silakan pilih Rombel / Kelas.');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Silakan pilih Rombel / Kelas.',
+      });
       return;
     }
     if (!examFormData.subject_id) {
-      Alert.alert('Data Belum Lengkap', 'Silakan pilih Mata Pelajaran yang diujikan.');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Silakan pilih Mata Pelajaran yang diujikan.',
+      });
       return;
     }
     if (!examFormData.exam_date) {
-      Alert.alert('Data Belum Lengkap', 'Silakan isi Tanggal Ujian (format YYYY-MM-DD).');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Silakan isi Tanggal Ujian (format YYYY-MM-DD).',
+      });
       return;
     }
     if (!examFormData.time_start || !examFormData.time_end) {
-      Alert.alert('Data Belum Lengkap', 'Jam mulai dan selesai ujian wajib diisi.');
+      setFeedback({
+        visible: true,
+        type: 'warning',
+        title: 'Data Belum Lengkap',
+        message: 'Jam mulai dan selesai ujian wajib diisi.',
+      });
       return;
     }
 
@@ -947,10 +1054,17 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
       }
 
       setExamFormModalVisible(false);
+      void offlineCache.clearPrefix('schedule');
+      void offlineCache.clearPrefix('cbt_exams');
       await fetchExamData(true);
     } catch (err: any) {
       const errMsg = err?.response?.data?.message || err?.message || 'Gagal menyimpan jadwal ujian. Periksa potensi bentrok ruangan/kelas.';
-      Alert.alert('Gagal Menyimpan', errMsg);
+      setFeedback({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menyimpan',
+        message: errMsg,
+      });
     } finally {
       setSaving(false);
     }
@@ -968,10 +1082,17 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
         title: 'Jadwal Ujian Dihapus',
         message: 'Jadwal ujian berhasil dihapus secara permanen.',
       });
+      void offlineCache.clearPrefix('schedule');
+      void offlineCache.clearPrefix('cbt_exams');
       await fetchExamData(true);
     } catch (err: any) {
       const errMsg = err?.response?.data?.message || err?.message || 'Gagal menghapus jadwal ujian.';
-      Alert.alert('Gagal Menghapus', errMsg);
+      setFeedback({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menghapus',
+        message: errMsg,
+      });
     } finally {
       setSaving(false);
     }
@@ -2108,8 +2229,11 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
       </TouchableOpacity>
 
       {/* ── MODAL FORM TAMBAH / UBAH JADWAL (HERO UI STYLE) ── */}
-      <Modal visible={formModalVisible} animationType="slide" transparent onRequestClose={() => setFormModalVisible(false)}>
-        <View style={styles.modalBackdrop}>
+      <Modal visible={formModalVisible} animationType="slide" transparent onRequestClose={handleCloseScheduleForm}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
           <View style={styles.modalContainer}>
             {/* Top Accent Gradient Line */}
             <LinearGradient
@@ -2146,7 +2270,7 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
                   </View>
                 </View>
               </View>
-              <TouchableOpacity onPress={() => setFormModalVisible(false)} style={styles.modalCloseBtn}>
+              <TouchableOpacity onPress={handleCloseScheduleForm} style={styles.modalCloseBtn}>
                 <MaterialCommunityIcons name="close" size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
@@ -2180,7 +2304,7 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
               </View>
             ) : null}
 
-            <ScrollView contentContainerStyle={styles.modalFormScroll} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalFormScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {/* ── 1. PENUGASAN AKADEMIK & JENIS JADWAL ── */}
               <View style={styles.heroSectionCard}>
                 <View style={styles.heroSectionHeader}>
@@ -2597,7 +2721,7 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
             <View style={styles.modalFooter}>
               <TouchableOpacity
                 style={styles.modalCancelBtn}
-                onPress={() => setFormModalVisible(false)}
+                onPress={handleCloseScheduleForm}
                 disabled={saving}
               >
                 <Text style={styles.modalCancelText}>Batal</Text>
@@ -2629,7 +2753,7 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL DETAIL JADWAL ── */}
@@ -2794,8 +2918,11 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
       </Modal>
 
       {/* ── MODAL FORM TAMBAH / UBAH JADWAL UJIAN ── */}
-      <Modal visible={examFormModalVisible} animationType="slide" transparent onRequestClose={() => setExamFormModalVisible(false)}>
-        <View style={styles.modalBackdrop}>
+      <Modal visible={examFormModalVisible} animationType="slide" transparent onRequestClose={handleCloseExamForm}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
           <View style={styles.modalContainer}>
             {/* Top Accent Gradient Line */}
             <LinearGradient
@@ -2825,12 +2952,12 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
                   </Text>
                 </View>
               </View>
-              <TouchableOpacity onPress={() => setExamFormModalVisible(false)} style={styles.modalCloseBtn}>
+              <TouchableOpacity onPress={handleCloseExamForm} style={styles.modalCloseBtn}>
                 <MaterialCommunityIcons name="close" size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.modalFormScroll} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalFormScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {/* 1. Kategori & Rombel */}
               <View style={styles.heroSectionCard}>
                 <View style={styles.heroSectionHeader}>
@@ -3046,7 +3173,7 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
             <View style={styles.modalFooter}>
               <TouchableOpacity
                 style={styles.modalCancelBtn}
-                onPress={() => setExamFormModalVisible(false)}
+                onPress={handleCloseExamForm}
                 disabled={saving}
               >
                 <Text style={styles.modalCancelText}>Batal</Text>
@@ -3067,7 +3194,7 @@ export default function TuScheduleWorkspace({ navigation, user }: TuScheduleWork
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL RINCIAN DETAIL JADWAL UJIAN ── */}

@@ -17,6 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { mobileApiService } from '../../services/mobileApiService';
+import { appFeedback } from '../../stores/feedbackStore';
 
 export type TuKpiType =
   | 'total_siswa'
@@ -336,7 +337,7 @@ export default function TuKpiDrilldownModal({
   const handleOpenWhatsApp = (phone?: string | number, contactType: 'ortu' | 'pegawai' = 'ortu') => {
     const raw = phone != null ? String(phone).trim() : '';
     if (!raw || raw === '-') {
-      Alert.alert(
+      appFeedback.warning(
         'Kontak Tidak Tersedia',
         contactType === 'pegawai'
           ? 'Nomor telepon/WhatsApp pegawai belum tercatat di data sistem.'
@@ -365,7 +366,7 @@ export default function TuKpiDrilldownModal({
   const handleCallPhone = (phone?: string | number, contactType: 'ortu' | 'pegawai' = 'ortu') => {
     const raw = phone != null ? String(phone).trim() : '';
     if (!raw || raw === '-') {
-      Alert.alert(
+      appFeedback.warning(
         'Kontak Tidak Tersedia',
         contactType === 'pegawai'
           ? 'Nomor telepon pegawai belum tercatat di data sistem.'
@@ -375,7 +376,7 @@ export default function TuKpiDrilldownModal({
     }
     const cleaned = raw.replace(/[^0-9+]/g, '');
     Linking.openURL(`tel:${cleaned}`).catch(() => {
-      Alert.alert('Gagal Memanggil', 'Tidak dapat melakukan panggilan telepon.');
+      appFeedback.error('Gagal Memanggil', 'Tidak dapat melakukan panggilan telepon.');
     });
   };
 
@@ -418,7 +419,7 @@ export default function TuKpiDrilldownModal({
         return;
       }
     } catch {
-      Alert.alert('Info', 'Ruang chat aplikasi belum dapat dibuka langsung.');
+      appFeedback.info('Info', 'Ruang chat aplikasi belum dapat dibuka langsung.');
     }
   };
 
@@ -1069,7 +1070,7 @@ export default function TuKpiDrilldownModal({
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => {
-                Alert.alert(
+                appFeedback.info(
                   'Detail Pengajuan Surat',
                   `Nama: ${item.nama}\nKelas: ${item.kelas}\nTipe Surat: ${item.tipe_surat}\nStatus: ${item.status}\nKeterangan: ${item.alasan}`
                 );

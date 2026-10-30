@@ -1775,12 +1775,16 @@ export default function MaterialScreen({ route, navigation }: any) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (isTeacherOnly) {
-      await loadTeacherData();
-    } else {
-      await loadMaterials();
+    try {
+      void offlineCache.clearPrefix('materials');
+      if (isTeacherOnly) {
+        await loadTeacherData();
+      } else {
+        await loadMaterials();
+      }
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   // Extract unique subjects for filtering (preserves list when filtered)

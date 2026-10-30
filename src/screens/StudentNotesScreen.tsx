@@ -5,6 +5,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -35,6 +36,7 @@ import { useActiveChildStore } from '../stores/activeChildStore';
 import { useAuthStore } from '../stores/authStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { offlineCache } from '../utils/offlineCache';
 import { resolveSelectedChildId } from '../utils/selectedChild';
 import { StudentHeroCard } from '../components/StudentHeroCard';
 import { StudentStickyHeader, resolveStudentDisplay, useStickyScroll } from '../components/StudentStickyHeader';
@@ -45,6 +47,7 @@ import { StudentQrModal } from '../components/StudentQrModal';
 import { StudentMenuModal } from '../components/StudentMenuModal';
 import { StudentWeeklyReportModal } from '../components/StudentWeeklyReportModal';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import { appFeedback } from '../stores/feedbackStore';
 import { EmptyStateCard } from '../components/EmptyStateCard';
 import {
   DEFAULT_STUDENT_BOY_AVATAR,
@@ -288,17 +291,60 @@ export default function StudentNotesScreen({ route }: any) {
     }
   }, [isTeacherOnly, loadTeacherStudents]);
 
+  const handleCloseNoteModal = () => {
+    if (savingNote) return;
+    const isDirty = Boolean(noteForm.title.trim() || noteForm.content.trim());
+    if (isDirty) {
+      appFeedback.confirm({
+        title: 'Tinggalkan Formulir?',
+        message: 'Draf catatan santri yang sedang Anda tulis belum disimpan. Yakin ingin membatalkan dan keluar?',
+        confirmText: 'Ya, Tinggalkan',
+        cancelText: 'Lanjut Menulis',
+        isDestructive: true,
+        onConfirm: () => {
+          setNoteModalVisible(false);
+          setEditingNote(null);
+          setNoteForm({
+            student_id: '',
+            title: '',
+            content: '',
+            category: 'Akademik',
+            priority: 'medium',
+          });
+        },
+      });
+      return;
+    }
+    setNoteModalVisible(false);
+    setEditingNote(null);
+  };
+
   const handleSaveTeacherNote = async () => {
     if (!noteForm.student_id) {
-      Alert.alert('Peringatan', 'Silakan pilih siswa terlebih dahulu.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Siswa Belum Dipilih',
+        message: 'Silakan pilih siswa terlebih dahulu.',
+      });
       return;
     }
     if (!noteForm.title.trim()) {
-      Alert.alert('Peringatan', 'Judul catatan wajib diisi.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Judul Catatan Kosong',
+        message: 'Judul catatan wajib diisi.',
+      });
       return;
     }
     if (!noteForm.content.trim()) {
-      Alert.alert('Peringatan', 'Isi catatan wajib diisi.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Isi Catatan Kosong',
+        message: 'Isi catatan wajib diisi.',
+      });
       return;
     }
 
@@ -343,43 +389,44 @@ export default function StudentNotesScreen({ route }: any) {
       });
       await loadNotes(undefined, 1, false);
     } catch (err: any) {
-      Alert.alert('Gagal', err?.response?.data?.message || 'Gagal menyimpan catatan santri.');
+      setFeedbackModal({
+        visible: true,
+        type: 'error',
+        title: 'Gagal Menyimpan',
+        message: err?.response?.data?.message || 'Gagal menyimpan catatan santri.',
+      });
     } finally {
       setSavingNote(false);
     }
   };
 
   const handleDeleteTeacherNote = (note: any) => {
-    Alert.alert(
-      'Hapus Catatan',
-      `Yakin ingin menghapus catatan "${note.title}"?`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hapus',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await mobileApiService.deleteTeacherStudentNote(String(note.id));
-              setFeedbackModal({
-                visible: true,
-                type: 'success',
-                title: 'Catatan Dihapus',
-                message: 'Catatan siswa telah berhasil dihapus.',
-              });
-              await loadNotes(undefined, 1, false);
-            } catch (err: any) {
-              Alert.alert('Gagal', err?.response?.data?.message || 'Gagal menghapus catatan.');
-            }
-          },
-        },
-      ]
-    );
+    appFeedback.confirm({
+      title: 'Hapus Catatan',
+      message: `Yakin ingin menghapus catatan "${note.title}"?`,
+      confirmText: 'Ya, Hapus',
+      cancelText: 'Batal',
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await mobileApiService.deleteTeacherStudentNote(String(note.id));
+          appFeedback.success('Catatan Dihapus', 'Catatan siswa telah berhasil dihapus.');
+          await loadNotes(undefined, 1, false);
+        } catch (err: any) {
+          appFeedback.error('Gagal Menghapus', err?.response?.data?.message || 'Gagal menghapus catatan.');
+        }
+      },
+    });
   };
 
   const handleChatParent = (phone?: string, studentName?: string) => {
     if (!phone) {
-      Alert.alert('Info Kontak', 'Nomor kontak WhatsApp orang tua belum terdaftar pada data santri ini.');
+      setFeedbackModal({
+        visible: true,
+        type: 'info',
+        title: 'Info Kontak',
+        message: 'Nomor kontak WhatsApp orang tua belum terdaftar pada data santri ini.',
+      });
       return;
     }
     let cleanPhone = phone.replace(/[^0-9]/g, '');
@@ -399,7 +446,12 @@ export default function StudentNotesScreen({ route }: any) {
         return Linking.openURL(`https://wa.me/${cleanPhone}?text=${textMsg}`);
       })
       .catch(() => {
-        Alert.alert('Error', 'Tidak dapat membuka aplikasi WhatsApp.');
+        setFeedbackModal({
+          visible: true,
+          type: 'error',
+          title: 'Gagal Membuka WhatsApp',
+          message: 'Tidak dapat membuka aplikasi WhatsApp pada perangkat ini.',
+        });
       });
   };
 
@@ -517,6 +569,15 @@ export default function StudentNotesScreen({ route }: any) {
     setSelectedChildId(cid);
     useActiveChildStore.getState().setActiveChildId(cid);
     setShowChildSelectorModal(false);
+    setNotes([]);
+    setReplyFor(null);
+    setAgreedSignature(false);
+    const idx = children.findIndex((c: any) => String(c.id || c.student_id) === cid);
+    if (idx >= 0 && idx !== activeChildIndex) {
+      setActiveChildIndex(idx);
+      scrollToActiveChild(idx, true);
+    }
+    void loadNotes(cid, 1, false);
   };
 
   // ── Load Catatan Buku Penghubung ──
@@ -620,6 +681,25 @@ export default function StudentNotesScreen({ route }: any) {
     }
   }, [route?.params?.child_id, route?.params?.student_id, children, goToLoopChild]);
 
+  // Sinkronisasi selectedChildId jika globalActiveChildId berubah dari luar (BottomTabs / modul lain)
+  useEffect(() => {
+    if (globalActiveChildId && !isTeacherOnly && children.length > 0) {
+      const targetStr = String(globalActiveChildId);
+      if (targetStr !== selectedChildId) {
+        setSelectedChildId(targetStr);
+        const idx = children.findIndex((c: any) => String(c.id || c.student_id) === targetStr);
+        if (idx >= 0 && idx !== activeChildIndex) {
+          setActiveChildIndex(idx);
+          scrollToActiveChild(idx, true);
+        }
+        setNotes([]);
+        setReplyFor(null);
+        setAgreedSignature(false);
+        void loadNotes(targetStr, 1, false);
+      }
+    }
+  }, [globalActiveChildId, isTeacherOnly, children, selectedChildId, activeChildIndex, scrollToActiveChild, loadNotes]);
+
   // ── Inisialisasi Data Anak & Catatan ──
   const loadChildren = useCallback(async () => {
     const targetParamId = route?.params?.child_id || route?.params?.student_id;
@@ -696,6 +776,7 @@ export default function StudentNotesScreen({ route }: any) {
   const refresh = async () => {
     setRefreshing(true);
     try {
+      void offlineCache.clearPrefix('notes');
       if (isTeacherOnly) {
         await loadNotes(undefined, 1, false);
       } else if (selectedChildId) {
@@ -2378,11 +2459,12 @@ export default function StudentNotesScreen({ route }: any) {
         visible={noteModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => {
-          if (!savingNote) setNoteModalVisible(false);
-        }}
+        onRequestClose={handleCloseNoteModal}
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
           <View style={styles.modalCard}>
             <View style={styles.modalHeaderRow}>
               <View style={styles.modalHeaderIconWrap}>
@@ -2401,9 +2483,7 @@ export default function StudentNotesScreen({ route }: any) {
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => {
-                  if (!savingNote) setNoteModalVisible(false);
-                }}
+                onPress={handleCloseNoteModal}
                 style={styles.modalCloseBtn}
               >
                 <MaterialCommunityIcons name="close" size={20} color="#64748B" />
@@ -2413,6 +2493,7 @@ export default function StudentNotesScreen({ route }: any) {
             <ScrollView
               style={{ maxHeight: 420 }}
               contentContainerStyle={{ paddingBottom: 16 }}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
               {/* Pilih Siswa (jika buat baru) */}
@@ -2560,9 +2641,7 @@ export default function StudentNotesScreen({ route }: any) {
             {/* Modal Actions */}
             <View style={styles.modalFooterRow}>
               <TouchableOpacity
-                onPress={() => {
-                  if (!savingNote) setNoteModalVisible(false);
-                }}
+                onPress={handleCloseNoteModal}
                 style={styles.modalCancelBtn}
                 disabled={savingNote}
               >
@@ -2594,7 +2673,7 @@ export default function StudentNotesScreen({ route }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* MODAL PEMILIH ANANDA (JIKA ORANG TUA MEMILIKI >1 ANAK) */}

@@ -798,7 +798,12 @@ export default function AssignmentScreen({ route, navigation }: any) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadChildren(), loadAssignments()]);
+    try {
+      void offlineCache.clearPrefix('assignment');
+      await Promise.all([loadChildren(), loadAssignments()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
 

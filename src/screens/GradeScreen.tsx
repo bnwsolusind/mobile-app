@@ -741,8 +741,12 @@ export default function GradeScreen({ route }: any) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadChildren(), loadGrades()]);
-    setRefreshing(false);
+    try {
+      void offlineCache.clearPrefix('grades_');
+      await Promise.all([loadChildren(), loadGrades()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // Active Child & Permission (Parent can submit ONLY if child's unit is SD)

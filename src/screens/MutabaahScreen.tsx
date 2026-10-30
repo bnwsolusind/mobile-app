@@ -2061,6 +2061,8 @@ export default function MutabaahScreen({ route, navigation }: any) {
             refreshing={refreshing}
             onRefresh={() => {
               setRefreshing(true);
+              memOverviewCache.current.clear();
+              void offlineCache.clearPrefix('mutabaah');
               void loadMutabaah();
               void loadMonitoring();
             }}

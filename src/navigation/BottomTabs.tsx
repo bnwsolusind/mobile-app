@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  ToastAndroid,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -25,6 +26,7 @@ import { useChatBadgeStore } from '../stores/chatBadgeStore';
 import { useNotificationBadgeStore } from '../stores/notificationBadgeStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { useActiveChildStore } from '../stores/activeChildStore';
+import { appHaptics } from '../utils/haptics';
 import {
   getProfileImageUrl,
   DEFAULT_STUDENT_BOY_AVATAR,
@@ -632,6 +634,7 @@ export default function BottomTabs() {
     try {
       const currentRoute = (navigationRef as any)?.getCurrentRoute?.();
       if (currentRoute?.name) {
+        appHaptics.selection();
         if (currentRoute.name === 'Chat' || currentRoute.name === 'Chat Guru') {
           useChatBadgeStore.getState().clearUnread();
         }
@@ -643,13 +646,24 @@ export default function BottomTabs() {
     } catch {}
   }, [navigationRef]);
 
+  const lastBackPressRef = useRef<number>(0);
+
   // Android hardware back button handler
   useEffect(() => {
     const onHardwareBack = () => {
       try {
         const currentRoute = (navigationRef as any)?.getCurrentRoute?.();
         if (!currentRoute?.name || currentRoute.name === 'Beranda') {
-          return false;
+          const now = Date.now();
+          if (now - lastBackPressRef.current < 2000) {
+            return false; // Izinkan OS keluar dari aplikasi
+          }
+          lastBackPressRef.current = now;
+          if (Platform.OS === 'android') {
+            appHaptics.warning();
+            ToastAndroid.show('Tekan sekali lagi untuk keluar dari aplikasi', ToastAndroid.SHORT);
+          }
+          return true; // Cegah keluar instan
         }
         const handled = useNavigationHistoryStore.getState().goBackDynamic(navigationRef, currentRoute?.params);
         if (!handled) {

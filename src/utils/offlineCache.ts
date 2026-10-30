@@ -143,6 +143,20 @@ export const offlineCache = {
     }
   },
 
+  /** Hapus cache berdasarkan prefix kategori (misal: 'schedule', 'absensi', 'cbt_exams', 'notes') */
+  async clearPrefix(categoryPrefix: string): Promise<void> {
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const targetPrefix = `${CACHE_PREFIX}${categoryPrefix}`;
+      const toRemove = allKeys.filter((k) => k.startsWith(targetPrefix));
+      if (toRemove.length > 0) {
+        await AsyncStorage.multiRemove(toRemove).catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+  },
+
   /** Hapus SEMUA cache — dipanggil saat logout */
   async clearAll(): Promise<void> {
     try {

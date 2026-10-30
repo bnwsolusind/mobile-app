@@ -5,6 +5,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -809,6 +810,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
   const onRefresh = () => {
     setRefreshing(true);
+    void offlineCache.clearPrefix('absensi');
     void loadAttendanceData();
   };
 
@@ -2107,7 +2109,12 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
   const handleConfirmDropOff = async () => {
     if (dropOffNotes.trim().length < 5) {
-      Alert.alert('Perhatian', 'Mohon isi catatan/alasan pengantaran minimal 5 karakter.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Catatan Pengantaran',
+        message: 'Mohon isi catatan/alasan pengantaran minimal 5 karakter.',
+      });
       return;
     }
 
@@ -2172,7 +2179,12 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const handleConfirmBoardingExtension = async () => {
     if (!targetExtensionPermit?.id) return;
     if (!requestedReturnAt || !extensionReason.trim()) {
-      Alert.alert('Perhatian', 'Mohon tentukan waktu baru kembali dan isi alasan perpanjangan izin.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Form Belum Lengkap',
+        message: 'Mohon tentukan waktu baru kembali dan isi alasan perpanjangan izin.',
+      });
       return;
     }
 
@@ -2261,7 +2273,12 @@ export default function AbsensiScreen({ route, navigation }: any) {
   const handleMusyrifReviewSubmit = async () => {
     if (!selectedReviewPermit?.id) return;
     if (musyrifReviewAction === 'approve' && !musyrifReviewNewReturnAt) {
-      Alert.alert('Perhatian', 'Mohon tentukan jadwal baru batas kembali santri.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Batas Kembali Kosong',
+        message: 'Mohon tentukan jadwal baru batas kembali santri.',
+      });
       return;
     }
 
@@ -2297,7 +2314,12 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
   const handleMusyrifEmergencySubmit = async () => {
     if (!musyrifEmergencyForm.student_id || !musyrifEmergencyForm.medical_complaint.trim()) {
-      Alert.alert('Perhatian', 'Mohon pilih santri dan isi keluhan darurat medis/keluarga.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Data Santri Belum Dipilih',
+        message: 'Mohon pilih santri dan isi keluhan darurat medis/keluarga.',
+      });
       return;
     }
 
@@ -2343,7 +2365,12 @@ export default function AbsensiScreen({ route, navigation }: any) {
 
   const handleMusyrifBatchSubmit = async () => {
     if (!musyrifBatchForm.scheduled_departure_at || !musyrifBatchForm.scheduled_return_at) {
-      Alert.alert('Perhatian', 'Mohon lengkapi jadwal mulai pulang dan batas jam kembali santri.');
+      setFeedbackModal({
+        visible: true,
+        type: 'warning',
+        title: 'Jadwal Belum Lengkap',
+        message: 'Mohon lengkapi jadwal mulai pulang dan batas jam kembali santri.',
+      });
       return;
     }
 
@@ -7137,7 +7164,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         onRequestClose={() => setIsPermissionModalOpen(false)}
         statusBarTranslucent
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsPermissionModalOpen(false)} />
           <View style={[styles.modalCard, { paddingBottom: modalBottomInset }]}>
             <View style={styles.modalDragHandle} />
@@ -7148,7 +7178,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: SCREEN_HEIGHT * 0.62 }}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ maxHeight: SCREEN_HEIGHT * 0.62 }}>
               <View style={styles.formContainer}>
                 {/* Info Siswa Terpilih (Dynamic, Bebas Hardcode) */}
                 {headerStudent && (
@@ -7245,7 +7275,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ══════════════════════════════════════════════════════════════
@@ -7258,7 +7288,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         onRequestClose={() => setIsLeaveModalOpen(false)}
         statusBarTranslucent
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsLeaveModalOpen(false)} />
           <View style={[styles.modalCard, { paddingBottom: modalBottomInset }]}>
             <View style={styles.modalDragHandle} />
@@ -7271,7 +7304,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: SCREEN_HEIGHT * 0.65 }}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ maxHeight: SCREEN_HEIGHT * 0.65 }}>
               <View style={styles.formContainer}>
                 {/* Jenis Status Selector */}
                 <Text style={styles.formFieldLabel}>Status Presensi</Text>
@@ -7409,7 +7442,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ══════════════════════════════════════════════════════════════
@@ -7482,7 +7515,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         }}
         statusBarTranslucent
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
           <Pressable
             style={StyleSheet.absoluteFill}
             onPress={() => {
@@ -7635,7 +7671,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL KETERANGAN PENGANTARAN / JARAK JAUH (OUTSIDE RADIUS) ── */}
@@ -7645,7 +7681,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         animationType="fade"
         onRequestClose={() => setDropOffModalVisible(false)}
       >
-        <View style={styles.dropOffModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.dropOffModalOverlay}
+        >
           <View style={styles.dropOffModalCard}>
             {/* Top Accent Strip */}
             <View style={styles.dropOffModalTopBar} />
@@ -7676,7 +7715,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.dropOffModalBody}>
               {/* Distance Alert Box */}
               <View style={styles.dropOffDistanceBox}>
                 <MaterialCommunityIcons name="map-marker-distance" size={20} color="#D97706" />
@@ -7787,7 +7826,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL PRESENSI PENGANTARAN KEMBALI SANTRI KE BOARDING ── */}
@@ -7797,7 +7836,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         animationType="fade"
         onRequestClose={() => setBoardingReturnModalVisible(false)}
       >
-        <View style={styles.dropOffModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.dropOffModalOverlay}
+        >
           <View style={styles.dropOffModalCard}>
             <View style={[styles.dropOffModalTopBar, { backgroundColor: '#059669' }]} />
 
@@ -7822,7 +7864,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.dropOffModalBody}>
               <View style={[styles.dropOffDistanceBox, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
                 <MaterialCommunityIcons name="shield-check" size={20} color="#059669" />
                 <View style={{ flex: 1 }}>
@@ -7889,7 +7931,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL PERMOHONAN PERPANJANGAN JAM KEMBALI BOARDING ── */}
@@ -7899,7 +7941,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         animationType="fade"
         onRequestClose={() => setBoardingExtensionModalVisible(false)}
       >
-        <View style={styles.dropOffModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.dropOffModalOverlay}
+        >
           <View style={styles.dropOffModalCard}>
             <View style={[styles.dropOffModalTopBar, { backgroundColor: '#0D9488' }]} />
 
@@ -7924,7 +7969,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.dropOffModalBody}>
               <View style={[styles.dropOffDistanceBox, { backgroundColor: '#F0FDFA', borderColor: '#99F6E4' }]}>
                 <MaterialCommunityIcons name="information" size={20} color="#0D9488" />
                 <View style={{ flex: 1 }}>
@@ -7985,7 +8030,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL JADWAL MASSAL KEPULANGAN ASRAMA (MUSYRIF) ── */}
@@ -7995,7 +8040,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         animationType="fade"
         onRequestClose={() => setMusyrifBatchModalVisible(false)}
       >
-        <View style={styles.dropOffModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.dropOffModalOverlay}
+        >
           <View style={styles.dropOffModalCard}>
             <View style={[styles.dropOffModalTopBar, { backgroundColor: '#059669' }]} />
 
@@ -8020,7 +8068,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.dropOffModalBody}>
               <Text style={styles.dropOffInputLabel}>Jenis Kepulangan Massal *</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
                 {[
@@ -8120,7 +8168,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL IZIN DARURAT / SAKIT ASRAMA (MUSYRIF) ── */}
@@ -8130,7 +8178,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         animationType="fade"
         onRequestClose={() => setMusyrifEmergencyModalVisible(false)}
       >
-        <View style={styles.dropOffModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.dropOffModalOverlay}
+        >
           <View style={styles.dropOffModalCard}>
             <View style={[styles.dropOffModalTopBar, { backgroundColor: '#E11D48' }]} />
 
@@ -8155,7 +8206,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.dropOffModalBody}>
               <Text style={styles.dropOffInputLabel}>Pilih Santri *</Text>
               {musyrifStudents.length === 0 ? (
                 <View style={{ padding: 12, backgroundColor: '#F8FAFC', borderRadius: 12, marginBottom: 10 }}>
@@ -8288,7 +8339,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── MODAL TINJAU PERPANJANGAN KEPULANGAN OLEH MUSYRIF ── */}
@@ -8298,7 +8349,10 @@ export default function AbsensiScreen({ route, navigation }: any) {
         animationType="fade"
         onRequestClose={() => setMusyrifReviewModalVisible(false)}
       >
-        <View style={styles.dropOffModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.dropOffModalOverlay}
+        >
           <View style={styles.dropOffModalCard}>
             <View style={[styles.dropOffModalTopBar, { backgroundColor: '#D97706' }]} />
 
@@ -8323,7 +8377,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dropOffModalBody}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.dropOffModalBody}>
               {/* Card Detail Permohonan */}
               <View style={[styles.dropOffDistanceBox, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A', marginBottom: 12 }]}>
                 <MaterialCommunityIcons name="account-clock" size={20} color="#D97706" />
@@ -8445,7 +8499,7 @@ export default function AbsensiScreen({ route, navigation }: any) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Universal Feedback Modal */}

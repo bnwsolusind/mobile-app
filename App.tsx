@@ -19,6 +19,7 @@ import MaintenanceScreen from './src/screens/MaintenanceScreen';
 import UpdateRequiredScreen from './src/screens/UpdateRequiredScreen';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import NetworkStatusBar from './src/components/NetworkStatusBar';
+import GlobalFeedbackContainer from './src/components/GlobalFeedbackContainer';
 import { useAuthStore } from './src/stores/authStore';
 import { useMobileConfigStore } from './src/stores/mobileConfigStore';
 import { useServerConfigStore } from './src/stores/serverConfigStore';
@@ -207,6 +208,7 @@ export default function App() {
           <LoginScreen />
         )}
         {!showingSplash && <NetworkStatusBar />}
+        <GlobalFeedbackContainer />
         <StatusBar
           hidden={true}
           style={

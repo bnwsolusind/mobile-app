@@ -518,7 +518,7 @@ export default function CbtExamsScreen({ route }: any) {
         setExams([]);
       }
     }
-  }, [isParent, isStudent, selectedChildId, user?.id]);
+  }, [isParent, isStudent, isTeacher, selectedChildId, user?.id]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -614,6 +614,7 @@ export default function CbtExamsScreen({ route }: any) {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
+      void offlineCache.clearPrefix('cbt_exams');
       if (isParent) {
         const res = await mobileApiService.getPortalChildren();
         const list = unwrapApiData<any[]>(res) || [];
@@ -751,11 +752,12 @@ export default function CbtExamsScreen({ route }: any) {
     const activateCaptureProtection = async () => {
       await safePreventScreenCapture();
       screenshotSub = safeAddScreenshotListener(() => {
-        Alert.alert(
-          '⚠️ Pelanggaran Integritas Ujian',
-          'Tangkapan layar (screenshot) dilarang keras selama ujian CBT berlangsung demi menjaga kerahasiaan soal.',
-          [{ text: 'Mengerti', style: 'default' }]
-        );
+        setFeedbackModal({
+          visible: true,
+          type: 'warning',
+          title: 'Pelanggaran Integritas Ujian',
+          message: 'Tangkapan layar (screenshot) dilarang keras selama ujian CBT berlangsung demi menjaga kerahasiaan lembar soal.',
+        });
       });
     };
 
@@ -1288,7 +1290,7 @@ export default function CbtExamsScreen({ route }: any) {
                   return (
                     <TouchableOpacity
                       key={exam.id}
-                      activeOpacity={0.92}
+                      activeOpacity={0.78}
                       onPress={() => setInstructionModal(exam)}
                       style={styles.examCard}
                     >

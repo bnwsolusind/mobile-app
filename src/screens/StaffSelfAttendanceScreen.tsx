@@ -31,6 +31,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useMobileConfigStore } from '../stores/mobileConfigStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { AppFeedbackModal, FeedbackType } from '../components/AppFeedbackModal';
+import { appFeedback } from '../stores/feedbackStore';
 import { AttendanceRejectedModal, AttendanceRejectionDetails } from '../components/attendance/AttendanceRejectedModal';
 import { getProfileImageUrl, DEFAULT_PARENT_AVATAR } from '../utils/profile';
 import { isPrincipalRole, isTeacherRole, isTuRole } from '../utils/roles';
@@ -499,27 +500,22 @@ export default function StaffSelfAttendanceScreen({ navigation, route }: any) {
       }
 
       return await new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
-        Alert.alert(
-          'Modul GPS Native Belum Terpasang',
-          'Modul native GPS (ExpoLocation) belum terkompilasi di APK Android saat ini.\n\nApakah Anda ingin menggunakan koordinat simulasi area sekolah untuk pengujian jarak?',
-          [
-            {
-              text: 'Batal',
-              style: 'cancel',
-              onPress: () => resolve(null),
-            },
-            {
-              text: 'Simulasi Area Unit',
-              onPress: () => {
-                const fallbackLat = Number(unitLocation.latitude || -0.9242000);
-                const fallbackLng = Number(unitLocation.longitude || 100.3621000);
-                const simulated = { latitude: fallbackLat, longitude: fallbackLng, accuracy: 5 };
-                setUserLocation(simulated);
-                resolve(simulated);
-              },
-            },
-          ]
-        );
+        appFeedback.confirm({
+          title: 'Modul GPS Native Belum Terpasang',
+          message: 'Modul native GPS (ExpoLocation) belum terkompilasi di APK Android saat ini.\n\nApakah Anda ingin menggunakan koordinat simulasi area sekolah untuk pengujian jarak?',
+          confirmText: 'Simulasi Area Unit',
+          cancelText: 'Batal',
+          onConfirm: () => {
+            const fallbackLat = Number(unitLocation.latitude || -0.9242000);
+            const fallbackLng = Number(unitLocation.longitude || 100.3621000);
+            const simulated = { latitude: fallbackLat, longitude: fallbackLng, accuracy: 5 };
+            setUserLocation(simulated);
+            resolve(simulated);
+          },
+          onClose: () => {
+            resolve(null);
+          },
+        });
       });
     } catch (e: any) {
       if (!silent) {
