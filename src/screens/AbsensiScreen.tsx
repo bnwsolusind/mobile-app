@@ -1970,7 +1970,8 @@ export default function AbsensiScreen({ route, navigation }: any) {
     const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 64), 400);
     const mapHeight = 165;
 
-    const activeToken = token || 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A';
+    const activeToken = token;
+    if (!activeToken) return null;
 
     if (userLat && userLng) {
       // Mapbox Static dengan 2 pin: Pin Gerbang Hijau (#059669) & Pin Posisi Anda Biru (#2563EB)

@@ -1243,7 +1243,8 @@ export default function TeacherQrAttendanceHub({
     const mapWidth = Math.min(Math.round(SCREEN_WIDTH - 58), 420);
     const mapHeight = 165;
 
-    const activeToken = token || 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A';
+    const activeToken = token;
+    if (!activeToken) return null;
 
     if (userLocation && userLocation.latitude && userLocation.longitude) {
       const pUnit = `pin-s-school+059669(${uLng.toFixed(6)},${uLat.toFixed(6)})`;

@@ -143,7 +143,7 @@ export type MobileAppConfig = {
 export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
   platform: 'android',
   version: 1,
-  mapbox_token: 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A',
+  mapbox_token: '',
   theme: {
     primary_color: '#0E5C44',
     secondary_color: '#10B981',
@@ -234,7 +234,7 @@ export const DEFAULT_MOBILE_CONFIG: MobileAppConfig = {
       'Sistem sedang dalam pemeliharaan rutin. Silakan coba beberapa saat lagi.',
     force_update: false,
     update_url: 'https://play.google.com/store/apps/details?id=id.sch.dareliman.simsit',
-    mapbox_token: 'pk.eyJ1IjoiY2hlbWxsb3QiLCJhIjoiY211eXdocHI2MG5yZzM0b2xmN3A1aXIzaiJ9.RdgTOBoXLsNDh7b5j-d40A',
+    mapbox_token: '',
   },
   onboarding: {
     enabled: true,
