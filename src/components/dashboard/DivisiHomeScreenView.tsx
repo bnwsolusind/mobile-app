@@ -168,25 +168,36 @@ export default function DivisiHomeScreenView({
   // 2. 8 Menu Asli Milik Divisi Pendidikan (Format Squircle Pastel 4 Kolom x 2 Baris)
   const primaryMenuItems = useMemo(() => [
     {
-      id: 'pusat_data',
-      label: 'Pusat Data',
-      icon: 'database-outline' as const,
+      id: 'ruang_kerja_divisi',
+      label: 'Ruang Kerja',
+      icon: 'briefcase-check-outline' as const,
       color: '#059669',
       cardBg: '#ECFDF5',
       cardBorder: '#A7F3D0',
       iconBg: '#D1FAE5',
       textColor: '#065F46',
+      route: 'DivisiWorkspace',
+    },
+    {
+      id: 'pusat_data',
+      label: 'Pusat Data',
+      icon: 'database-outline' as const,
+      color: '#0284C7',
+      cardBg: '#EFF6FF',
+      cardBorder: '#BFDBFE',
+      iconBg: '#DBEAFE',
+      textColor: '#1E40AF',
       route: 'Data',
     },
     {
       id: 'presensi_siswa',
       label: 'Presensi Siswa',
       icon: 'account-group' as const,
-      color: '#0284C7',
-      cardBg: '#EFF6FF',
-      cardBorder: '#BFDBFE',
-      iconBg: '#DBEAFE',
-      textColor: '#1E40AF',
+      color: '#0D9488',
+      cardBg: '#F0FDFA',
+      cardBorder: '#99F6E4',
+      iconBg: '#CCFBF1',
+      textColor: '#0F766E',
       route: 'RekapPresensiSiswa',
       params: { tab: 'siswa' },
     },
@@ -194,11 +205,11 @@ export default function DivisiHomeScreenView({
       id: 'presensi_guru',
       label: 'Presensi Guru',
       icon: 'account-check-outline' as const,
-      color: '#0D9488',
-      cardBg: '#F0FDFA',
-      cardBorder: '#99F6E4',
-      iconBg: '#CCFBF1',
-      textColor: '#0F766E',
+      color: '#10B981',
+      cardBg: '#F0FDF4',
+      cardBorder: '#BBF7D0',
+      iconBg: '#DCFCE7',
+      textColor: '#166534',
       route: 'RekapPresensiGuru',
       params: { tab: 'pegawai' },
     },
@@ -206,11 +217,11 @@ export default function DivisiHomeScreenView({
       id: 'presensi_mandiri',
       label: 'Presensi Mandiri',
       icon: 'account-clock-outline' as const,
-      color: '#10B981',
-      cardBg: '#F0FDF4',
-      cardBorder: '#BBF7D0',
-      iconBg: '#DCFCE7',
-      textColor: '#166534',
+      color: '#7C3AED',
+      cardBg: '#FAF5FF',
+      cardBorder: '#DDD6FE',
+      iconBg: '#EDE9FE',
+      textColor: '#5B21B6',
       route: 'PresensiMandiriStaff',
     },
     {
@@ -234,17 +245,6 @@ export default function DivisiHomeScreenView({
       iconBg: '#DBEAFE',
       textColor: '#1E40AF',
       route: 'Kalender',
-    },
-    {
-      id: 'mutabaah_tahfizh',
-      label: 'Mutabaah & Quran',
-      icon: 'check-decagram-outline' as const,
-      color: '#7C3AED',
-      cardBg: '#FAF5FF',
-      cardBorder: '#DDD6FE',
-      iconBg: '#EDE9FE',
-      textColor: '#5B21B6',
-      route: 'Mutabaah',
     },
     {
       id: 'semua_menu',
@@ -550,6 +550,40 @@ export default function DivisiHomeScreenView({
             </View>
           </LinearGradient>
         </View>
+
+        {/* ── HERO BANNER: RUANG KERJA DIVISI PENDIDIKAN (7 MODUL TERPADU) ── */}
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={() => navigation?.navigate('DivisiWorkspace')}
+          style={styles.workspaceHeroCard}
+        >
+          <LinearGradient
+            colors={['#064E3B', '#047857', '#059669']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.workspaceHeroGradient}
+          >
+            <View style={styles.workspaceHeroTopRow}>
+              <View style={styles.workspaceHeroPill}>
+                <MaterialCommunityIcons name="shield-star" size={13} color="#A7F3D0" />
+                <Text style={styles.workspaceHeroPillText}>7 Modul Operasional • Terpadu</Text>
+              </View>
+              <View style={styles.workspaceHeroArrowWrap}>
+                <MaterialCommunityIcons name="arrow-top-right" size={17} color="#FFFFFF" />
+              </View>
+            </View>
+            <Text style={styles.workspaceHeroTitle}>Ruang Kerja Divisi Pendidikan</Text>
+            <Text style={styles.workspaceHeroSubtitle}>
+              Supervisi KBM, Kurasi Soal, Munaqasyah, Bahasa, Pelatihan 32 JP, Laporan Kepsek & Radar Akreditasi
+            </Text>
+            <View style={styles.workspaceHeroActionRow}>
+              <View style={styles.workspaceHeroTag}>
+                <Text style={styles.workspaceHeroTagText}>Buka Ruang Kerja</Text>
+                <MaterialCommunityIcons name="chevron-right" size={14} color="#064E3B" />
+              </View>
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
 
         {/* ── 2. MENU ASLI DIVISI PENDIDIKAN (8 MENU SQUIRCLE PASTEL 4 KOLOM X 2 BARIS) ── */}
         <View style={[styles.sectionCard, styles.menuSectionCard]}>
@@ -1575,5 +1609,76 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13.5,
     fontWeight: '800',
+  },
+  workspaceHeroCard: {
+    marginBottom: 14,
+    borderRadius: 22,
+    overflow: 'hidden',
+    shadowColor: '#064E3B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  workspaceHeroGradient: {
+    padding: 16,
+  },
+  workspaceHeroTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  workspaceHeroPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(167, 243, 208, 0.22)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  workspaceHeroPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#D1FAE5',
+    marginLeft: 4,
+  },
+  workspaceHeroArrowWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  workspaceHeroTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  workspaceHeroSubtitle: {
+    fontSize: 11.5,
+    fontWeight: '500',
+    color: '#A7F3D0',
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  workspaceHeroActionRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+  },
+  workspaceHeroTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  workspaceHeroTagText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginRight: 4,
   },
 });

@@ -13,6 +13,8 @@ import {
   TouchableOpacity,
   View,
   Share,
+  Linking,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -82,9 +84,15 @@ export default function ParentBillsScreen({ route, navigation }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Modals
+  // Modals & Multi-Select VA Payment
   const [selectedIdCardStudent, setSelectedIdCardStudent] = useState<any>(null);
   const [showChildSelectorModal, setShowChildSelectorModal] = useState(false);
+  const [selectedBillIds, setSelectedBillIds] = useState<string[]>([]);
+  const [isPayModalOpen, setIsPayModalOpen] = useState(false);
+  const [selectedBank, setSelectedBank] = useState<'BSI' | 'NAGARI'>('BSI');
+  const [processingVa, setProcessingVa] = useState(false);
+  const [vaResult, setVaResult] = useState<any>(null);
+  const [payError, setPayError] = useState<string | null>(null);
 
   const mobileConfig = useMobileConfigStore((state) => state.config);
 
@@ -120,8 +128,11 @@ export default function ParentBillsScreen({ route, navigation }: any) {
 
   // Load bills for selected student
   const loadBills = useCallback(async (targetChildId?: string, page = 1) => {
+    const isStudent = user?.roles?.some((r: any) =>
+      ['Siswa', 'siswa', 'student'].includes(typeof r === 'string' ? r : r?.name)
+    );
     const cid = targetChildId || selectedChildId;
-    if (!cid) return;
+    if (!cid && !isStudent) return;
     try {
       setError(null);
       const response = await mobileApiService.getPortalBills(cid, page);
@@ -136,7 +147,7 @@ export default function ParentBillsScreen({ route, navigation }: any) {
     } catch (err: any) {
       setError(getApiErrorMessage(err, 'Daftar tagihan dan pembayaran belum berhasil dimuat.'));
     }
-  }, [selectedChildId]);
+  }, [selectedChildId, user]);
 
   // Handle manual child switch
   const handleSelectChild = useCallback(
@@ -161,16 +172,85 @@ export default function ParentBillsScreen({ route, navigation }: any) {
   }, [loadAll]);
 
   useEffect(() => {
+    const isStudent = user?.roles?.some((r: any) =>
+      ['Siswa', 'siswa', 'student'].includes(typeof r === 'string' ? r : r?.name)
+    );
     if (selectedChildId) {
       loadBills(selectedChildId, 1);
+    } else if (isStudent) {
+      loadBills(undefined, 1);
     }
-  }, [selectedChildId, loadBills]);
+  }, [selectedChildId, loadBills, user]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([loadChildren(), loadBills(selectedChildId, 1)]);
     setRefreshing(false);
   }, [loadChildren, loadBills, selectedChildId]);
+
+  const unpaidBills = useMemo(() => {
+    return bills.filter((b) => String(b.status || '').toUpperCase() !== 'PAID');
+  }, [bills]);
+
+  const toggleSelectBill = (id: string) => {
+    setSelectedBillIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllUnpaid = () => {
+    if (selectedBillIds.length === unpaidBills.length) {
+      setSelectedBillIds([]);
+    } else {
+      setSelectedBillIds(unpaidBills.map((b) => String(b.id)));
+    }
+  };
+
+  const selectedBillsData = useMemo(() => {
+    return bills.filter((b) => selectedBillIds.includes(String(b.id)));
+  }, [bills, selectedBillIds]);
+
+  const selectedTotal = useMemo(() => {
+    return selectedBillsData.reduce((acc, b) => acc + Number(b.remaining_amount || b.amount || 0), 0);
+  }, [selectedBillsData]);
+
+  const handleCreateVaPayment = async () => {
+    if (selectedBillsData.length === 0) return;
+    setProcessingVa(true);
+    setPayError(null);
+    try {
+      const items = selectedBillsData.map((b) => {
+        const rawId = b.metadata?.sipdei_id || String(b.id).replace(/^sipdei_/, '');
+        const numId = parseInt(rawId, 10) || 1;
+        let jenis = 'TAGIHAN';
+        if (b.fee_category?.category === 'TUNGGAKAN') jenis = 'TUNGGAKAN';
+        if (b.fee_category?.category === 'DANA_ORTU_ASUH') jenis = 'DANA_ORTU_ASUH';
+
+        return {
+          jenis,
+          id: numId,
+          bayar: Number(b.remaining_amount || b.amount || 0),
+        };
+      });
+
+      const response = await mobileApiService.createPortalVaPayment(
+        selectedBank,
+        items,
+        selectedChildId
+      );
+
+      if (response?.success && response?.data) {
+        setVaResult(response.data);
+        void loadBills(selectedChildId, 1);
+      } else {
+        setPayError(response?.message || 'Gagal menerbitkan Virtual Account dari SIPDEI.');
+      }
+    } catch (err: any) {
+      setPayError(getApiErrorMessage(err, 'Terjadi kendala saat menghubungi server SIPDEI.'));
+    } finally {
+      setProcessingVa(false);
+    }
+  };
 
   // Active header student resolution
   const headerStudent = useMemo(() => {
@@ -627,8 +707,34 @@ export default function ParentBillsScreen({ route, navigation }: any) {
                 </View>
               ) : (
                 <View style={styles.billsListWrapper}>
+                  {unpaidBills.length > 0 && (
+                    <View style={styles.batchActionRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={handleSelectAllUnpaid}
+                        style={styles.batchSelectBtn}
+                      >
+                        <MaterialCommunityIcons
+                          name={selectedBillIds.length === unpaidBills.length ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                          size={18}
+                          color="#004D32"
+                        />
+                        <Text style={styles.batchSelectText}>
+                          {selectedBillIds.length === unpaidBills.length
+                            ? 'Batal Pilih Semua'
+                            : `Pilih Semua Belum Lunas (${unpaidBills.length})`}
+                        </Text>
+                      </TouchableOpacity>
+                      {selectedBillIds.length > 0 && (
+                        <View style={styles.batchCountPill}>
+                          <Text style={styles.batchCountPillText}>{selectedBillIds.length} dipilih</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
                   {filteredBills.map((b) => {
                     const isPaid = String(b.status).toUpperCase() === 'PAID';
+                    const isSelected = selectedBillIds.includes(String(b.id));
                     const payments = Array.isArray(b.payments) ? b.payments : [];
 
                     return (
@@ -637,10 +743,24 @@ export default function ParentBillsScreen({ route, navigation }: any) {
                         style={[
                           styles.billCard,
                           isPaid ? styles.billCardPaid : styles.billCardUnpaid,
+                          isSelected && styles.billCardSelected,
                         ]}
                       >
                         {/* Header Tagihan */}
                         <View style={styles.billHead}>
+                          {!isPaid && (
+                            <TouchableOpacity
+                              activeOpacity={0.7}
+                              onPress={() => toggleSelectBill(String(b.id))}
+                              style={styles.billCheckboxTouch}
+                            >
+                              <MaterialCommunityIcons
+                                name={isSelected ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
+                                size={22}
+                                color={isSelected ? '#047857' : '#94A3B8'}
+                              />
+                            </TouchableOpacity>
+                          )}
                           <View style={{ flex: 1, paddingRight: 12 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                               <View style={styles.billCategoryBadge}>
@@ -723,6 +843,24 @@ export default function ParentBillsScreen({ route, navigation }: any) {
                             ))}
                           </View>
                         )}
+
+                        {!isPaid && (
+                          <View style={styles.billCardFooterActions}>
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={() => {
+                                setSelectedBillIds([String(b.id)]);
+                                setVaResult(null);
+                                setPayError(null);
+                                setIsPayModalOpen(true);
+                              }}
+                              style={styles.singlePayBtn}
+                            >
+                              <MaterialCommunityIcons name="credit-card-outline" size={13} color="#047857" />
+                              <Text style={styles.singlePayBtnText}>Bayar via VA</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
                       </View>
                     );
                   })}
@@ -732,6 +870,286 @@ export default function ParentBillsScreen({ route, navigation }: any) {
           </View>
         </ScrollView>
       </View>
+
+      {/* ── STICKY FLOATING ACTION BAR FOR VA PAYMENT ── */}
+      {selectedBillIds.length > 0 && (
+        <View style={[styles.floatingBarContainer, { bottom: bottomInset + 8 }]}>
+          <View style={styles.floatingBarInner}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.floatingBarLabel}>
+                {selectedBillIds.length} Tagihan Terpilih
+              </Text>
+              <Text style={styles.floatingBarTotal}>
+                {formatRupiah(selectedTotal)}
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => {
+                setVaResult(null);
+                setPayError(null);
+                setIsPayModalOpen(true);
+              }}
+              style={styles.floatingBarPayBtn}
+            >
+              <LinearGradient
+                colors={['#047857', '#004D32']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.floatingBarBtnGradient}
+              >
+                <MaterialCommunityIcons name="bank-transfer" size={18} color="#FFFFFF" />
+                <Text style={styles.floatingBarBtnText}>Bayar VA</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── MODAL PEMBAYARAN VIRTUAL ACCOUNT SIPDEI ── */}
+      <Modal
+        visible={isPayModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!processingVa) setIsPayModalOpen(false);
+        }}
+      >
+        <View style={styles.vaModalBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => {
+              if (!processingVa) setIsPayModalOpen(false);
+            }}
+          />
+          <View style={[styles.vaModalSheet, { paddingBottom: bottomInset + 16 }]}>
+            {/* Header Modal */}
+            <View style={styles.vaModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={styles.vaHeaderIconBadge}>
+                  <MaterialCommunityIcons name="credit-card-fast-outline" size={20} color="#047857" />
+                </View>
+                <View>
+                  <Text style={styles.vaModalTitle}>Pembayaran Virtual Account</Text>
+                  <Text style={styles.vaModalSubtitle}>Integrasi SIPDEI Bank Nagari & BSI</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                disabled={processingVa}
+                onPress={() => setIsPayModalOpen(false)}
+                style={styles.vaCloseBtn}
+              >
+                <MaterialCommunityIcons name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 480 }}>
+              {vaResult ? (
+                /* ── HASIL NOMOR VA DITERBITKAN ── */
+                <View style={styles.vaSuccessCard}>
+                  <View style={styles.vaSuccessBadgeRow}>
+                    <View style={styles.vaSuccessIconCircle}>
+                      <MaterialCommunityIcons name="check-decagram" size={28} color="#059669" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.vaSuccessHeading}>Nomor VA Berhasil Diterbitkan!</Text>
+                      <Text style={styles.vaSuccessSubheading}>
+                        {vaResult.nama_bank || (selectedBank === 'NAGARI' ? 'Bank Nagari' : 'Bank Syariah Indonesia')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.vaNumberContainer}>
+                    <Text style={styles.vaNumberLabel}>NOMOR VIRTUAL ACCOUNT</Text>
+                    <Text selectable style={styles.vaNumberText}>
+                      {vaResult.nomor_va || '-'}
+                    </Text>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={async () => {
+                        try {
+                          await Share.share({
+                            message: `Pembayaran Tagihan Siswa ${vaResult.nama_siswa || ''}\nBank: ${vaResult.nama_bank || selectedBank}\nNo. Virtual Account: ${vaResult.nomor_va}\nTotal Bayar: ${formatRupiah(vaResult.total_bayar)}\nBatas Waktu: ${vaResult.expired_at || '-'}\n\nPanduan: ${vaResult.panduan_pembayaran_pdf || '-'}`,
+                          });
+                        } catch (e) {
+                          Alert.alert('Salin VA', `Nomor VA: ${vaResult.nomor_va}`);
+                        }
+                      }}
+                      style={styles.vaCopyBtn}
+                    >
+                      <MaterialCommunityIcons name="share-variant-outline" size={15} color="#047857" />
+                      <Text style={styles.vaCopyBtnText}>Salin & Bagikan Info VA</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.vaDetailRowsBox}>
+                    <View style={styles.vaDetailRow}>
+                      <Text style={styles.vaDetailRowLabel}>Nama Siswa</Text>
+                      <Text style={styles.vaDetailRowValue}>{vaResult.nama_siswa || '-'}</Text>
+                    </View>
+                    <View style={styles.vaDetailRow}>
+                      <Text style={styles.vaDetailRowLabel}>NIS Pembayaran</Text>
+                      <Text style={styles.vaDetailRowValue}>{vaResult.nis_pembayaran || '-'}</Text>
+                    </View>
+                    <View style={styles.vaDetailRow}>
+                      <Text style={styles.vaDetailRowLabel}>Total Tagihan VA</Text>
+                      <Text style={[styles.vaDetailRowValue, { color: '#047857', fontWeight: '800' }]}>
+                        {formatRupiah(vaResult.total_bayar)}
+                      </Text>
+                    </View>
+                    <View style={styles.vaDetailRow}>
+                      <Text style={styles.vaDetailRowLabel}>Batas Pembayaran</Text>
+                      <Text style={[styles.vaDetailRowValue, { color: '#B45309', fontWeight: '700' }]}>
+                        {vaResult.expired_at || '-'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {vaResult.panduan_pembayaran_pdf ? (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => Linking.openURL(vaResult.panduan_pembayaran_pdf)}
+                      style={styles.vaPdfBtn}
+                    >
+                      <MaterialCommunityIcons name="file-pdf-box" size={18} color="#DC2626" />
+                      <Text style={styles.vaPdfBtnText}>Buka Petunjuk Pembayaran (PDF Resmi)</Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setVaResult(null);
+                      setIsPayModalOpen(false);
+                      setSelectedBillIds([]);
+                    }}
+                    style={styles.vaDoneBtn}
+                  >
+                    <Text style={styles.vaDoneBtnText}>Selesai & Tutup</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                /* ── FORM PEMILIHAN BANK & REVIEW TAGIHAN ── */
+                <View>
+                  {payError ? (
+                    <View style={styles.vaErrorBox}>
+                      <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#DC2626" />
+                      <Text style={styles.vaErrorText}>{payError}</Text>
+                    </View>
+                  ) : null}
+
+                  {/* Pilihan Bank */}
+                  <Text style={styles.vaSectionTitle}>Pilih Saluran Virtual Account:</Text>
+                  <View style={{ gap: 10, marginBottom: 16 }}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setSelectedBank('NAGARI')}
+                      style={[
+                        styles.bankOptionCard,
+                        selectedBank === 'NAGARI' && styles.bankOptionCardActive,
+                      ]}
+                    >
+                      <View style={styles.bankRadioCircle}>
+                        {selectedBank === 'NAGARI' && <View style={styles.bankRadioDot} />}
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.bankOptionName}>Bank Nagari (Virtual Account)</Text>
+                        <Text style={styles.bankOptionDesc}>
+                          Mendukung ATM & Mobile Banking Nagari. Format VA: 95 + NIS
+                        </Text>
+                      </View>
+                      <View style={[styles.bankBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                        <Text style={[styles.bankBadgeText, { color: '#1D4ED8' }]}>NAGARI</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setSelectedBank('BSI')}
+                      style={[
+                        styles.bankOptionCard,
+                        selectedBank === 'BSI' && styles.bankOptionCardActive,
+                      ]}
+                    >
+                      <View style={styles.bankRadioCircle}>
+                        {selectedBank === 'BSI' && <View style={styles.bankRadioDot} />}
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.bankOptionName}>Bank Syariah Indonesia (BSI)</Text>
+                        <Text style={styles.bankOptionDesc}>
+                          Mendukung BSI Mobile, BYOND & ATM BSI. Format VA: NIS
+                        </Text>
+                      </View>
+                      <View style={[styles.bankBadge, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                        <Text style={[styles.bankBadgeText, { color: '#047857' }]}>BSI</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Ringkasan Item Terpilih */}
+                  <Text style={styles.vaSectionTitle}>Rincian Tagihan yang Dibayar ({selectedBillsData.length}):</Text>
+                  <View style={styles.vaBillsSummaryBox}>
+                    {selectedBillsData.map((item, idx) => (
+                      <View key={String(item.id || idx)} style={styles.vaBillSummaryRow}>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                          <Text numberOfLines={1} style={styles.vaBillSummaryTitle}>
+                            {item.title}
+                          </Text>
+                          <Text style={styles.vaBillSummaryCategory}>
+                            {item.fee_category?.name || 'SPP'}
+                          </Text>
+                        </View>
+                        <Text style={styles.vaBillSummaryAmount}>
+                          {formatRupiah(item.remaining_amount || item.amount || 0)}
+                        </Text>
+                      </View>
+                    ))}
+                    <View style={styles.vaTotalRow}>
+                      <Text style={styles.vaTotalLabel}>Total Nominal Bayar:</Text>
+                      <Text style={styles.vaTotalValue}>{formatRupiah(selectedTotal)}</Text>
+                    </View>
+                  </View>
+
+                  {/* Catatan SIPDEI */}
+                  <View style={styles.vaNoticeBox}>
+                    <MaterialCommunityIcons name="information" size={16} color="#0284C7" />
+                    <Text style={styles.vaNoticeText}>
+                      Penting: Pembuatan kode Virtual Account baru akan menggantikan sesi pembayaran sebelumnya yang belum lunas di server SIPDEI.
+                    </Text>
+                  </View>
+
+                  {/* Tombol Terbitkan VA */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    disabled={processingVa || selectedBillsData.length === 0}
+                    onPress={handleCreateVaPayment}
+                    style={styles.vaSubmitBtn}
+                  >
+                    <LinearGradient
+                      colors={['#059669', '#004D32']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.vaSubmitGradient}
+                    >
+                      {processingVa ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <>
+                          <MaterialCommunityIcons name="shield-check" size={18} color="#FFFFFF" />
+                          <Text style={styles.vaSubmitText}>
+                            Terbitkan Nomor VA ({selectedBank})
+                          </Text>
+                        </>
+                      )}
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── MODAL PILIH ANANDA ── */}
       <Modal
@@ -1537,5 +1955,455 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: '#047857',
     marginTop: 2,
+  },
+
+  /* Batch Selection & Checkbox */
+  batchActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  batchSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#E6F4EA',
+    borderRadius: 8,
+  },
+  batchSelectText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#004D32',
+  },
+  batchCountPill: {
+    backgroundColor: '#004D32',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  batchCountPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  billCardSelected: {
+    borderColor: '#059669',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 2,
+  },
+  billCheckboxTouch: {
+    marginRight: 10,
+    justifyContent: 'center',
+  },
+  billCardFooterActions: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  singlePayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  singlePayBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#047857',
+  },
+
+  /* Sticky Floating Action Bar */
+  floatingBarContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 40,
+  },
+  floatingBarInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#004D32',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+    borderWidth: 1.5,
+    borderColor: '#059669',
+  },
+  floatingBarLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#A7F3D0',
+    textTransform: 'uppercase',
+  },
+  floatingBarTotal: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 2,
+  },
+  floatingBarPayBtn: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  floatingBarBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#34D399',
+  },
+  floatingBarBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  /* Modal Pembayaran VA SIPDEI */
+  vaModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'flex-end',
+  },
+  vaModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    padding: 20,
+    maxHeight: '90%',
+  },
+  vaModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    marginBottom: 14,
+  },
+  vaHeaderIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  vaModalTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  vaModalSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  vaCloseBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  vaSectionTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
+  bankOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  bankOptionCardActive: {
+    borderColor: '#047857',
+    backgroundColor: '#ECFDF5',
+  },
+  bankRadioCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#047857',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bankRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#047857',
+  },
+  bankOptionName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  bankOptionDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  bankBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  bankBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  vaBillsSummaryBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  vaBillSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  vaBillSummaryTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  vaBillSummaryCategory: {
+    fontSize: 10.5,
+    color: '#64748B',
+  },
+  vaBillSummaryAmount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  vaTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 6,
+  },
+  vaTotalLabel: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  vaTotalValue: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#047857',
+  },
+  vaNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 10,
+    backgroundColor: '#F0F9FF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    marginBottom: 16,
+  },
+  vaNoticeText: {
+    flex: 1,
+    fontSize: 10.5,
+    color: '#0369A1',
+    lineHeight: 15,
+  },
+  vaSubmitBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 4,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  vaSubmitGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+  },
+  vaSubmitText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  vaErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  vaErrorText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: '#B91C1C',
+  },
+
+  /* VA Success Card */
+  vaSuccessCard: {
+    paddingVertical: 4,
+  },
+  vaSuccessBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#ECFDF5',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    marginBottom: 14,
+  },
+  vaSuccessIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vaSuccessHeading: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#004D32',
+  },
+  vaSuccessSubheading: {
+    fontSize: 11.5,
+    color: '#047857',
+    marginTop: 2,
+  },
+  vaNumberContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+  },
+  vaNumberLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.8,
+  },
+  vaNumberText: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#004D32',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    letterSpacing: 1.5,
+    marginVertical: 8,
+  },
+  vaCopyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  vaCopyBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  vaDetailRowsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+    gap: 8,
+  },
+  vaDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  vaDetailRowLabel: {
+    fontSize: 11.5,
+    color: '#64748B',
+  },
+  vaDetailRowValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  vaPdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 11,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginBottom: 10,
+  },
+  vaPdfBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  vaDoneBtn: {
+    backgroundColor: '#004D32',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  vaDoneBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });

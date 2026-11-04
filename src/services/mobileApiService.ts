@@ -141,6 +141,26 @@ export const mobileApiService = {
     await api.get(`/dashboard/tata-usaha/kpi/${type}`, { params })
   ).data,
 
+  // Pembiasaan Bahasa & Bank Kosakata (Two-Tier Approval & Setoran Santri)
+  getVocabularyBanks: async (params: ListParams = {}) => (
+    await api.get('/vocabulary/banks', { params })
+  ).data,
+  proposeVocabulary: async (payload: Record<string, unknown>) => (
+    await api.post('/vocabulary/banks', payload)
+  ).data,
+  approveVocabularyPrincipal: async (id: string | number, payload: Record<string, unknown>) => (
+    await api.put(`/vocabulary/banks/${id}/approve-principal`, payload)
+  ).data,
+  approveVocabularyDivisi: async (id: string | number, payload: Record<string, unknown>) => (
+    await api.put(`/vocabulary/banks/${id}/approve-divisi`, payload)
+  ).data,
+  getVocabularySubmissions: async (params: ListParams = {}) => (
+    await api.get('/vocabulary/submissions', { params })
+  ).data,
+  submitStudentVocabulary: async (payload: Record<string, unknown>) => (
+    await api.post('/vocabulary/submissions', payload)
+  ).data,
+
   // Enterprise master data
   getEmployees: async (params: ListParams = {}) => (
     await api.get('/employees', { params })
@@ -651,6 +671,20 @@ export const mobileApiService = {
       ...(childConfig || {}),
       params: { ...(childConfig?.params || {}), page },
     })).data;
+  },
+  createPortalVaPayment: async (
+    bank: string,
+    items: Array<{ jenis: string; id: number; bayar: number }>,
+    childId?: string
+  ) => {
+    const childConfig = childRequest(childId);
+    return (
+      await api.post(
+        '/portal/bills/pay-va',
+        { bank, items },
+        { ...(childConfig || {}) }
+      )
+    ).data;
   },
   getFinanceStats: async (params?: Record<string, any>) => (
     await api.get('/finance/stats', { params })

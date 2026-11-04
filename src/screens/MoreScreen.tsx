@@ -284,6 +284,19 @@ export default function MoreScreen({ navigation }: any) {
           category: 'kbm',
         });
       }
+      if (isDivisi || isPrincipal || isFoundationRole(roles) || isSuperAdmin) {
+        list.push({
+          id: 'divisi_workspace',
+          label: 'Ruang Kerja Divisi Terpadu',
+          desc: 'Supervisi KBM, kurasi bank soal, munaqasyah, bahasa & akreditasi 8 SNP',
+          tag: '7 Modul Divisi',
+          icon: 'briefcase-check-outline',
+          color: '#059669',
+          bg: '#ECFDF5',
+          route: 'DivisiWorkspace',
+          category: 'kbm',
+        });
+      }
     }
 
     // --- UJIAN & ASESMEN (Akses Guru, Tim Kurikulum, Kepala Sekolah & Divisi Pendidikan) ---

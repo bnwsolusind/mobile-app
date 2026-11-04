@@ -38,6 +38,7 @@ export const StudentMonthlyReportModal: React.FC<StudentMonthlyReportModalProps>
 }) => {
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
+  const [vocabularySubmissions, setVocabularySubmissions] = useState<any[]>([]);
   const [showPaperPrint, setShowPaperPrint] = useState(false);
   const mobileConfig = useMobileConfigStore((state) => state.config);
 
@@ -50,14 +51,25 @@ export const StudentMonthlyReportModal: React.FC<StudentMonthlyReportModalProps>
     const fetchReport = async () => {
       setLoading(true);
       try {
-        const res = await mobileApiService.getPortalDashboard(sId ? String(sId) : undefined);
-        const payload = unwrapApiData<any>(res) || {};
+        const [res, vocabRes] = await Promise.allSettled([
+          mobileApiService.getPortalDashboard(sId ? String(sId) : undefined),
+          mobileApiService.getVocabularySubmissions({ student_id: sId ? String(sId) : undefined, per_page: 10 }),
+        ]);
+
         if (isMounted) {
-          setReportData(payload);
+          if (res.status === 'fulfilled') {
+            const payload = unwrapApiData<any>(res.value) || {};
+            setReportData(payload);
+          }
+          if (vocabRes.status === 'fulfilled') {
+            const rawSubs = vocabRes.value?.data?.data?.data || vocabRes.value?.data?.data || vocabRes.value?.data || [];
+            setVocabularySubmissions(Array.isArray(rawSubs) ? rawSubs : []);
+          }
         }
       } catch {
         if (isMounted) {
           setReportData(null);
+          setVocabularySubmissions([]);
         }
       } finally {
         if (isMounted) {
@@ -339,13 +351,64 @@ export const StudentMonthlyReportModal: React.FC<StudentMonthlyReportModalProps>
                 </View>
               </View>
 
-              {/* 4. REKAPITULASI EVALUASI HARIAN 30 HARI */}
+              {/* 4. PEMBIASAAN BAHASA (BILINGUAL ARAB & INGGRIS) */}
+              <View style={[styles.sectionCard, styles.bahasaCard]}>
+                <View style={styles.bahasaHeaderRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialCommunityIcons name="translate" size={17} color="#0D9488" />
+                    <Text style={styles.bahasaTitle}>
+                      4. Pembiasaan Bahasa (Bilingual Arab & Inggris)
+                    </Text>
+                  </View>
+                  <View style={styles.bahasaStatusBadge}>
+                    <Text style={styles.bahasaStatusText}>
+                      {vocabularySubmissions.length > 0 ? `${vocabularySubmissions.length} SETORAN` : 'AKTIF'}
+                    </Text>
+                  </View>
+                </View>
+
+                {vocabularySubmissions.length > 0 ? (
+                  <View>
+                    <Text style={styles.bahasaDetailText}>
+                      Setoran Terakhir:{' '}
+                      <Text style={{ fontWeight: '800' }}>
+                        {vocabularySubmissions[0]?.vocabulary?.word || 'Mufrodat'} (
+                        {vocabularySubmissions[0]?.vocabulary?.translation || '-'})
+                      </Text>
+                    </Text>
+                    <Text style={styles.bahasaSubText}>
+                      Nilai: {vocabularySubmissions[0]?.score != null ? `${vocabularySubmissions[0].score}/100` : '-'} · Predikat:{' '}
+                      {vocabularySubmissions[0]?.fluency_rating ? String(vocabularySubmissions[0].fluency_rating).toUpperCase() : '-'} · Penguji:{' '}
+                      {vocabularySubmissions[0]?.teacher?.name || 'Guru Mapel'}
+                    </Text>
+                    {vocabularySubmissions[0]?.notes ? (
+                      <Text style={[styles.bahasaSubText, { fontStyle: 'italic', marginTop: 4, color: '#0F766E' }]}>
+                        Catatan: "{vocabularySubmissions[0]?.notes}"
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View>
+                    <Text style={styles.bahasaDetailText}>
+                      Pembiasaan Harian:{' '}
+                      <Text style={{ fontWeight: '800' }}>
+                        Program Yaumul Lughah & Mufrodat Terpadu
+                      </Text>
+                    </Text>
+                    <Text style={styles.bahasaSubText}>
+                      Ananda aktif mengikuti pembiasaan kosakata bilingual bersama guru penguji.
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* 5. REKAPITULASI EVALUASI HARIAN 30 HARI */}
               {historyRows.length > 0 && (
                 <View style={styles.sectionCard}>
                   <View style={styles.sectionTitleRow}>
                     <MaterialCommunityIcons name="format-list-checks" size={17} color="#059669" />
                     <Text style={styles.sectionTitle}>
-                      4. Rekapitulasi Riwayat Evaluasi Harian
+                      5. Rekapitulasi Riwayat Evaluasi Harian
                     </Text>
                   </View>
                   <View style={styles.tableHeaderRow}>
@@ -386,12 +449,12 @@ export const StudentMonthlyReportModal: React.FC<StudentMonthlyReportModalProps>
                 </View>
               )}
 
-              {/* 5. PEMBELAJARAN & TUGAS */}
+              {/* 6. PEMBELAJARAN & TUGAS */}
               <View style={styles.sectionCard}>
                 <View style={styles.sectionTitleRow}>
                   <MaterialCommunityIcons name="notebook-outline" size={17} color="#4F46E5" />
                   <Text style={styles.sectionTitle}>
-                    5. Pembelajaran & Penugasan Akademik
+                    6. Pembelajaran & Penugasan Akademik
                   </Text>
                 </View>
                 <Text style={styles.academicText}>
@@ -401,12 +464,12 @@ export const StudentMonthlyReportModal: React.FC<StudentMonthlyReportModalProps>
                 </Text>
               </View>
 
-              {/* 6. CATATAN PEMBIMBING & MUSYRIF */}
+              {/* 7. CATATAN PEMBIMBING & MUSYRIF */}
               <View style={styles.sectionCard}>
                 <View style={styles.sectionTitleRow}>
                   <MaterialCommunityIcons name="comment-text-outline" size={17} color="#D97706" />
                   <Text style={styles.sectionTitle}>
-                    6. Catatan Pembimbing / Musyrif
+                    7. Catatan Pembimbing / Musyrif
                   </Text>
                 </View>
                 <View style={styles.notesBox}>
@@ -769,6 +832,42 @@ const styles = StyleSheet.create({
   tahfizhSubText: {
     fontSize: 11,
     color: '#9A3412',
+    marginTop: 2,
+  },
+  bahasaCard: {
+    borderColor: '#99F6E4',
+    backgroundColor: '#F0FDFA',
+  },
+  bahasaHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bahasaTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F766E',
+  },
+  bahasaStatusBadge: {
+    backgroundColor: '#CCFBF1',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  bahasaStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0D9488',
+  },
+  bahasaDetailText: {
+    fontSize: 12,
+    color: '#115E59',
+    lineHeight: 18,
+  },
+  bahasaSubText: {
+    fontSize: 11,
+    color: '#0F766E',
     marginTop: 2,
   },
   tableHeaderRow: {

@@ -94,6 +94,7 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
       { label: 'Materi Belajar', icon: 'book-open-page-variant', color: '#0284C7', bg: '#EFF6FF', route: 'Materi' },
       { label: 'Penilaian & Rapor', icon: 'chart-box-outline', color: '#8B5CF6', bg: '#F5F3FF', route: 'Nilai' },
       { label: 'Tahfizh Al-Qur\'an', icon: 'book-marker', color: '#059669', bg: '#ECFDF5', route: 'Tahfizh' },
+      { label: 'Pembiasaan Bahasa', icon: 'translate', color: '#0D9488', bg: '#F0FDFA', route: 'Tahfizh', tab: 'bahasa' },
       { label: 'Mutaba\'ah Yaumiyyah', icon: 'clipboard-check-outline', color: '#D97706', bg: '#FFFBEB', route: 'Mutabaah' },
       { label: 'Buku Hubung', icon: 'notebook-edit-outline', color: '#E11D48', bg: '#FFF1F2', route: 'Komentar' },
       { label: 'Bank Soal', icon: 'database-outline', color: '#0D9488', bg: '#E6FFFA', route: 'BankSoal' },
@@ -101,16 +102,14 @@ export const StudentMenuModal: React.FC<StudentMenuModalProps> = ({
       { label: 'Perizinan Santri', icon: 'file-document-edit-outline', color: '#EF4444', bg: '#FEF2F2', route: 'Perizinan', tab: 'permissions' },
     ];
 
-    // Menu Tagihan & SPP (Eksklusif Wali Murid)
-    if (isParent || (user as any)?.roles?.includes('Parent')) {
-      list.push({
-        label: 'Tagihan SPP',
-        icon: 'cash-multiple',
-        color: '#059669',
-        bg: '#ECFDF5',
-        route: 'Tagihan',
-      });
-    }
+    // Menu Tagihan & SPP (Orang Tua & Siswa)
+    list.push({
+      label: 'Tagihan & SPP',
+      icon: 'cash-multiple',
+      color: '#059669',
+      bg: '#ECFDF5',
+      route: 'Tagihan',
+    });
 
     list.push(
       { label: 'Chat Guru', icon: 'chat-processing-outline', color: '#2563EB', bg: '#EFF6FF', route: 'Chat' },

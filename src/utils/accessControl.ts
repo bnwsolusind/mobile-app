@@ -427,8 +427,8 @@ export const canAccessBilling = (
   if (isSuperAdminRole(roles)) return true;
   // TU dan Operator bisa lihat rekap tagihan (monitoring)
   if (isTuRole(roles) || isOperatorRole(roles)) return true;
-  // Orang tua bisa lihat tagihan anak
-  if (isParentRole(roles)) return true;
+  // Orang tua & Siswa bisa lihat tagihan
+  if (isParentRole(roles) || isStudentRole(roles)) return true;
   // Permission-based fallback
   return can(user, 'billing.view', 'keuangan.tagihan.view', 'payment.view');
 };

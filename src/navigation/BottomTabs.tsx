@@ -69,6 +69,7 @@ import MasterSiswaScreen from '../screens/MasterSiswaScreen';
 import MutasiSiswaScreen from '../screens/MutasiSiswaScreen';
 import PantauKelasScreen from '../screens/PantauKelasScreen';
 import SupervisiKbmScreen from '../screens/SupervisiKbmScreen';
+import DivisiWorkspaceScreen from '../screens/DivisiWorkspaceScreen';
 import BantuanScreen from '../screens/BantuanScreen';
 import AccessDeniedScreen from '../components/AccessDeniedScreen';
 import { useAuthStore } from '../stores/authStore';
@@ -976,7 +977,7 @@ export default function BottomTabs() {
             tabBarItemStyle: { display: 'none' as const },
           }}
         />
-        {(access.parent || access.billing) && (
+        {(access.parent || access.student || access.billing) && (
           <Tab.Screen
             name="Tagihan"
             component={
@@ -1145,6 +1146,15 @@ export default function BottomTabs() {
         <Tab.Screen
           name="SupervisiKbm"
           component={SupervisiKbmScreen}
+          options={{
+            headerShown: false,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' as const },
+          }}
+        />
+        <Tab.Screen
+          name="DivisiWorkspace"
+          component={DivisiWorkspaceScreen}
           options={{
             headerShown: false,
             tabBarButton: () => null,
